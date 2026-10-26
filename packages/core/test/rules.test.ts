@@ -307,9 +307,11 @@ describe('Reporting split (R6)', () => {
     expect(new Set(p.map((x) => x.shiftDate))).toEqual(new Set(['2026-10-26']));
     expect(p[0]!.crew).toBeDefined();
   });
-  it('works across the DST change on 1 November 2026 (night shift is 13 h)', () => {
-    const f = fixtureFlag({ id: 'x', unitId: 'a', type: 'unscheduled', start: L('2026-10-31 18:00'), end: L('2026-11-01 06:00') });
-    const p = splitFlag(f, cal, L('2026-11-02 00:00'));
+  // Uses a past DST change: future rules depend on the runtime's time zone data
+  // (British Columbia's clock-change rules are in flux), so a future date is not stable.
+  it('works across the DST change on 2 November 2025 (night shift is 13 h)', () => {
+    const f = fixtureFlag({ id: 'x', unitId: 'a', type: 'unscheduled', start: L('2025-11-01 18:00'), end: L('2025-11-02 06:00') });
+    const p = splitFlag(f, cal, L('2025-11-03 00:00'));
     expect(p.reduce((a, x) => a + x.hours, 0)).toBe(13);
     expect(new Set(p.map((x) => x.shift))).toEqual(new Set(['night']));
   });
