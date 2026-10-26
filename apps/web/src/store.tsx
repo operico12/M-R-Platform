@@ -1,0 +1,123 @@
+// App state. For phase 1a development the data comes from the synthetic
+// fleet in memory; the DataSource boundary is where Supabase plugs in.
+// All writes go through the pure commands in @mr/core, so the screen can
+// never do something the rules do not allow.
+
+import {
+  DEFAULT_FLAG_RULES,
+  generateFleet,
+  type Actor,
+  type Asset,
+  type AuditEntry,
+  type CommandResult,
+  type Dataset,
+  type DownFlag,
+  type FlagContext,
+  type FlagRulesConfig,
+  type Role,
+} from '@mr/core';
+import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
+
+export interface AppState {
+  ds: Dataset;
+  flags: DownFlag[];
+  audit: AuditEntry[];
+  rules: FlagRulesConfig;
+  now: string;
+  actor: Actor;
+  setRole: (r: Role) => void;
+  run: (asset: Asset, cmd: (ctx: FlagContext) => CommandResult) => CommandResult;
+  lastSync: string;
+  theme: 'light' | 'dark';
+  setTheme: (t: 'light' | 'dark') => void;
+}
+
+const Ctx = createContext<AppState | null>(null);
+
+let idSeq = 0;
+const newId = () => `local-${Date.now().toString(36)}-${++idSeq}`;
+
+function readTheme(): 'light' | 'dark' {
+  try {
+    const t = localStorage.getItem('mr.theme');
+    if (t === 'light' || t === 'dark') return t;
+  } catch {
+    /* storage can be unavailable */
+  }
+  return window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+}
+
+export function AppProvider({ children }: { children: ReactNode }) {
+  const ds = useMemo(() => generateFleet({ seed: 42, units: 40, days: 120 }), []);
+  const [flags, setFlags] = useState<DownFlag[]>(ds.flags);
+  const [audit, setAudit] = useState<AuditEntry[]>([]);
+  const [now, setNow] = useState(() => new Date().toISOString());
+  const [role, setRole] = useState<Role>('supervisor');
+  const [theme, setThemeState] = useState<'light' | 'dark'>(readTheme);
+  const rules = DEFAULT_FLAG_RULES;
+
+  useEffect(() => {
+    const t = setInterval(() => setNow(new Date().toISOString()), 60_000);
+    return () => clearInterval(t);
+  }, []);
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+  }, [theme]);
+
+  const setTheme = useCallback((t: 'light' | 'dark') => {
+    setThemeState(t);
+    try {
+      localStorage.setItem('mr.theme', t);
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  const actor: Actor = useMemo(() => ({ userId: `demo-${role}`, role, scope: ['*'] }), [role]);
+
+  const run = useCallback(
+    (asset: Asset, cmd: (ctx: FlagContext) => CommandResult): CommandResult => {
+      const nowIso = new Date().toISOString();
+      const lc = ds.lifecycle.find((l) => l.assetId === asset.id && Date.parse(l.start) <= Date.parse(nowIso) && (!l.end || Date.parse(nowIso) < Date.parse(l.end)));
+      const ctx: FlagContext = {
+        now: nowIso,
+        actor,
+        rules,
+        calendar: ds.calendar,
+        asset,
+        lifecycle: lc?.status ?? 'active',
+        unitFlags: flags.filter((f) => f.unitId === asset.id),
+        siteOpenFlags: flags.filter((f) => f.state === 'open'),
+        shopLines: ds.shopLines,
+        lineClosures: ds.closures,
+        newId,
+      };
+      const r = cmd(ctx);
+      if (r.ok) {
+        setFlags((prev) => {
+          const next = [...prev];
+          for (const f of r.flags) {
+            const i = next.findIndex((x) => x.id === f.id);
+            if (i >= 0) next[i] = f;
+            else next.push(f);
+          }
+          return next;
+        });
+        setAudit((prev) => [...r.audit, ...prev]);
+        setNow(nowIso);
+      }
+      return r;
+    },
+    [actor, ds, flags, rules],
+  );
+
+  const value: AppState = { ds, flags, audit, rules, now, actor, setRole, run, lastSync: ds.generatedAt, theme, setTheme };
+  return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
+}
+
+export function useApp(): AppState {
+  const v = useContext(Ctx);
+  if (!v) throw new Error('useApp outside AppProvider');
+  return v;
+}
