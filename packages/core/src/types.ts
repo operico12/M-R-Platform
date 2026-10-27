@@ -224,3 +224,36 @@ export interface AuditEntry {
   effectiveAt?: Iso;
   offline?: boolean;
 }
+
+/** How a work order type is treated in analysis. The ERP's own codes map to these (A3). */
+export type WorkClass = 'pm' | 'corrective' | 'inspection' | 'project' | 'other';
+
+/**
+ * A work order copied from the ERP. The ERP stays the system of record (plan 6.3):
+ * the platform only reads these, keyed by source system plus source ID.
+ */
+export interface WorkOrder {
+  id: string;
+  tenantId: string;
+  siteId: string;
+  /** Linked unit, if the work order's asset matched one. */
+  assetId?: string;
+  sourceSystem: string;
+  sourceId: string;
+  /** As shown in the ERP. */
+  number: string;
+  /** Trimmed, upper case, without a "WO-" prefix or leading zeros. Used to link flags. */
+  numberNormalised: string;
+  /** The ERP asset number given on the work order. */
+  externalAssetId?: string;
+  woType?: string;
+  workClass: WorkClass;
+  status?: string;
+  /** False once the ERP status is one of the closed statuses. */
+  open: boolean;
+  priority?: string;
+  description?: string;
+  reportedAt?: Iso;
+  completedAt?: Iso;
+  sourceModifiedAt?: Iso;
+}
