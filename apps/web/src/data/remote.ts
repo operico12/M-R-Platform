@@ -3,7 +3,7 @@
 // The anon key is public by design: row-level security decides what each
 // signed-in person can read and write. Never put the service_role key here.
 
-import { DEFAULT_FLAG_RULES, emptyFishbone, type ImprovementAction, type Project, type Rca, type AuditEntry, type Dataset, type DownFlag, type FlagRulesConfig, type ReasonCode, type Role, type ShiftCalendar, type SiteUser, type SmuReading, type Target, type WorkOrder, type Asset } from '@mr/core';
+import { DEFAULT_FLAG_RULES, DEFAULT_WORK_SETTINGS, emptyFishbone, type WorkSettings, type ImprovementAction, type Project, type Rca, type AuditEntry, type Dataset, type DownFlag, type FlagRulesConfig, type ReasonCode, type Role, type ShiftCalendar, type SiteUser, type SmuReading, type Target, type WorkOrder, type Asset } from '@mr/core';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 
 const url = import.meta.env.VITE_SUPABASE_URL as string | undefined;
@@ -29,6 +29,7 @@ export interface Loaded {
   actions: ImprovementAction[];
   rcas: Rca[];
   projects: Project[];
+  workSettings: WorkSettings;
 }
 
 /** Postgres returns "+00:00" offsets; the app compares ISO strings, so make them all "Z". */
@@ -52,9 +53,13 @@ export async function mySites(): Promise<RemoteSite[]> {
 }
 
 export async function loadSite(siteId: string): Promise<Loaded> {
-  const [main, imp, proj] = await Promise.all([
+  const [main, imp, proj, wk] = await Promise.all([
     remote!.rpc('app_load', { p_site: siteId }), remote!.rpc('app_load_improve', { p_site: siteId }), remote!.rpc('app_load_projects', { p_site: siteId }),
+    remote!.rpc('app_load_work', { p_site: siteId }),
   ]);
+  const work = iso(must(wk)) as { plans: Array<Partial<WorkOrder> & { id: string }>; settings: { work?: Partial<WorkSettings> } };
+  const plans = new Map(work.plans.map((x) => [x.id, x]));
+  const num = (v: unknown) => (v === undefined || v === null ? undefined : Number(v));
   const projects = (iso(must(proj)) as Project[]).map((p) => ({
     ...p, budget: Number(p.budget), forecastToComplete: Number(p.forecastToComplete),
     expectedHoursPerYear: p.expectedHoursPerYear === undefined ? undefined : Number(p.expectedHoursPerYear),
@@ -79,7 +84,11 @@ export async function loadSite(siteId: string): Promise<Loaded> {
       site: { id: d.site.id, name: d.site.name, timeZone: d.site.timeZone },
       calendar,
       assets: d.assets, lifecycle: d.lifecycle, shopLines: d.shopLines, closures: d.closures, fieldLocations: d.fieldLocations,
-      flags, smu: d.smu.map((r) => ({ ...r, hours: Number(r.hours) })), workOrders: d.workOrders,
+      flags, smu: d.smu.map((r) => ({ ...r, hours: Number(r.hours) })),
+      workOrders: d.workOrders.map((w) => {
+        const p = plans.get(w.id);
+        return p ? { ...w, ...p, estimatedHours: num(p.estimatedHours), actualLabourHours: num(p.actualLabourHours) } : w;
+      }),
       generatedAt: new Date().toISOString(),
     },
     role: d.role,
@@ -87,6 +96,7 @@ export async function loadSite(siteId: string): Promise<Loaded> {
     rules: { ...DEFAULT_FLAG_RULES, ...(d.rules ?? {}) },
     actions: improve.actions,
     projects,
+    workSettings: { ...DEFAULT_WORK_SETTINGS, ...(work.settings.work ?? {}) },
     rcas: improve.rcas.map((r) => ({ ...r, fishbone: { ...emptyFishbone(), ...(r.fishbone as Partial<Rca['fishbone']>) } })),
     users: d.users, codes: d.codes, targets: d.targets.map((t) => ({ ...t, value: Number(t.value), amber: Number(t.amber) })),
   };
@@ -111,4 +121,9 @@ export async function saveTarget(siteId: string, t: Target, audit: AuditEntry[])
 /** A task owner who does not run projects updates only their own task (see app_set_task_status). */
 export async function saveTaskStatus(siteId: string, projectId: string, taskId: string, status: string, note?: string): Promise<void> {
   must(await remote!.rpc('app_set_task_status', { p_site: siteId, p_project: projectId, p_task: taskId, p_status: status, p_note: note ?? null }));
+}
+
+export async function saveSetting(siteId: string, key: 'work', value: object, reason: string, audit: AuditEntry[]): Promise<void> {
+  must(await remote!.rpc('app_save_setting', { p_site: siteId, p_key: key, p_value: value, p_reason: reason }));
+  if (audit.length) must(await remote!.rpc('app_log', { p_site: siteId, p_entries: audit }));
 }

@@ -13,6 +13,7 @@ import { RcaScreen } from './screens/Rca';
 import { Performance } from './screens/Performance';
 import { ShopLines } from './screens/ShopLines';
 import { UnitList, UnitPage } from './screens/Units';
+import { Work } from './screens/Work';
 import { AppProvider, useApp } from './store';
 
 function useHash(): string {
@@ -31,6 +32,7 @@ const NAV: Array<[string, string]> = [
   ['#/units', 'Units'],
   ['#/performance', 'Performance'],
   ['#/analysis', 'Downtime analysis'],
+  ['#/work', 'Work and PM'],
   ['#/actions', 'Actions'],
   ['#/rca', 'Root cause analysis'],
   ['#/projects', 'Projects'],
@@ -72,6 +74,7 @@ function Shell() {
     case 'unit': page = <UnitPage id={arg ?? ''} />; break;
     case 'performance': page = <Performance />; break;
     case 'analysis': page = <Analysis query={query} />; break;
+    case 'work': page = <Work />; break;
     case 'pack': page = <Pack query={query} />; break;
     case 'actions': page = <Actions arg={arg} query={query} />; break;
     case 'rca': page = <RcaScreen arg={arg} query={query} />; break;

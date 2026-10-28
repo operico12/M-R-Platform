@@ -27,12 +27,14 @@ import {
   type ImprovementAction,
   type Rca,
   type Project,
+  type WorkSettings,
+  DEFAULT_WORK_SETTINGS,
   can,
   defaultReasonCodes,
   targetValue,
 } from '@mr/core';
 import { demoImprovements } from './data/demo-improve';
-import { saveFlags, saveRecords, saveTarget, saveTaskStatus, type Loaded } from './data/remote';
+import { saveFlags, saveRecords, saveSetting, saveTarget, saveTaskStatus, type Loaded } from './data/remote';
 import { demoProjects } from './data/demo-projects';
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 
@@ -61,6 +63,9 @@ export interface AppState {
   actions: ImprovementAction[];
   rcas: Rca[];
   projects: Project[];
+  workSettings: WorkSettings;
+  /** Run a work settings command; on success keep and save the new settings. */
+  runWorkSettings: (cmd: (ctx: ConsoleContext) => ConsoleResult<WorkSettings>) => ConsoleResult<WorkSettings>;
   /** Run an action, RCA or project command; same as runConsole. */
   runImprove: <T>(kind: 'actions' | 'rcas' | 'projects', cmd: (ctx: ConsoleContext) => ConsoleResult<T>) => ConsoleResult<T>;
   /** Users who can own an action or lead an RCA: active, and signed in at least once. */
@@ -230,6 +235,19 @@ export function AppProvider({ children, live, onReload, onSignOut }: { children:
     },
     [actor, ds, live, failed],
   );
+  const [workSettings, setWorkSettingsState] = useState<WorkSettings>(() => live?.workSettings ?? { ...DEFAULT_WORK_SETTINGS, craftHoursPerWeek: 480 });
+  const runWorkSettings = useCallback(
+    (cmd: (ctx: ConsoleContext) => ConsoleResult<WorkSettings>): ConsoleResult<WorkSettings> => {
+      const r = cmd({ actor, now: new Date().toISOString(), newId, timeZone: ds.site.timeZone, calendar: ds.calendar });
+      if (r.ok) {
+        setWorkSettingsState(r.records[0]!);
+        setAudit((prev) => [...r.audit, ...prev]);
+        if (live) saveSetting(siteId, 'work', r.records[0]!, r.audit[0]!.reason ?? '', r.audit).catch(failed);
+      }
+      return r;
+    },
+    [actor, ds, live, failed],
+  );
   const runImprove = useCallback(
     <T,>(kind: 'actions' | 'rcas' | 'projects', cmd: (ctx: ConsoleContext) => ConsoleResult<T>): ConsoleResult<T> => {
       const nowIso = new Date().toISOString();
@@ -258,7 +276,7 @@ export function AppProvider({ children, live, onReload, onSignOut }: { children:
   );
   const people = useMemo(() => users.filter((u) => !u.retiredAt && !u.invited), [users]);
   const userName = useCallback((id: string) => users.find((u) => u.id === id)?.name ?? 'Unknown user', [users]);
-  const value: AppState = { ds, actions: improve.actions, rcas: improve.rcas, projects: improve.projects, runImprove, people, userName, targets, targetOf, targetList, users, codes, runConsole, mode: live ? 'live' : 'demo', syncError, clearSyncError: () => setSyncError(null), signOut: onSignOut, importRuns, applyImport, newId, flags, audit, rules, now, actor, setRole, run, lastSync: ds.generatedAt, theme, setTheme };
+  const value: AppState = { ds, workSettings, runWorkSettings, actions: improve.actions, rcas: improve.rcas, projects: improve.projects, runImprove, people, userName, targets, targetOf, targetList, users, codes, runConsole, mode: live ? 'live' : 'demo', syncError, clearSyncError: () => setSyncError(null), signOut: onSignOut, importRuns, applyImport, newId, flags, audit, rules, now, actor, setRole, run, lastSync: ds.generatedAt, theme, setTheme };
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
 

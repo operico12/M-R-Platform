@@ -26,9 +26,10 @@ import { useState, type ReactNode } from 'react';
 import { siteTime } from '../format';
 import { useApp } from '../store';
 import { FlagRules } from './DataQuality';
+import { WorkSettingsPage } from './WorkSettings';
 
-type Tab = 'users' | 'targets' | 'codes';
-const TABS: Array<[Tab, string]> = [['users', 'Users'], ['targets', 'Targets'], ['codes', 'Flags and codes']];
+type Tab = 'users' | 'targets' | 'work' | 'codes';
+const TABS: Array<[Tab, string]> = [['users', 'Users'], ['targets', 'Targets'], ['work', 'Work settings'], ['codes', 'Flags and codes']];
 
 export function Console({ tab }: { tab: string }) {
   const t: Tab = TABS.some(([k]) => k === tab) ? (tab as Tab) : 'users';
@@ -40,6 +41,7 @@ export function Console({ tab }: { tab: string }) {
       </div>
       {t === 'users' && <Users />}
       {t === 'targets' && <Targets />}
+      {t === 'work' && <WorkSettingsPage />}
       {t === 'codes' && <Codes />}
     </div>
   );

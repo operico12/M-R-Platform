@@ -10,7 +10,7 @@
 
 import { DateTime } from 'luxon';
 import { HOUR_MS, ms } from './time.js';
-import type { Asset, Iso, SmuReading, WorkClass, WorkOrder } from './types.js';
+import type { Asset, Iso, SmuReading, WorkClass, WorkOrder, WorkReadiness } from './types.js';
 
 // ---------- CSV ----------
 
@@ -76,12 +76,16 @@ export interface ImportMapping {
   workOrders: {
     number: string; asset: string; type?: string; status?: string; priority?: string; description?: string;
     reportedAt?: string; completedAt?: string; modifiedAt?: string;
+    targetStart?: string; targetFinish?: string; scheduledStart?: string; scheduledFinish?: string;
+    estimatedHours?: string; actualLabourHours?: string; pmNumber?: string; origin?: string;
   };
   smu: { asset: string; at: string; hours: string; meter?: string; meterValue?: string };
   /** ERP work type → how it is treated. Unlisted types are "other". */
   workClasses: Record<string, WorkClass>;
   /** ERP statuses that mean the work order is finished. */
   closedStatuses: string[];
+  /** ERP status → whether open work can be scheduled. Unlisted open statuses are "unknown". */
+  readiness: Record<string, WorkReadiness>;
   /** Removed from work order numbers before matching, as a regular expression. */
   woNumberPrefix: string;
 }
@@ -94,10 +98,13 @@ export const MAXIMO_DEFAULT_MAPPING: ImportMapping = {
   workOrders: {
     number: 'WONUM', asset: 'ASSETNUM', type: 'WORKTYPE', status: 'STATUS', priority: 'WOPRIORITY', description: 'DESCRIPTION',
     reportedAt: 'REPORTDATE', completedAt: 'ACTFINISH', modifiedAt: 'CHANGEDATE',
+    targetStart: 'TARGSTARTDATE', targetFinish: 'TARGCOMPDATE', scheduledStart: 'SCHEDSTART', scheduledFinish: 'SCHEDFINISH',
+    estimatedHours: 'ESTDUR', actualLabourHours: 'ACTLABHRS', pmNumber: 'PMNUM', origin: 'ORIGRECORDID',
   },
   smu: { asset: 'ASSETNUM', at: 'READINGDATE', hours: 'READING', meter: 'METERNAME', meterValue: 'SMU' },
   workClasses: { PM: 'pm', CM: 'corrective', EM: 'corrective', BD: 'corrective', INSP: 'inspection', CAP: 'project', PROJ: 'project' },
   closedStatuses: ['COMP', 'CLOSE', 'CAN'],
+  readiness: { WAPPR: 'waiting_approval', WMATL: 'waiting_parts', WPCOND: 'waiting_shutdown', APPR: 'ready', WSCH: 'ready', INPRG: 'in_progress' },
   woNumberPrefix: '^(WO|PM)[-\\s#]*',
 };
 
@@ -403,6 +410,13 @@ export function importWorkOrders(table: Table, existing: WorkOrder[], assets: As
       }
       return d;
     };
+    const plannedDate = (col?: string) => {
+      const v = rd.get(row, col);
+      if (!v) return undefined;
+      const d = parseSourceDate(v, m.dateFormats, ctx.timeZone);
+      if (!d) issues.push({ row: line, severity: 'warning', rule: 'bad_date', sourceId: number, message: `${col} "${v}" is not a date the mapping understands. Left blank.` });
+      return d ?? undefined;
+    };
     const ext = rd.get(row, m.workOrders.asset);
     const asset = ext ? find(ext) : undefined;
     if (!ext) issues.push({ row: line, severity: 'warning', rule: 'missing_field', sourceId: number, message: `Work order ${number} has no asset. Loaded without a unit.` });
@@ -416,6 +430,16 @@ export function importWorkOrders(table: Table, existing: WorkOrder[], assets: As
     if (reportedAt && completedAt && ms(completedAt) < ms(reportedAt)) {
       issues.push({ row: line, severity: 'warning', rule: 'time_order', sourceId: number, message: `Work order ${number} finished before it was reported.` });
     }
+    const num = (col?: string) => {
+      const v = rd.get(row, col);
+      if (!v) return undefined;
+      const n = parseSourceNumber(v);
+      if (n === null || n < 0) {
+        issues.push({ row: line, severity: 'warning', rule: 'bad_number', sourceId: number, message: `${col} "${v}" is not a number of hours. Left blank.` });
+        return undefined;
+      }
+      return n;
+    };
     const fields: Omit<WorkOrder, 'id'> = clean({
       tenantId: ctx.tenantId,
       siteId: ctx.siteId,
@@ -434,6 +458,15 @@ export function importWorkOrders(table: Table, existing: WorkOrder[], assets: As
       reportedAt,
       completedAt,
       sourceModifiedAt,
+      // Planned dates may be in the future, so they skip the future check.
+      targetStart: plannedDate(m.workOrders.targetStart),
+      targetFinish: plannedDate(m.workOrders.targetFinish),
+      scheduledStart: plannedDate(m.workOrders.scheduledStart),
+      scheduledFinish: plannedDate(m.workOrders.scheduledFinish),
+      estimatedHours: num(m.workOrders.estimatedHours),
+      actualLabourHours: num(m.workOrders.actualLabourHours),
+      pmNumber: rd.get(row, m.workOrders.pmNumber) || undefined,
+      originWorkOrder: rd.get(row, m.workOrders.origin) || undefined,
     }) as Omit<WorkOrder, 'id'>;
     if (fields.open === undefined) fields.open = true;
 
@@ -623,6 +656,14 @@ export function toSourceCsv(
     [m.workOrders.reportedAt, (w) => formatSourceDate(w.reportedAt, timeZone)],
     [m.workOrders.completedAt, (w) => formatSourceDate(w.completedAt, timeZone)],
     [m.workOrders.modifiedAt, (w) => formatSourceDate(w.sourceModifiedAt, timeZone)],
+    [m.workOrders.targetStart, (w) => formatSourceDate(w.targetStart, timeZone)],
+    [m.workOrders.targetFinish, (w) => formatSourceDate(w.targetFinish, timeZone)],
+    [m.workOrders.scheduledStart, (w) => formatSourceDate(w.scheduledStart, timeZone)],
+    [m.workOrders.scheduledFinish, (w) => formatSourceDate(w.scheduledFinish, timeZone)],
+    [m.workOrders.estimatedHours, (w) => w.estimatedHours],
+    [m.workOrders.actualLabourHours, (w) => w.actualLabourHours],
+    [m.workOrders.pmNumber, (w) => w.pmNumber],
+    [m.workOrders.origin, (w) => w.originWorkOrder],
   ]));
   const smuCols = withSite(cols<SmuReading>([
     [m.smu.asset, (r) => ext.get(r.unitId)],

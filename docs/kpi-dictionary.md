@@ -23,6 +23,20 @@ flag intervals and SMU readings; nothing is typed in. Fleet figures are ratios o
 | KPI-016 | Project benefit (phase 2) | (baseline rate − after rate) × after calendar h, rates in matching down h per 1,000 calendar h | Plan 8. Baseline: 90 days before the project went in progress. After: since it closed, up to 365 days; early reading under 28 days. Downtime during the project is left out. Per year = avoided ÷ after days × 365. Value = avoided h × the project's value per down hour. Code: `projectBenefit` in `projects.ts`. |
 | KPI-017 | Project status (phase 2) | Late, at risk or on track, from the records | Late: past its end date, or an open task past due (site date). At risk: a task due within 7 days not started, actual + forecast over budget, an open issue or a risk scoring ≥ 6 (likelihood × impact, 1 to 3 each), or a change request waiting. Code: `projectHealth`. |
 
+## Work and PM, tier 2 (phase 2, plan 3.3 tier 2 table)
+
+From the ERP work orders; settings in `WorkSettings` (`packages/core/src/work.ts`), changed in Console, Work.
+Code: `work.ts`. Hours are the work order's actual labour hours, else its estimate.
+
+| ID | KPI | Formula | Notes |
+| --- | --- | --- | --- |
+| KPI-018 | PM compliance | PMs done by their due date + tolerance ÷ PMs due | Due = target finish (TARGCOMPDATE) in the period, site date. Tolerance: `pmToleranceDays` (default 3, site to agree; plan suggests ±10% of interval once intervals are loaded). A PM still inside its tolerance is left out until it is done or the tolerance ends. Cancelled PMs are left out. |
+| KPI-019 | Schedule compliance | scheduled work done by its scheduled finish day ÷ scheduled work | Scheduled = scheduled start (SCHEDSTART) in the week. Measured weekly, Monday 00:00 site time. |
+| KPI-020 | Planned work % | (work h − emergency work h) ÷ work h, for work finished in the period | Emergency = work type in `emergencyTypes` (default EM, BD) or priority in `emergencyPriorities` (default 1). Emergency work % shown beside it. |
+| KPI-021 | Backlog (weeks) | open work h ÷ `craftHoursPerWeek` | Split ready to schedule from waiting (approval, parts, shutdown) using the status map. Shown only once craft hours per week is set. Work orders with no estimate are counted and listed. |
+| KPI-022 | Work from inspections % | corrective work raised from a PM or inspection ÷ corrective work reported in the period | Raised from = origin work order (ORIGRECORDID) is a PM or inspection. |
+| KPI-023 | Work order aging | open work orders by days since reported: 0–7, 8–30, 31–90, over 90 | By readiness. |
+
 ## Worked examples encoded as tests
 
 - Plan 3.2, one 12-hour shift: PA 62.5%, utilisation 90.7%, standby 0.7 h, effective utilisation 56.7%.
