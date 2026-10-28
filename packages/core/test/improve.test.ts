@@ -105,12 +105,13 @@ describe('effect: before and after', () => {
   const input = (now: string) => ({ assets: [t1], flags, smu: [], rules: DEFAULT_FLAG_RULES, now: L(now), calendar: twelveHourCalendar(TZ), timeZone: TZ });
 
   it('compares equal windows on the action\'s own slice', () => {
-    // Windows are 28 x 24 h; the clocks go back on 1 Nov, so the after window ends at 23:00 local on 11 Nov.
+    // Windows are 28 x 24 h of real time, so the after window ends 672 h after the action was done,
+    // whatever the site clocks do in between (time zone data for the site can change its DST rules).
     const e = actionEffect(input('2026-11-20 00:00'), done)!;
     expect(e.days).toBe(28);
     expect(e.enough).toBe(true);
     expect(e.before).toMatchObject({ from: L('2026-09-17 00:00'), downHours: 20, failures: 2, events: 2 });
-    expect(e.after).toMatchObject({ to: L('2026-11-11 23:00'), downHours: 5, failures: 1 });
+    expect(e.after).toMatchObject({ to: new Date(Date.parse(done.doneAt!) + 28 * 864e5).toISOString(), downHours: 5, failures: 1 });
     expect(e.before.downPer1000).toBeCloseTo((20 / 672) * 1000, 6);
     expect(e.downChange).toBeCloseTo(-0.75, 6);
     expect(e.failureChange).toBe(-1);
