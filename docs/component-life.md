@@ -89,8 +89,12 @@ Status is worked out from the events, never typed in:
 The target life is set per model and kind, for example 793F engine 20,000 h.
 - Targets are effective-dated. A change applies from its start date, and older lives keep the
   target that applied when they ended.
-- Reliability engineers and superintendents set targets, with a reason. Every change goes to the
-  audit log.
+- A change needs approval, like a KPI target (decided by Ope, 2026-10-28; docs/approvals.md). A
+  reliability engineer or superintendent asks, with a reason. A superintendent who did not ask
+  approves it, and only then does it apply. The record keeps who asked, who approved and the
+  request it came from. Every step goes to the audit log.
+- Nothing applies while the request waits, and only one request can wait for the same model, kind
+  and start date.
 - The synthetic site's defaults are illustrative, not OEM figures:
 
 | Kind | 793F | 797F |
@@ -101,9 +105,6 @@ The target life is set per model and kind, for example 793F engine 20,000 h.
 | Differential | 24,000 | 24,000 |
 | Final drive | 18,000 | 18,000 |
 | Front strut, rear strut | 12,000 | 12,000 |
-
-**Decision for Ope:** target life could also go through approvals, like KPI targets. Today it is a
-direct change with an audit entry.
 
 ## Component life board (plan 4.2)
 
@@ -228,7 +229,7 @@ Otherwise you type them in.
 | --- | --- |
 | See components, the board, forecast, Weibull | Everyone at the site |
 | Record events: receive, install, remove, send, return, scrap, claims, cores | Supervisor, reliability engineer, superintendent (`record_components`) |
-| Set target life | Reliability engineer, superintendent (`edit_life_targets`) |
+| Change target life | Reliability engineer or superintendent asks; a superintendent who did not ask approves (`edit_life_targets`) |
 | See and enter costs | Reliability engineer, superintendent, admin (`view_cost`) |
 | Void the latest event | Whoever entered it, or a superintendent, with a reason |
 

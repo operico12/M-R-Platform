@@ -7,17 +7,19 @@ import {
   GOVERNED_ROLES, ROLE_LABELS, TARGET_KPIS, setTarget, targetFor,
   type ConsoleContext, type SiteUser, type Target, type TargetInput,
 } from './console.js';
+import { KIND_LABELS, lifeTargetFor, setLifeTarget, type LifeTarget, type LifeTargetInput } from './components.js';
 import { permission } from './permissions.js';
 import { ms, shiftAt } from './time.js';
 import type { AuditEntry, Iso, Role } from './types.js';
 
-export type RequestKind = 'target' | 'role_grant' | 'acting_role';
+export type RequestKind = 'target' | 'life_target' | 'role_grant' | 'acting_role';
 export type RequestStatus = 'pending' | 'approved' | 'rejected' | 'withdrawn';
 
 export interface TargetRequest { kind: 'target'; input: Omit<TargetInput, 'reason'> }
 export interface RoleGrantRequest { kind: 'role_grant'; userId: string; role: Role; from: Role }
 export interface ActingRoleRequest { kind: 'acting_role'; userId: string; role: Role; until: Iso }
-export type RequestPayload = TargetRequest | RoleGrantRequest | ActingRoleRequest;
+export interface LifeTargetRequest { kind: 'life_target'; input: Omit<LifeTargetInput, 'reason'> }
+export type RequestPayload = TargetRequest | LifeTargetRequest | RoleGrantRequest | ActingRoleRequest;
 
 export interface RequestNote { by: string; at: Iso; text: string }
 
@@ -47,7 +49,7 @@ export const REQUEST_STATUS_LABELS: Record<RequestStatus, string> = { pending: '
 type Ok<T> = { ok: true; records: T[]; audit: AuditEntry[]; warnings: string[] };
 type No = { ok: false; errors: string[] };
 /** A decision also hands back the targets or users it changed. */
-export type DecideResult = No | (Ok<ApprovalRequest> & { targets?: Target[]; users?: SiteUser[] });
+export type DecideResult = No | (Ok<ApprovalRequest> & { targets?: Target[]; lifeTargets?: LifeTarget[]; users?: SiteUser[] });
 
 const no = (...errors: string[]): No => ({ ok: false, errors });
 const audit = (ctx: ConsoleContext, action: string, id: string, before: unknown, after: unknown, reason?: string): AuditEntry =>
@@ -81,6 +83,32 @@ export function proposeTarget(ctx: ConsoleContext, targets: Target[], requests: 
     status: 'pending', requestedBy: ctx.actor.userId, requestedAt: ctx.now, notes: [],
   };
   return { ok: true, records: [...requests, r], audit: [audit(ctx, 'request_target', r.id, null, r, r.reason)], warnings: [] };
+}
+
+/** Target life for a model and component kind (docs/component-life.md): asked for by a reliability engineer, approved by a superintendent. */
+export function proposeLifeTarget(ctx: ConsoleContext, lifeTargets: LifeTarget[], requests: ApprovalRequest[], input: LifeTargetInput): Ok<ApprovalRequest> | No {
+  const p = permission(ctx.actor.role, 'edit_life_targets');
+  if (p !== 'propose' && p !== 'approve') return no('Your role cannot ask for target life changes.');
+  const check = setLifeTarget(ctx, lifeTargets, input);
+  if (!check.ok) return check;
+  const t = check.records.at(-1)!;
+  if (requests.some((r) => r.status === 'pending' && r.payload.kind === 'life_target' && r.payload.input.model === t.model && r.payload.input.kind === t.kind && r.payload.input.effectiveFrom === t.effectiveFrom)) {
+    return no(`There is already a request waiting for ${t.model} ${KIND_LABELS[t.kind].toLowerCase()} target life from ${t.effectiveFrom}.`);
+  }
+  const replaced = lifeTargetFor(lifeTargets, t.model, t.kind, t.effectiveFrom);
+  const label = `${t.model} ${KIND_LABELS[t.kind].toLowerCase()}`;
+  const r: ApprovalRequest = {
+    id: ctx.newId(), kind: 'life_target',
+    title: `Target life ${t.hours.toLocaleString('en-CA')} h for ${label}`,
+    reason: t.reason,
+    payload: { kind: 'life_target', input: { model: t.model, kind: t.kind, hours: t.hours, effectiveFrom: t.effectiveFrom } },
+    impact: [
+      replaced ? `Replaces ${replaced.hours.toLocaleString('en-CA')} h from ${t.effectiveFrom}.` : `First target life for ${label}.`,
+      `The life board colours, change-out forecast, life ratio (KPI-030), vendor comparison and risk before target use it for lives that end from ${t.effectiveFrom}. Earlier lives keep the target that applied then.`,
+    ],
+    status: 'pending', requestedBy: ctx.actor.userId, requestedAt: ctx.now, notes: [],
+  };
+  return { ok: true, records: [...requests, r], audit: [audit(ctx, 'request_life_target', r.id, null, r, r.reason)], warnings: [] };
 }
 
 export function requestRole(ctx: ConsoleContext, users: SiteUser[], requests: ApprovalRequest[], userId: string, role: Role, reason: string): Ok<ApprovalRequest> | No {
@@ -131,12 +159,12 @@ export function requestActingRole(ctx: ConsoleContext, users: SiteUser[], reques
 
 /** Who can decide this kind of request: a superintendent (or acting one) for all of them today. */
 export function canDecide(role: Role, kind: RequestKind): boolean {
-  return permission(role, kind === 'target' ? 'change_targets' : 'manage_users') === 'approve';
+  return permission(role, kind === 'target' ? 'change_targets' : kind === 'life_target' ? 'edit_life_targets' : 'manage_users') === 'approve';
 }
 
 export function decideRequest(
   ctx: ConsoleContext,
-  state: { requests: ApprovalRequest[]; targets: Target[]; users: SiteUser[] },
+  state: { requests: ApprovalRequest[]; targets: Target[]; users: SiteUser[]; lifeTargets?: LifeTarget[] },
   id: string,
   decision: 'approve' | 'reject',
   note: string,
@@ -167,6 +195,15 @@ export function decideRequest(
     done.appliedId = t.id;
     const targets = [...state.targets, t];
     return { ok: true, records: records(), targets, audit: [audit(ctx, 'approve', id, r, done, note.trim() || undefined), { ...made.audit[0]!, after: t }], warnings };
+  }
+
+  if (p.kind === 'life_target') {
+    const lifeTargets = state.lifeTargets ?? [];
+    const made = setLifeTarget(ctx, lifeTargets, { ...p.input, reason: r.reason });
+    if (!made.ok) return made;
+    const t: LifeTarget = { ...made.records.at(-1)!, setBy: r.requestedBy, approvedBy: ctx.actor.userId, requestId: r.id };
+    done.appliedId = t.id;
+    return { ok: true, records: records(), lifeTargets: [...lifeTargets, t], audit: [audit(ctx, 'approve', id, r, done, note.trim() || undefined), { ...made.audit[0]!, after: t }], warnings: [] };
   }
 
   const u = state.users.find((x) => x.id === p.userId);

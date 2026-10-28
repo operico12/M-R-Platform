@@ -8,7 +8,7 @@ import { siteTime } from '../format';
 import { Errors } from '../improve/ui';
 import { useApp } from '../store';
 
-const KIND_LABELS: Record<ApprovalRequest['kind'], string> = { target: 'Target', role_grant: 'Role', acting_role: 'Acting role' };
+const KIND_LABELS: Record<ApprovalRequest['kind'], string> = { target: 'Target', life_target: 'Target life', role_grant: 'Role', acting_role: 'Acting role' };
 
 export function ApprovalsPage() {
   const app = useApp();
@@ -22,7 +22,7 @@ export function ApprovalsPage() {
     <>
       <section className="card">
         <h3 style={{ marginTop: 0 }}>Waiting for you ({mine.length})</h3>
-        <p className="small muted" style={{ marginTop: 0 }}>Targets, Admin and Superintendent roles, and acting roles need a superintendent who did not ask (plan 11.3). Nothing is applied until it is approved.</p>
+        <p className="small muted" style={{ marginTop: 0 }}>KPI targets, target life, Admin and Superintendent roles, and acting roles need a superintendent who did not ask (plan 11.3). Nothing is applied until it is approved.</p>
         {flash.length > 0 && <div role="status" className="small" style={{ marginBottom: 8 }}>{flash.map((x) => <div key={x}>✓ {x}</div>)}</div>}
         {mine.length ? <div style={{ display: 'grid', gap: 12 }}>{mine.map((r) => <RequestCard key={r.id} r={r} onDone={setFlash} />)}</div> : <p className="muted">Nothing waiting for you.</p>}
       </section>

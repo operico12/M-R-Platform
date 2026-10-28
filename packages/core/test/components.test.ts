@@ -9,6 +9,7 @@ import {
   lifeTargetFor, meanLives, recordEvent, registerComponent, riskBeforeTarget, setLifeTarget, smuIndex, vendorStats, voidEvent, warrantyClaims,
   type ComponentData, type EventInput, type LifeTarget,
 } from '../src/components.js';
+import { canDecide, decideRequest, proposeLifeTarget, waitingOn, type ApprovalRequest } from '../src/approvals.js';
 import type { ConsoleContext } from '../src/console.js';
 import type { Role, SmuReading } from '../src/types.js';
 import { generateFleet } from '../src/synth/generate.js';
@@ -148,6 +149,36 @@ describe('targets, bands, buckets, cores', () => {
     expect(lifeTargetFor(r.records, '793F', 'engine', '2026-10-31')!.hours).toBe(20000);
     expect(lifeTargetFor(r.records, '793F', 'engine', '2026-11-01')!.hours).toBe(22000);
     expect(r.audit[0]).toMatchObject({ entity: 'life_target', before: expect.objectContaining({ hours: 20000 }) });
+  });
+  it('a target life change needs a superintendent who did not ask (decided 2026-10-28)', () => {
+    const input = { model: '793F', kind: 'engine' as const, hours: 22000, effectiveFrom: '2026-11-01', reason: 'New OEM bulletin' };
+    expect(proposeLifeTarget(ctx('supervisor'), targets, [], input).ok).toBe(false);
+    expect(proposeLifeTarget(ctx('reliability_engineer'), targets, [], { ...input, hours: 50 }).ok).toBe(false);
+    const asked = proposeLifeTarget(ctx('reliability_engineer', L('2026-10-28 09:00'), 'rae'), targets, [], input);
+    if (!asked.ok) throw new Error(asked.errors.join(' '));
+    const req = asked.records[0]!;
+    expect(req).toMatchObject({ kind: 'life_target', status: 'pending', title: 'Target life 22,000 h for 793F engine' });
+    expect(req.impact[0]).toBe('Replaces 20,000 h from 2026-11-01.');
+    // Asking twice for the same model, kind and date is refused while one waits.
+    expect(proposeLifeTarget(ctx('reliability_engineer'), targets, asked.records, input).ok).toBe(false);
+    // Nothing applies until it is approved.
+    expect(lifeTargetFor(targets, '793F', 'engine', '2026-11-01')!.hours).toBe(20000);
+    expect(canDecide('reliability_engineer', 'life_target')).toBe(false);
+    expect(canDecide('superintendent', 'life_target')).toBe(true);
+    expect(waitingOn(asked.records, 'sid', 'superintendent').map((r) => r.id)).toEqual([req.id]);
+    const state = { requests: asked.records as ApprovalRequest[], targets: [], users: [], lifeTargets: targets };
+    expect(decideRequest(ctx('reliability_engineer', L('2026-10-28 10:00'), 'rae2'), state, req.id, 'approve', '').ok).toBe(false);
+    // A superintendent who asked cannot approve their own.
+    const own = proposeLifeTarget(ctx('superintendent', L('2026-10-28 09:00'), 'sid'), targets, [], input);
+    if (!own.ok) throw new Error();
+    expect(decideRequest(ctx('superintendent', L('2026-10-28 10:00'), 'sid'), { ...state, requests: own.records }, own.records[0]!.id, 'approve', '').ok).toBe(false);
+    const done = decideRequest(ctx('superintendent', L('2026-10-28 10:00'), 'sid'), state, req.id, 'approve', '');
+    if (!done.ok) throw new Error(done.errors.join(' '));
+    const t = done.lifeTargets!.at(-1)!;
+    expect(t).toMatchObject({ hours: 22000, setBy: 'rae', approvedBy: 'sid', requestId: req.id, reason: 'New OEM bulletin' });
+    expect(done.records[0]).toMatchObject({ status: 'approved', appliedId: t.id });
+    expect(lifeTargetFor(done.lifeTargets!, '793F', 'engine', '2026-11-01')!.hours).toBe(22000);
+    expect(done.audit.map((a) => a.entity)).toEqual(['approval', 'life_target']);
   });
   it('bands', () => {
     expect([null, 0.5, 0.75, 0.89, 0.9, 1, 1.3].map((x) => bandOf(x))).toEqual(['none', 'green', 'amber', 'amber', 'red', 'past', 'past']);

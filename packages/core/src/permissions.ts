@@ -70,7 +70,7 @@ const MATRIX: Record<Action, Partial<Record<Role, Permission>>> = {
   edit_inspection_forms: { reliability_engineer: 'yes', superintendent: 'yes', admin: 'yes' },
   // docs/component-life.md: component events are recorded by those who run change-outs; target life is a reliability setting.
   record_components: { supervisor: 'yes', reliability_engineer: 'yes', superintendent: 'yes' },
-  edit_life_targets: { reliability_engineer: 'yes', superintendent: 'yes' },
+  edit_life_targets: { reliability_engineer: 'propose', superintendent: 'approve' },
   // Field mapping, imports, data-quality rules: data owner only. In phase 1a the Admin role is the data owner (11.7).
   manage_imports: { admin: 'yes' },
   manage_users: { superintendent: 'approve', admin: 'yes' },

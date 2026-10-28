@@ -197,11 +197,6 @@ export async function saveComponentRecord(siteId: string, c: Component | null, e
   if (audit.length) must(await remote!.rpc('app_log', { p_site: siteId, p_entries: audit }));
 }
 
-export async function saveLifeTarget(siteId: string, t: LifeTarget, audit: AuditEntry[]): Promise<void> {
-  must(await remote!.rpc('app_save_life_target', { p_site: siteId, t }));
-  if (audit.length) must(await remote!.rpc('app_log', { p_site: siteId, p_entries: audit }));
-}
-
 /** The audit log between two instants, newest first. Row-level security decides what comes back. */
 export async function loadAudit(siteId: string, from: string, to: string): Promise<AuditRecord[]> {
   return iso(must(await remote!.rpc('app_load_audit', { p_site: siteId, p_from: from, p_to: to }))) as AuditRecord[];
@@ -213,8 +208,8 @@ export async function saveRequests(siteId: string, rows: ApprovalRequest[], audi
   if (audit.length) must(await remote!.rpc('app_log', { p_site: siteId, p_entries: audit }));
 }
 
-/** A decision and what it applies, in one database transaction. */
-export async function saveDecision(siteId: string, id: string, decision: 'approved' | 'rejected', note: string, target: Target | undefined, audit: AuditEntry[]): Promise<void> {
+/** A decision and what it applies (a KPI target or a target life), in one database transaction. */
+export async function saveDecision(siteId: string, id: string, decision: 'approved' | 'rejected', note: string, target: Target | LifeTarget | undefined, audit: AuditEntry[]): Promise<void> {
   must(await remote!.rpc('app_decide_request', { p_site: siteId, p_id: id, p_decision: decision, p_note: note, p_target: target ?? null }));
   if (audit.length) must(await remote!.rpc('app_log', { p_site: siteId, p_entries: audit }));
 }

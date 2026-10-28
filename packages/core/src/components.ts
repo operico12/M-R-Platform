@@ -100,8 +100,12 @@ export interface LifeTarget {
   /** Site date it applies from. */
   effectiveFrom: string;
   reason: string;
+  /** The person who asked for it. */
   setBy: string;
   setAt: Iso;
+  /** The approval request it came from, and the superintendent who approved it. */
+  requestId?: string;
+  approvedBy?: string;
 }
 
 /** Board colours (docs/component-life.md): below the first is green, below the second amber, then red, then past target. */
@@ -320,8 +324,10 @@ export function lifeTargetFor(targets: LifeTarget[], model: string | undefined, 
 
 export interface LifeTargetInput { model: string; kind: ComponentKind; hours: number; effectiveFrom: string; reason: string }
 
+/** Checks and builds a target life. A reliability engineer asks for it and a superintendent approves it (proposeLifeTarget, decideRequest). */
 export function setLifeTarget(ctx: ConsoleContext, targets: LifeTarget[], input: LifeTargetInput): Ok<LifeTarget> | No {
-  if (!can(ctx.actor, 'edit_life_targets')) return no('Your role cannot set target life.');
+  const p = permission(ctx.actor.role, 'edit_life_targets');
+  if (p !== 'propose' && p !== 'approve') return no('Your role cannot set target life.');
   const e: string[] = [];
   if (!input.model.trim()) e.push('Pick the model.');
   if (!COMPONENT_KINDS.includes(input.kind)) e.push('Pick the component kind.');

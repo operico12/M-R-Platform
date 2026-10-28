@@ -5,7 +5,7 @@
 import {
   COMPONENT_KINDS, DEFAULT_LIFE_BANDS, EVENT_LABELS, KIND_LABELS, POSITIONS, REMOVAL_LABELS, STATUS_LABELS,
   allLives, burnRates, can, changeoutForecast, componentStates, coresOutstanding, costPerLifeHour, fitKind, forecastBuckets, lifeBoard, lifeRatio,
-  lifeTargetFor, positionById, recordEvent, registerComponent, riskBeforeTarget, setLifeTarget, smuIndex, vendorStats, voidEvent, warrantyClaims, withoutCosts,
+  lifeTargetFor, permission, positionById, proposeLifeTarget, recordEvent, registerComponent, riskBeforeTarget, smuIndex, vendorStats, voidEvent, warrantyClaims, withoutCosts,
   type ClaimStep, type ComponentKind, type ComponentState, type EventInput, type EventKind, type LifeBand, type ReceivedAs, type RemovalReason, type WeibullFit,
 } from '@mr/core';
 import { useMemo, useState, type ReactNode } from 'react';
@@ -334,10 +334,13 @@ function Targets({ d, today }: { d: Data; today: string }) {
   const models = [...new Set(app.ds.assets.map((a) => a.model))].sort();
   const [form, setForm] = useState({ model: models[0] ?? '', kind: 'engine' as ComponentKind, hours: '', from: today, reason: '' });
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
-  const allowed = can(app.actor, 'edit_life_targets');
+  const p = permission(app.actor.role, 'edit_life_targets');
+  const allowed = p === 'propose' || p === 'approve';
+  const pending = app.requests.filter((r) => r.kind === 'life_target' && r.status === 'pending');
+  const history = [...app.lifeTargets].filter((t) => t.requestId).sort((a, b) => Date.parse(b.setAt) - Date.parse(a.setAt)).slice(0, 10);
   const save = () => {
-    const r = app.runLifeTarget((ctx, list) => setLifeTarget(ctx, list, { model: form.model, kind: form.kind, hours: Number(form.hours), effectiveFrom: form.from, reason: form.reason }));
-    setMsg(r.ok ? { ok: true, text: 'Saved. It applies from the date given; lives that ended earlier keep the old target.' } : { ok: false, text: r.errors.join(' ') });
+    const r = app.runRequest((ctx) => proposeLifeTarget(ctx, app.lifeTargets, app.requests, { model: form.model, kind: form.kind, hours: Number(form.hours), effectiveFrom: form.from, reason: form.reason }));
+    setMsg(r.ok ? { ok: true, text: `Sent for approval: ${r.records.at(-1)!.title}. A superintendent who did not ask approves it in Console → Approvals; it applies from then.` } : { ok: false, text: r.errors.join(' ') });
     if (r.ok) setForm((f) => ({ ...f, hours: '', reason: '' }));
   };
   return (
@@ -356,17 +359,30 @@ function Targets({ d, today }: { d: Data; today: string }) {
         </div>
       </section>
       <section className="card">
-        <h3>Set a target life</h3>
-        {!allowed ? <p className="small muted">Reliability engineers and superintendents set target life.</p> : (
+        <h3>Ask for a target life change</h3>
+        <p className="small muted">{allowed ? 'A superintendent who did not ask approves it before it applies, the same as KPI targets.' : 'Reliability engineers and superintendents ask for target life changes; a superintendent approves them.'}</p>
+        {allowed && (
           <div className="stack" style={{ gap: 10 }}>
             <label className="field"><span>Model</span><select value={form.model} onChange={(e) => setForm({ ...form, model: e.target.value })}>{models.map((m) => <option key={m}>{m}</option>)}</select></label>
             <label className="field"><span>Component</span><select value={form.kind} onChange={(e) => setForm({ ...form, kind: e.target.value as ComponentKind })}>{COMPONENT_KINDS.map((k) => <option key={k} value={k}>{KIND_LABELS[k]}</option>)}</select></label>
             <label className="field"><span>Target life (h)</span><input inputMode="numeric" value={form.hours} onChange={(e) => setForm({ ...form, hours: e.target.value })} /></label>
             <label className="field"><span>Applies from (site date)</span><input type="date" value={form.from} onChange={(e) => setForm({ ...form, from: e.target.value })} /></label>
             <label className="field"><span>Reason</span><input value={form.reason} onChange={(e) => setForm({ ...form, reason: e.target.value })} placeholder="For example, OEM bulletin or site strategy review" /></label>
-            <button className="btn primary" onClick={save}>Save target life</button>
+            <button className="btn primary" onClick={save}>Send for approval</button>
             {msg && <div className={msg.ok ? 'card' : 'errors'} role="status">{msg.text}</div>}
           </div>
+        )}
+        {pending.length > 0 && (
+          <>
+            <h4>Waiting for approval</h4>
+            <ul className="small">{pending.map((r) => <li key={r.id}><a href="#/console/approvals">{r.title}</a> · asked by {app.userName(r.requestedBy)}</li>)}</ul>
+          </>
+        )}
+        {history.length > 0 && (
+          <>
+            <h4>Recent changes</h4>
+            <ul className="small">{history.map((t) => <li key={t.id}>{t.model} {KIND_LABELS[t.kind].toLowerCase()}: {h0(t.hours)} h from {t.effectiveFrom}, asked by {app.userName(t.setBy)}, approved by {t.approvedBy ? app.userName(t.approvedBy) : '—'}</li>)}</ul>
+          </>
         )}
       </section>
     </div>

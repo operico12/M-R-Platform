@@ -76,8 +76,11 @@ create table life_targets (
   hours int not null check (hours between 100 and 200000),
   effective_from date not null,
   reason text not null check (length(trim(reason)) > 0),
+  -- set_by is the person who asked; approved_by the superintendent who approved it (decided 2026-10-28).
   set_by uuid not null default auth.uid(),
-  set_at timestamptz not null default now()
+  set_at timestamptz not null default now(),
+  request_id uuid unique references change_requests(id) on delete restrict,
+  approved_by uuid
 );
 create index life_targets_site on life_targets (site_id, model, kind, effective_from);
 
@@ -161,12 +164,23 @@ begin
   return new;
 end $$;
 
+-- A target life comes only from an approved request, applied by the superintendent who approved it,
+-- with exactly the values that were asked for.
 create or replace function life_target_guard() returns trigger
 language plpgsql set search_path = public as $$
+declare r change_requests;
 begin
   if not is_client() then return new; end if;
   if tg_op = 'UPDATE' then raise exception 'A target life cannot be changed. Set a new one from a later date.' using errcode = 'insufficient_privilege'; end if;
-  new.set_by := auth.uid(); new.set_at := now();
+  select * into r from change_requests c
+  where c.id = new.request_id and c.site_id = new.site_id and c.kind = 'life_target' and c.status = 'approved'
+    and c.decided_by = auth.uid() and (c.applied_id is null or c.applied_id = new.id);
+  if not found
+     or r.payload->'input'->>'model' is distinct from new.model or r.payload->'input'->>'kind' is distinct from new.kind
+     or (r.payload->'input'->>'hours')::int is distinct from new.hours or (r.payload->'input'->>'effectiveFrom')::date is distinct from new.effective_from then
+    raise exception 'A target life needs an approved request, applied by the superintendent who approved it.' using errcode = 'insufficient_privilege';
+  end if;
+  new.reason := r.reason; new.set_by := r.requested_by; new.approved_by := auth.uid(); new.set_at := now();
   return new;
 end $$;
 
@@ -196,7 +210,7 @@ create policy component_events_update on component_events for update using (site
 create policy component_event_costs_read on component_event_costs for select using (site_role(site_id) in ('reliability_engineer', 'superintendent', 'admin'));
 create policy component_event_costs_insert on component_event_costs for insert with check (site_role(site_id) in ('reliability_engineer', 'superintendent'));
 create policy life_targets_read on life_targets for select using (is_site_member(site_id));
-create policy life_targets_insert on life_targets for insert with check (site_role(site_id) in ('reliability_engineer', 'superintendent'));
+create policy life_targets_insert on life_targets for insert with check (site_role(site_id) = 'superintendent');
 
 grant select, insert, update on components, component_events to authenticated;
 grant select, insert on component_event_costs, life_targets to authenticated;
@@ -236,12 +250,53 @@ begin
   end if;
 end $$;
 
-create or replace function app_save_life_target(p_site uuid, t jsonb) returns void
+-- Target life is asked for like a KPI target (docs/approvals.md): a reliability engineer or
+-- superintendent asks, and a superintendent who did not ask approves and applies it.
+alter table change_requests drop constraint change_requests_kind_check;
+alter table change_requests add constraint change_requests_kind_check check (kind in ('target', 'life_target', 'role_grant', 'acting_role'));
+drop policy change_requests_insert on change_requests;
+create policy change_requests_insert on change_requests for insert with check (
+  requested_by = auth.uid() and (
+    (kind in ('target', 'life_target') and site_role(site_id) in ('reliability_engineer', 'superintendent'))
+    or (kind in ('role_grant', 'acting_role') and site_role(site_id) = 'admin')
+  )
+);
+
+-- A decision and what it applies, in one transaction. A target life is built from the request
+-- itself; only the new record's id comes from the app.
+create or replace function app_decide_request(p_site uuid, p_id uuid, p_decision text, p_note text, p_target jsonb default null) returns void
 language plpgsql security invoker set search_path = public as $$
+declare r change_requests;
 begin
-  insert into life_targets (id, tenant_id, site_id, model, kind, hours, effective_from, reason)
-  select (t->>'id')::uuid, s.tenant_id, p_site, t->>'model', t->>'kind', (t->>'hours')::int, (t->>'effectiveFrom')::date, t->>'reason'
-  from sites s where s.id = p_site;
+  if p_decision not in ('approved', 'rejected') then raise exception 'Unknown decision'; end if;
+  update change_requests set status = p_decision, decision_note = nullif(trim(coalesce(p_note, '')), '')
+  where id = p_id and site_id = p_site and status = 'pending'
+  returning * into r;
+  if not found then raise exception 'Request not found or already decided.' using errcode = 'no_data_found'; end if;
+  if p_decision = 'rejected' then return; end if;
+
+  if r.kind = 'target' then
+    if p_target is null then raise exception 'The target to apply is missing.'; end if;
+    insert into targets (id, tenant_id, site_id, kpi, fleet_name, model, target, amber, effective_from, reason, set_at, created_by, request_id)
+    values ((p_target->>'id')::uuid, r.tenant_id, p_site, p_target->>'kpi', p_target->>'fleet', p_target->>'model', (p_target->>'value')::numeric,
+      (p_target->>'amber')::numeric, (p_target->>'effectiveFrom')::timestamptz, r.reason, now(), r.requested_by, r.id);
+    update change_requests set applied_id = (p_target->>'id')::uuid where id = r.id;
+  elsif r.kind = 'life_target' then
+    if p_target is null then raise exception 'The target life to apply is missing.'; end if;
+    insert into life_targets (id, tenant_id, site_id, model, kind, hours, effective_from, reason, request_id)
+    values ((p_target->>'id')::uuid, r.tenant_id, p_site, r.payload->'input'->>'model', r.payload->'input'->>'kind', (r.payload->'input'->>'hours')::int,
+      (r.payload->'input'->>'effectiveFrom')::date, r.reason, r.id);
+    update change_requests set applied_id = (p_target->>'id')::uuid where id = r.id;
+  elsif r.kind = 'role_grant' then
+    update site_members set role = (r.payload->>'role')::app_role where site_id = p_site and user_id = (r.payload->>'userId')::uuid and retired_at is null;
+    if not found then raise exception 'That user is no longer active.'; end if;
+    update change_requests set applied_id = (r.payload->>'userId')::uuid where id = r.id;
+  else
+    update site_members set acting_role = (r.payload->>'role')::app_role, acting_until = (r.payload->>'until')::timestamptz
+    where site_id = p_site and user_id = (r.payload->>'userId')::uuid and retired_at is null;
+    if not found then raise exception 'That user is no longer active.'; end if;
+    update change_requests set applied_id = (r.payload->>'userId')::uuid where id = r.id;
+  end if;
 end $$;
 
 -- Costs come back only where row-level security lets this person read them.
@@ -257,8 +312,8 @@ language sql stable security invoker set search_path = public as $$
       'coreDueBy', e.core_due_by, 'claim', e.claim, 'note', e.note, 'enteredBy', e.entered_by, 'enteredAt', e.entered_at,
       'voidedBy', e.voided_by, 'voidedAt', e.voided_at, 'voidReason', e.void_reason))
       order by e.at, e.entered_at) from component_events e left join component_event_costs k on k.event_id = e.id where e.site_id = p_site), '[]'),
-    'targets', coalesce((select jsonb_agg(jsonb_build_object('id', t.id, 'model', t.model, 'kind', t.kind, 'hours', t.hours, 'effectiveFrom', t.effective_from,
-      'reason', t.reason, 'setBy', t.set_by, 'setAt', t.set_at) order by t.set_at) from life_targets t where t.site_id = p_site), '[]'));
+    'targets', coalesce((select jsonb_agg(jsonb_strip_nulls(jsonb_build_object('id', t.id, 'model', t.model, 'kind', t.kind, 'hours', t.hours, 'effectiveFrom', t.effective_from,
+      'reason', t.reason, 'setBy', t.set_by, 'setAt', t.set_at, 'requestId', t.request_id, 'approvedBy', t.approved_by)) order by t.set_at) from life_targets t where t.site_id = p_site), '[]'));
 $$;
 
-grant execute on function app_save_component, app_save_component_event, app_save_life_target, app_load_components to authenticated;
+grant execute on function app_save_component, app_save_component_event, app_load_components to authenticated;
