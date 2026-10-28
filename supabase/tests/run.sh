@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# Apply every migration to a scratch database and run the schema smoke test.
+# Needs a running Postgres; set PGHOST/PGPORT/PGUSER as usual.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+DB=${MR_TEST_DB:-mr_test}
+psql -v ON_ERROR_STOP=1 -q -d postgres -c "drop database if exists $DB" -c "create database $DB"
+psql -v ON_ERROR_STOP=1 -q -d "$DB" -f tests/auth_stub.sql
+for f in migrations/*.sql; do psql -v ON_ERROR_STOP=1 -q -d "$DB" -f "$f"; done
+psql -v ON_ERROR_STOP=1 -q -d "$DB" -f tests/schema_smoke.sql

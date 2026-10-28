@@ -1,0 +1,23 @@
+{
+  "name": "mr-platform",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Maintenance & Reliability platform that runs alongside the ERP/CMMS",
+  "scripts": {
+    "test": "pnpm -r test",
+    "typecheck": "pnpm -r typecheck",
+    "dev": "pnpm --filter @mr/web dev",
+    "build": "pnpm -r build",
+    "synth": "pnpm --filter @mr/core synth",
+    "test:db": "bash supabase/tests/run.sh"
+  },
+  "packageManager": "pnpm@10.0.0",
+  "engines": {
+    "node": ">=20"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild"
+    ]
+  }
+}
