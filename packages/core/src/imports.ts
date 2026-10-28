@@ -285,8 +285,14 @@ function otherSiteFilter(rd: Reader, m: ImportMapping) {
   return (row: string[]) => !col || rd.get(row, col.column).toUpperCase() === col.value.toUpperCase();
 }
 
+const span = (h: number) => (h < 1 ? `${Math.round(h * 60)} min` : `${h.toFixed(1)} h`);
+const rowsWord = (n: number) => (n === 1 ? '1 row was' : `${n} rows were`);
 const m0 = (ctx: ImportContext) => ctx.mapping ?? MAXIMO_DEFAULT_MAPPING;
-const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
+/** Field-by-field equality that ignores key order and undefined fields. */
+const same = (a: object, b: object) => {
+  const norm = (o: object) => JSON.stringify(Object.entries(o).filter(([, v]) => v !== undefined).sort(([x], [y]) => (x < y ? -1 : 1)));
+  return norm(a) === norm(b);
+};
 const clean = <T extends object>(o: T): T => Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined && v !== '')) as T;
 
 // ---------- assets ----------
@@ -347,7 +353,7 @@ export function importAssets(table: Table, existing: Asset[], ctx: ImportContext
       stats.inserted++;
     }
   });
-  if (otherSite) issues.push({ row: 0, severity: 'warning', rule: 'other_site', message: `${otherSite} rows were for another site and were left out.` });
+  if (otherSite) issues.push({ row: 0, severity: 'warning', rule: 'other_site', message: `${rowsWord(otherSite)} for another site and left out.` });
   const inFile = new Set([...seen.keys()]);
   const notInFile = result.records.filter((a) => a.externalAssetId && !inFile.has(a.externalAssetId.toUpperCase()) && !result.inserted.includes(a));
   if (notInFile.length && seen.size) {
@@ -467,7 +473,7 @@ export function importWorkOrders(table: Table, existing: WorkOrder[], assets: As
   for (const [ext, n] of unknownUnits) {
     issues.push({ row: 0, severity: 'warning', rule: 'unknown_unit', sourceId: ext, message: `${n} work order${n > 1 ? 's' : ''} for ${ext}, which is not in the asset register. Loaded without a unit; import the asset list first.` });
   }
-  if (otherSite) issues.push({ row: 0, severity: 'warning', rule: 'other_site', message: `${otherSite} rows were for another site and were left out.` });
+  if (otherSite) issues.push({ row: 0, severity: 'warning', rule: 'other_site', message: `${rowsWord(otherSite)} for another site and left out.` });
   return result;
 }
 
@@ -558,8 +564,8 @@ export function importSmu(table: Table, existing: SmuReading[], assets: Asset[],
     const tol = s.smuClockToleranceHours;
     if (prev && r.hours < prev.hours) { fail('smu_backwards', `${name}: ${r.hours} h is lower than ${prev.hours} h read earlier. If the meter was replaced, record the meter change before loading.`); continue; }
     if (next && next.hours < r.hours) { fail('smu_backwards', `${name}: ${r.hours} h is higher than ${next.hours} h read later.`); continue; }
-    if (prev && r.hours - prev.hours > (t - ms(prev.at)) / HOUR_MS + tol) { fail('smu_faster_than_clock', `${name}: rose ${(r.hours - prev.hours).toFixed(1)} h in ${((t - ms(prev.at)) / HOUR_MS).toFixed(1)} clock hours.`); continue; }
-    if (next && next.hours - r.hours > (ms(next.at) - t) / HOUR_MS + tol) { fail('smu_faster_than_clock', `${name}: the next reading rises ${(next.hours - r.hours).toFixed(1)} h in ${((ms(next.at) - t) / HOUR_MS).toFixed(1)} clock hours after this one.`); continue; }
+    if (prev && r.hours - prev.hours > (t - ms(prev.at)) / HOUR_MS + tol) { fail('smu_faster_than_clock', `${name}: rose ${(r.hours - prev.hours).toFixed(1)} h in ${span((t - ms(prev.at)) / HOUR_MS)} of clock time.`); continue; }
+    if (next && next.hours - r.hours > (ms(next.at) - t) / HOUR_MS + tol) { fail('smu_faster_than_clock', `${name}: the next reading rises ${(next.hours - r.hours).toFixed(1)} h in ${span((ms(next.at) - t) / HOUR_MS)} of clock time after this one.`); continue; }
     list.splice(lo + 1, 0, r);
     byUnit.set(r.unitId, list);
     firstLine.set(k, line);
@@ -570,7 +576,7 @@ export function importSmu(table: Table, existing: SmuReading[], assets: Asset[],
   for (const [ext, lines] of unknownUnits) {
     issues.push({ row: lines[0]!, severity: 'error', rule: 'unknown_unit', sourceId: ext, message: `${lines.length} reading${lines.length > 1 ? 's' : ''} for ${ext}, which is not in the asset register. Not loaded.` });
   }
-  if (otherSite) issues.push({ row: 0, severity: 'warning', rule: 'other_site', message: `${otherSite} rows were for another site and were left out.` });
+  if (otherSite) issues.push({ row: 0, severity: 'warning', rule: 'other_site', message: `${rowsWord(otherSite)} for another site and left out.` });
   result.records.sort((a, b) => ms(a.at) - ms(b.at));
   return result;
 }

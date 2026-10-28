@@ -60,7 +60,7 @@ export function DataQuality() {
                 <td>{e.effectiveAt ? <strong>{siteTime(e.effectiveAt, tz, true)} (back-dated)</strong> : '—'}</td>
                 <td>{e.userId}</td>
                 <td>{e.action}</td>
-                <td>{unit((e.after as { unitId: string }).unitId)}</td>
+                <td>{(e.after as { unitId?: string } | null)?.unitId ? unit((e.after as { unitId: string }).unitId) : "—"}</td>
                 <td>{e.reason ?? ''}</td>
               </tr>
             ))}</tbody>

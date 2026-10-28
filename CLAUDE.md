@@ -28,6 +28,7 @@ pnpm test              # core unit and golden tests
 pnpm typecheck
 pnpm dev               # web app on http://localhost:5173 (synthetic fleet)
 pnpm synth out.json    # write a synthetic fleet to a file
+pnpm synth out.json --csv csv   # also write Maximo-style CSV files for the import screen
 pnpm test:db           # apply migrations to a scratch Postgres and run the schema smoke test
 ```
 

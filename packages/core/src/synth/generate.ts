@@ -8,7 +8,8 @@
 
 import { DEFAULT_FLAG_RULES } from '../config.js';
 import { HOUR_MS, ms, shiftsBetween, toIso, twelveHourCalendar, type ShiftCalendar } from '../time.js';
-import type { Asset, AssetLifecycleInterval, DownFlag, LocationInterval, ShopLine, ShopLineClosure, SmuReading, Stage, StageInterval } from '../types.js';
+import { normaliseWoNumber } from '../imports.js';
+import type { Asset, AssetLifecycleInterval, DownFlag, WorkOrder, LocationInterval, ShopLine, ShopLineClosure, SmuReading, Stage, StageInterval } from '../types.js';
 
 export interface SynthOptions {
   seed?: number;
@@ -30,6 +31,8 @@ export interface Dataset {
   fieldLocations: string[];
   flags: DownFlag[];
   smu: SmuReading[];
+  /** Work orders as the ERP would hold them. */
+  workOrders: WorkOrder[];
   generatedAt: string;
 }
 
@@ -95,7 +98,7 @@ export function generateFleet(opts: SynthOptions = {}): Dataset {
       model: big ? '797F' : '793F',
       assetClass: 'mobile',
       serial: `${big ? 'LAJ' : 'SSP'}${String(10000 + i * 37).padStart(5, '0')}`,
-      externalAssetId: `MX-${num}`,
+      externalAssetId: `HT${num}`, // Maximo ASSETNUM is the unit number here
     };
   });
 
@@ -364,6 +367,41 @@ export function generateFleet(opts: SynthOptions = {}): Dataset {
     return [close(f, t)];
   }
 
+  // Work orders as Maximo would hold them: one per flag work order, plus a
+  // backlog of open work not yet done (deferred defects, upcoming PMs).
+  flags.sort((a, b) => ms(a.start) - ms(b.start));
+  const wos = new Map<string, WorkOrder>();
+  const woFor = (a: Asset, number: string, w: Omit<WorkOrder, 'id' | 'tenantId' | 'siteId' | 'sourceSystem' | 'sourceId' | 'number' | 'numberNormalised' | 'assetId' | 'externalAssetId'>) => {
+    const key = normaliseWoNumber(number);
+    if (wos.has(key)) return;
+    wos.set(key, { id: `wo-${key}`, tenantId, siteId, assetId: a.id, externalAssetId: a.externalAssetId, sourceSystem: 'maximo', sourceId: key, number: key, numberNormalised: key, ...w });
+  };
+  const unitOf = new Map(assets.map((a) => [a.id, a]));
+  for (const f of flags) {
+    const a = unitOf.get(f.unitId)!;
+    for (const n of f.workOrders) {
+      const pm = n.startsWith('PM-');
+      const done = f.state === 'released';
+      woFor(a, n, {
+        woType: pm ? 'PM' : 'CM', workClass: pm ? 'pm' : 'corrective', status: done ? 'COMP' : 'INPRG', open: !done,
+        priority: pm ? '3' : '1', description: pm ? `${f.reasonCode} service` : `${f.system ?? f.reasonCode}: ${f.release?.failureModes?.[0] ?? 'repair'}`,
+        reportedAt: f.start, completedAt: f.end ?? undefined, sourceModifiedAt: f.end ?? f.start,
+      });
+    }
+  }
+  const backlog = ['Weeping hose at hoist cylinder', 'Cracked step', 'Seat belt worn', 'Body liner wear check', 'Replace cab filter', 'Light bar inoperative', 'Oil sample follow-up'];
+  for (const a of assets) {
+    const n = Math.floor(r() * 4);
+    for (let i = 0; i < n; i++) {
+      const at = round5(end - r() * 21 * 24 * HOUR_MS);
+      const st = pick(['WAPPR', 'APPR', 'WMATL', 'WSCH']);
+      woFor(a, String(Math.floor(200000 + r() * 799999)), {
+        woType: 'CM', workClass: 'corrective', status: st, open: true, priority: pick(['2', '3', '4']),
+        description: pick(backlog), reportedAt: toIso(at), sourceModifiedAt: toIso(at),
+      });
+    }
+  }
+
   return {
     tenantId,
     site: { id: siteId, name: 'Demo mine (synthetic)', timeZone: tz },
@@ -373,7 +411,8 @@ export function generateFleet(opts: SynthOptions = {}): Dataset {
     shopLines,
     closures,
     fieldLocations: FIELD_LOCATIONS,
-    flags: flags.sort((a, b) => ms(a.start) - ms(b.start)),
+    flags,
+    workOrders: [...wos.values()].sort((a, b) => ms(a.reportedAt!) - ms(b.reportedAt!)),
     smu: smu.sort((a, b) => ms(a.at) - ms(b.at)),
     generatedAt: toIso(end),
   };

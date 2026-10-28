@@ -23,6 +23,7 @@ export type Action =
   | 'edit_shop_structure'
   | 'change_flag_rules'
   | 'change_targets'
+  | 'manage_imports'
   | 'manage_users';
 
 const MATRIX: Record<Action, Partial<Record<Role, Permission>>> = {
@@ -44,6 +45,8 @@ const MATRIX: Record<Action, Partial<Record<Role, Permission>>> = {
   edit_shop_structure: { reliability_engineer: 'propose', admin: 'yes' },
   change_flag_rules: { reliability_engineer: 'propose', superintendent: 'approve', admin: 'propose' },
   change_targets: { reliability_engineer: 'propose', superintendent: 'approve' },
+  // Field mapping, imports, data-quality rules: data owner only. In phase 1a the Admin role is the data owner (11.7).
+  manage_imports: { admin: 'yes' },
   manage_users: { superintendent: 'approve', admin: 'yes' },
 };
 

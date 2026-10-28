@@ -2,6 +2,7 @@ import type { Role } from '@mr/core';
 import { useEffect, useState } from 'react';
 import { Board } from './screens/Board';
 import { DataQuality, FlagRules } from './screens/DataQuality';
+import { Imports } from './screens/Imports';
 import { Performance } from './screens/Performance';
 import { ShopLines } from './screens/ShopLines';
 import { UnitList, UnitPage } from './screens/Units';
@@ -23,6 +24,7 @@ const NAV: Array<[string, string]> = [
   ['#/units', 'Units'],
   ['#/performance', 'Performance'],
   ['#/quality', 'Data quality'],
+  ['#/import', 'Data import'],
   ['#/rules', 'Flag rules'],
 ];
 
@@ -57,6 +59,7 @@ function Shell() {
     case 'unit': page = <UnitPage id={arg ?? ''} />; break;
     case 'performance': page = <Performance />; break;
     case 'quality': page = <DataQuality />; break;
+    case 'import': page = <Imports />; break;
     case 'rules': page = <FlagRules />; break;
     default: page = <Board tv={false} />;
   }

@@ -14,12 +14,28 @@ import {
   type DownFlag,
   type FlagContext,
   type FlagRulesConfig,
+  type ImportKind,
+  type ImportResult,
   type Role,
 } from '@mr/core';
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 
+/** One file load, as a sync run (plan 6.3: every run is logged with counts and errors). */
+export interface ImportRun {
+  id: string;
+  at: string;
+  by: string;
+  fileName: string;
+  kind: ImportKind;
+  stats: ImportResult<unknown>['stats'];
+  issues: ImportResult<unknown>['issues'];
+}
+
 export interface AppState {
   ds: Dataset;
+  importRuns: ImportRun[];
+  applyImport: (fileName: string, r: ImportResult<unknown>) => void;
+  newId: () => string;
   flags: DownFlag[];
   audit: AuditEntry[];
   rules: FlagRulesConfig;
@@ -48,7 +64,8 @@ function readTheme(): 'light' | 'dark' {
 }
 
 export function AppProvider({ children }: { children: ReactNode }) {
-  const ds = useMemo(() => generateFleet({ seed: 42, units: 40, days: 120 }), []);
+  const [ds, setDs] = useState<Dataset>(() => generateFleet({ seed: 42, units: 40, days: 120 }));
+  const [importRuns, setImportRuns] = useState<ImportRun[]>([]);
   const [flags, setFlags] = useState<DownFlag[]>(ds.flags);
   const [audit, setAudit] = useState<AuditEntry[]>([]);
   const [now, setNow] = useState(() => new Date().toISOString());
@@ -112,7 +129,25 @@ export function AppProvider({ children }: { children: ReactNode }) {
     [actor, ds, flags, rules],
   );
 
-  const value: AppState = { ds, flags, audit, rules, now, actor, setRole, run, lastSync: ds.generatedAt, theme, setTheme };
+  const applyImport = useCallback(
+    (fileName: string, r: ImportResult<unknown>) => {
+      const at = new Date().toISOString();
+      setDs((prev) => {
+        if (r.kind === 'assets') return { ...prev, assets: r.records as Dataset['assets'] };
+        if (r.kind === 'work_orders') return { ...prev, workOrders: r.records as Dataset['workOrders'] };
+        return { ...prev, smu: r.records as Dataset['smu'] };
+      });
+      const run: ImportRun = { id: newId(), at, by: actor.userId, fileName, kind: r.kind, stats: r.stats, issues: r.issues };
+      setImportRuns((prev) => [run, ...prev]);
+      setAudit((prev) => [
+        { at, userId: actor.userId, action: `import_${r.kind}`, entity: 'import_run', entityId: run.id, before: null, after: { fileName, ...r.stats }, reason: `File import: ${fileName}` },
+        ...prev,
+      ]);
+    },
+    [actor],
+  );
+
+  const value: AppState = { ds, importRuns, applyImport, newId, flags, audit, rules, now, actor, setRole, run, lastSync: ds.generatedAt, theme, setTheme };
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
 
