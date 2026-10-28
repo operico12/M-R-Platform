@@ -42,14 +42,13 @@ For a hosted build, set the same two values as build environment variables. Neve
 
 ## 6. Host it on Vercel
 
-`vercel.json` in the repo root has the install, build and output settings, so the defaults work.
-
-1. On vercel.com, Add New, Project, and import the GitHub repo. Either keep Root Directory `apps/web` with the Vite preset, or set it to the repo root (then `vercel.json` gives the settings).
-   Until the stacked PRs are merged, set Settings, Git, Production Branch to the newest branch.
-2. Under Environment Variables, add `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` (the anon key only). Then Deploy.
+1. On vercel.com, Add New, Project, and import the GitHub repo.
+   - Root Directory: `apps/web`. Application Preset: Vite. Leave the build settings as they are; Vercel installs the whole pnpm workspace.
+   - Until the stacked PRs are merged, set Settings, Git, Production Branch to the newest branch.
+2. Under Environment Variables, add `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` (the anon key only), for Production and Preview. Then deploy.
 3. In Supabase, Authentication, URL configuration:
    - Site URL: the production address, for example `https://m-r-platform.vercel.app`.
-   - Redirect URLs: the same address, plus `https://*-<your-vercel-team>.vercel.app/**` for preview deployments.
+   - Redirect URLs: the same address, plus `https://m-r-platform-*.vercel.app/**` for preview deployments.
 
 The app uses `#/` page addresses, so no rewrite rules are needed.
 
