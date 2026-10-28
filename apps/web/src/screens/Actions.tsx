@@ -127,14 +127,14 @@ function sourceFrom(query: string, app: ReturnType<typeof useApp>): ActionSource
     const query = q.get('q') ?? '';
     return { kind, query, label: describeQuery(query, app.ds) };
   }
-  return { kind: 'manual', label: '' };
+  return { kind: 'manual', label: q.get('label') ?? '' };
 }
 
 function NewAction({ query }: { query: string }) {
   const app = useApp();
   const tz = app.ds.site.timeZone;
   const source = useMemo(() => sourceFrom(query, app), [query]);
-  const [title, setTitle] = useState('');
+  const [title, setTitle] = useState(() => new URLSearchParams(query).get('title') ?? '');
   const [detail, setDetail] = useState('');
   const [owner, setOwner] = useState(app.people.some((u) => u.id === app.actor.userId) ? app.actor.userId : app.people[0]?.id ?? '');
   const [due, setDue] = useState(siteToday(app.now, tz, 14));

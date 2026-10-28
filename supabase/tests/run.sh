@@ -20,3 +20,4 @@ psql -v ON_ERROR_STOP=1 -q -d "$DB" -f tests/analyses_api.sql
 psql -v ON_ERROR_STOP=1 -q -d "$DB" -f tests/views_api.sql
 psql -v ON_ERROR_STOP=1 -q -d "$DB" -f tests/components_api.sql
 psql -v ON_ERROR_STOP=1 -q -d "$DB" -f tests/condition_api.sql
+psql -v ON_ERROR_STOP=1 -q -d "$DB" -f tests/rcm_api.sql
