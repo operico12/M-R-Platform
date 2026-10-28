@@ -29,6 +29,8 @@ export type Action =
   | 'change_targets'
   | 'edit_alert_rules'
   | 'view_audit_log'
+  | 'sign_off_inspections'
+  | 'edit_inspection_forms'
   | 'manage_imports'
   | 'manage_users';
 
@@ -61,6 +63,9 @@ const MATRIX: Record<Action, Partial<Record<Role, Permission>>> = {
   edit_alert_rules: { reliability_engineer: 'yes', superintendent: 'yes', admin: 'yes' },
   // Plan 11.4 "Audit log": superintendent, data owner, system admin (read-only).
   view_audit_log: { superintendent: 'yes', admin: 'yes' },
+  // docs/inspections.md: sign-off mirrors "sign shift handover"; forms are site setup.
+  sign_off_inspections: { supervisor: 'yes', superintendent: 'yes' },
+  edit_inspection_forms: { reliability_engineer: 'yes', superintendent: 'yes', admin: 'yes' },
   // Field mapping, imports, data-quality rules: data owner only. In phase 1a the Admin role is the data owner (11.7).
   manage_imports: { admin: 'yes' },
   manage_users: { superintendent: 'approve', admin: 'yes' },
@@ -91,6 +96,8 @@ export const ACTION_LABELS: Record<Action, string> = {
   change_targets: 'Change KPI targets',
   edit_alert_rules: 'Edit alert rules and thresholds',
   view_audit_log: 'Read the full audit log',
+  sign_off_inspections: 'Sign off inspections',
+  edit_inspection_forms: 'Edit inspection forms',
   manage_imports: 'Field mapping, imports and data-quality rules',
   manage_users: 'Manage users and roles',
 };

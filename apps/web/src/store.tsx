@@ -35,6 +35,8 @@ import {
   type RuleAlert,
   ruleAlerts,
   type AlertSettings,
+  type Inspection,
+  type InspectionForm,
   DEFAULT_ALERT_SETTINGS,
   DEFAULT_WORK_SETTINGS,
   can,
@@ -42,9 +44,11 @@ import {
   targetValue,
 } from '@mr/core';
 import { demoImprovements } from './data/demo-improve';
-import { saveAlertAnswer, saveDecision, saveRequests, saveFlags, saveRecords, saveSetting, saveTarget, saveTaskStatus, type Loaded } from './data/remote';
+import { loadPhoto, saveForms, sendInspection, sendPhoto, SendError, saveAlertAnswer, saveDecision, saveRequests, saveFlags, saveRecords, saveSetting, saveTarget, saveTaskStatus, type Loaded } from './data/remote';
 import { demoProjects } from './data/demo-projects';
-import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { demoForms, demoInspections } from './data/demo-inspections';
+import { backoffMs, forgetPhoto, localPhoto, readDrafts, readOutbox, writeDrafts, writeOutbox, type OutboxItem } from './inspect/device';
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 
 /** One file load, as a sync run (plan 6.3: every run is logged with counts and errors). */
 export interface ImportRun {
@@ -87,6 +91,27 @@ export interface AppState {
   /** Reliability and threshold alerts true now, answered or not (docs/alert-rules.md). */
   ruleAlerts: RuleAlert[];
   runAlertAnswer: (cmd: (ctx: ConsoleContext) => ConsoleResult<AlertAnswer>) => ConsoleResult<AlertAnswer>;
+  /** Inspection forms, every version (docs/inspections.md). */
+  forms: InspectionForm[];
+  runForms: (cmd: (ctx: ConsoleContext) => ConsoleResult<InspectionForm>) => ConsoleResult<InspectionForm>;
+  /** Submitted, signed-off and voided inspections, including ones still in this device's outbox. */
+  inspections: Inspection[];
+  /** This person's drafts on this device. */
+  drafts: Inspection[];
+  /** Keep a draft on the device (start, or each answer as it is filled in). */
+  saveDraft: (i: Inspection) => boolean;
+  /** Drop a draft from the device; it never reached the database. */
+  discardDraft: (id: string) => void;
+  /** Run an inspection command. A submitted or changed inspection goes to the outbox. */
+  runInspection: (cmd: (ctx: ConsoleContext) => ConsoleResult<Inspection>, photos?: Array<{ id: string; itemId: string }>) => ConsoleResult<Inspection>;
+  /** Waiting to reach the database, oldest first. */
+  outbox: OutboxItem[];
+  /** Try the outbox now. */
+  sendOutbox: () => void;
+  /** Take a refused item out of the outbox. */
+  dropOutboxItem: (id: string) => void;
+  /** A photo by id, from this device or the database. */
+  photo: (id: string) => Promise<string | undefined>;
   /** Run an action, RCA or project command; same as runConsole. */
   runImprove: <T>(kind: 'actions' | 'rcas' | 'projects', cmd: (ctx: ConsoleContext) => ConsoleResult<T>) => ConsoleResult<T>;
   /** Users who can own an action or lead an RCA: active, and signed in at least once. */
@@ -362,9 +387,135 @@ export function AppProvider({ children, live, onReload, onSignOut }: { children:
     },
     [actor, ds, live, failed],
   );
+
+  // ---------- inspections (docs/inspections.md) ----------
+  const [forms, setForms] = useState<InspectionForm[]>(() => live?.forms ?? demoForms(ds));
+  const [serverInspections, setServerInspections] = useState<Inspection[]>(() => live?.inspections ?? demoInspections(ds, demoForms(ds)));
+  const me = actor.userId;
+  const [drafts, setDrafts] = useState<Inspection[]>(() => readDrafts(siteId, me));
+  const [outbox, setOutboxState] = useState<OutboxItem[]>(() => readOutbox(siteId, me));
+  const outboxRef = useRef(outbox);
+  useEffect(() => { setDrafts(readDrafts(siteId, me)); const o = readOutbox(siteId, me); outboxRef.current = o; setOutboxState(o); }, [siteId, me]);
+  const setOutbox = useCallback((o: OutboxItem[]) => { outboxRef.current = o; setOutboxState(o); writeOutbox(siteId, me, o); }, [siteId, me]);
+  // What the screen shows: the database's list, with this device's unsent changes on top.
+  const inspections = useMemo(() => {
+    const m = new Map(serverInspections.map((i) => [i.id, i]));
+    for (const o of outbox) if (o.inspection) m.set(o.inspection.id, o.inspection);
+    return [...m.values()];
+  }, [serverInspections, outbox]);
+  const runForms = useCallback(
+    (cmd: (ctx: ConsoleContext) => ConsoleResult<InspectionForm>): ConsoleResult<InspectionForm> => {
+      const r = cmd({ actor, now: new Date().toISOString(), newId, timeZone: ds.site.timeZone, calendar: ds.calendar });
+      if (r.ok) {
+        setForms(r.records);
+        setAudit((prev) => [...r.audit, ...prev]);
+        // New versions and newly retired ones are new objects; the rest are unchanged.
+        if (live) saveForms(siteId, r.records.filter((f) => !forms.includes(f)), r.audit).catch(failed);
+      }
+      return r;
+    },
+    [actor, ds, live, failed, forms],
+  );
+  const saveDraft = useCallback((i: Inspection) => {
+    const next = [...readDrafts(siteId, me).filter((x) => x.id !== i.id), i];
+    setDrafts(next);
+    return writeDrafts(siteId, me, next);
+  }, [siteId, me]);
+  const discardDraft = useCallback((id: string) => {
+    const d = readDrafts(siteId, me).find((x) => x.id === id);
+    for (const a of Object.values(d?.answers ?? {})) for (const p of a.photos ?? []) forgetPhoto(p);
+    const next = readDrafts(siteId, me).filter((x) => x.id !== id);
+    setDrafts(next);
+    writeDrafts(siteId, me, next);
+  }, [siteId, me]);
+  const sending = useRef(false);
+  /** `now` ignores the wait between tries: the connection is back, or the person pressed Try now. */
+  const sendOutbox = useCallback(async (now = false) => {
+    if (sending.current) return;
+    sending.current = true;
+    const tried = new Set<string>();
+    try {
+      for (;;) {
+        const t = Date.now();
+        const item = outboxRef.current.find((o) => !o.refused && !tried.has(o.id) && (now || Date.parse(o.nextAt) <= t));
+        if (item) tried.add(item.id);
+        if (!item) break;
+        // Keep the order for one inspection: a later step waits for the earlier one.
+        const earlier = outboxRef.current.find((o) => o.inspectionId === item.inspectionId && o !== item && !o.refused && outboxRef.current.indexOf(o) < outboxRef.current.indexOf(item));
+        if (earlier) break;
+        try {
+          if (typeof navigator !== 'undefined' && navigator.onLine === false) throw new SendError('No connection', false);
+          const audit = item.audit.map((a) => (item.offline ? { ...a, offline: true, effectiveAt: a.at } : a));
+          if (item.kind === 'inspection') {
+            if (live) await sendInspection(siteId, item.inspection!, audit);
+          } else {
+            const data = localPhoto(item.photo!.id);
+            if (!data) throw new SendError('The photo is no longer on this device.', true);
+            if (live) await sendPhoto(siteId, { id: item.photo!.id, inspectionId: item.inspectionId, itemId: item.photo!.itemId, data });
+            if (live) forgetPhoto(item.photo!.id);
+          }
+          if (item.inspection) setServerInspections((prev) => [...prev.filter((x) => x.id !== item.inspection!.id), item.inspection!]);
+          setOutbox(outboxRef.current.filter((o) => o.id !== item.id));
+        } catch (e) {
+          const refused = e instanceof SendError && e.refused;
+          const tries = item.tries + 1;
+          setOutbox(outboxRef.current.map((o) => (o.id === item.id ? { ...o, tries, refused, lastError: e instanceof Error ? e.message : String(e), nextAt: new Date(Date.now() + backoffMs(tries)).toISOString() } : o)));
+          if (!refused) break;
+        }
+      }
+    } finally {
+      sending.current = false;
+    }
+  }, [live, siteId, setOutbox]);
+  // Retry when the connection comes back, and every 15 s while anything waits.
+  useEffect(() => {
+    const back = () => void sendOutbox(true);
+    window.addEventListener('online', back);
+    const t = setInterval(() => { if (outboxRef.current.some((o) => !o.refused)) void sendOutbox(); }, 15_000);
+    void sendOutbox();
+    return () => { window.removeEventListener('online', back); clearInterval(t); };
+  }, [sendOutbox]);
+  const runInspection = useCallback(
+    (cmd: (ctx: ConsoleContext) => ConsoleResult<Inspection>, photos: Array<{ id: string; itemId: string }> = []): ConsoleResult<Inspection> => {
+      const nowIso = new Date().toISOString();
+      const r = cmd({ actor, now: nowIso, newId, timeZone: ds.site.timeZone, calendar: ds.calendar });
+      if (r.ok) {
+        setAudit((prev) => [...r.audit, ...prev]);
+        const ids = new Set(r.audit.map((a) => a.entityId));
+        const changed = r.records.filter((x) => ids.has(x.id) && x.status !== 'draft');
+        const offline = typeof navigator !== 'undefined' && navigator.onLine === false;
+        const items: OutboxItem[] = [];
+        for (const i of changed) {
+          items.push({ id: newId(), kind: 'inspection', inspectionId: i.id, inspection: i, audit: r.audit.filter((a) => a.entityId === i.id), queuedAt: nowIso, offline, tries: 0, nextAt: nowIso });
+          for (const p of photos) items.push({ id: newId(), kind: 'photo', inspectionId: i.id, photo: p, audit: [], queuedAt: nowIso, offline, tries: 0, nextAt: nowIso });
+          // A submitted draft leaves the device's drafts.
+          if (drafts.some((d) => d.id === i.id)) {
+            const next = readDrafts(siteId, me).filter((d) => d.id !== i.id);
+            setDrafts(next);
+            writeDrafts(siteId, me, next);
+          }
+        }
+        setOutbox([...outboxRef.current, ...items]);
+        setNow(nowIso);
+        setTimeout(() => void sendOutbox(), 0);
+      }
+      return r;
+    },
+    [actor, ds, drafts, siteId, me, setOutbox, sendOutbox],
+  );
+  const dropOutboxItem = useCallback((id: string) => setOutbox(outboxRef.current.filter((o) => o.id !== id)), [setOutbox]);
+  const photoCache = useRef(new Map<string, string>());
+  const photo = useCallback(async (id: string) => {
+    const hit = photoCache.current.get(id) ?? localPhoto(id);
+    if (hit) return hit;
+    if (!live) return undefined;
+    const data = await loadPhoto(siteId, id);
+    if (data) photoCache.current.set(id, data);
+    return data;
+  }, [live, siteId]);
   const people = useMemo(() => users.filter((u) => !u.retiredAt && !u.invited), [users]);
   const userName = useCallback((id: string) => users.find((u) => u.id === id)?.name ?? 'Unknown user', [users]);
-  const value: AppState = { ds, workSettings, runWorkSettings, alertSettings, runAlertSettings, alertAnswers, runAlertAnswer, ruleAlerts: ruleAlertList, requests, runRequest, decide, actions: improve.actions, rcas: improve.rcas, projects: improve.projects, runImprove, people, userName, targets, targetOf, targetList, users, codes, runConsole, mode: live ? 'live' : 'demo', syncError, clearSyncError: () => setSyncError(null), signOut: onSignOut, importRuns, applyImport, newId, flags, audit, rules, now, actor, setRole, run, lastSync: ds.generatedAt, theme, setTheme };
+  const value: AppState = { ds, forms, runForms, inspections, drafts, saveDraft, discardDraft, runInspection, outbox, sendOutbox: () => void sendOutbox(true), dropOutboxItem, photo, workSettings, runWorkSettings, alertSettings, runAlertSettings, alertAnswers, runAlertAnswer, ruleAlerts: ruleAlertList, requests, runRequest, decide, actions: improve.actions, rcas: improve.rcas, projects: improve.projects, runImprove, people, userName, targets, targetOf, targetList, users, codes, runConsole, mode: live ? 'live' : 'demo', syncError, clearSyncError: () => setSyncError(null), signOut: onSignOut, importRuns, applyImport, newId, flags, audit, rules, now, actor, setRole, run, lastSync: ds.generatedAt, theme, setTheme };
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
 

@@ -3,7 +3,7 @@
 // The anon key is public by design: row-level security decides what each
 // signed-in person can read and write. Never put the service_role key here.
 
-import { DEFAULT_FLAG_RULES, DEFAULT_WORK_SETTINGS, withAlertDefaults, type ApprovalRequest, type AuditRecord, type AlertAnswer, type AlertSettings, emptyFishbone, type WorkSettings, type ImprovementAction, type Project, type Rca, type AuditEntry, type Dataset, type DownFlag, type FlagRulesConfig, type ReasonCode, type Role, type ShiftCalendar, type SiteUser, type SmuReading, type Target, type WorkOrder, type Asset } from '@mr/core';
+import { DEFAULT_FLAG_RULES, DEFAULT_WORK_SETTINGS, withAlertDefaults, type ApprovalRequest, type AuditRecord, type AlertAnswer, type AlertSettings, emptyFishbone, type WorkSettings, type ImprovementAction, type Project, type Rca, type AuditEntry, type Dataset, type DownFlag, type FlagRulesConfig, type ReasonCode, type Role, type ShiftCalendar, type SiteUser, type SmuReading, type Target, type WorkOrder, type Asset, type Inspection, type InspectionForm } from '@mr/core';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 
 const url = import.meta.env.VITE_SUPABASE_URL as string | undefined;
@@ -33,6 +33,8 @@ export interface Loaded {
   alertSettings: AlertSettings;
   alertAnswers: AlertAnswer[];
   requests: ApprovalRequest[];
+  forms: InspectionForm[];
+  inspections: Inspection[];
 }
 
 /** Postgres returns "+00:00" offsets; the app compares ISO strings, so make them all "Z". */
@@ -62,6 +64,7 @@ export async function loadSite(siteId: string): Promise<Loaded> {
     remote!.rpc('app_load_alert_answers', { p_site: siteId }),
     remote!.rpc('app_load_approvals', { p_site: siteId }),
   ]);
+  const insp = await loadInspections(siteId);
   const work = iso(must(wk)) as { plans: Array<Partial<WorkOrder> & { id: string }>; settings: { work?: Partial<WorkSettings>; alerts?: Partial<AlertSettings> } };
   const plans = new Map(work.plans.map((x) => [x.id, x]));
   const num = (v: unknown) => (v === undefined || v === null ? undefined : Number(v));
@@ -108,6 +111,8 @@ export async function loadSite(siteId: string): Promise<Loaded> {
     alertSettings: withAlertDefaults(work.settings.alerts),
     alertAnswers: iso(must(ans)) as AlertAnswer[],
     requests: approvals.requests,
+    forms: insp.forms,
+    inspections: insp.inspections,
     rcas: improve.rcas.map((r) => ({ ...r, fishbone: { ...emptyFishbone(), ...(r.fishbone as Partial<Rca['fishbone']>) } })),
     users: d.users.map((u) => { const a = acting.get(u.id); return a ? { ...u, actingRole: a.role, actingUntil: a.until } : u; }),
     codes: d.codes,
@@ -162,4 +167,44 @@ export async function saveRequests(siteId: string, rows: ApprovalRequest[], audi
 export async function saveDecision(siteId: string, id: string, decision: 'approved' | 'rejected', note: string, target: Target | undefined, audit: AuditEntry[]): Promise<void> {
   must(await remote!.rpc('app_decide_request', { p_site: siteId, p_id: id, p_decision: decision, p_note: note, p_target: target ?? null }));
   if (audit.length) must(await remote!.rpc('app_log', { p_site: siteId, p_entries: audit }));
+}
+
+/** Forms, and inspections from the last 180 days plus older ones with open defects. */
+async function loadInspections(siteId: string): Promise<{ forms: InspectionForm[]; inspections: Inspection[] }> {
+  const since = new Date(Date.now() - 180 * 864e5).toISOString();
+  const d = iso(must(await remote!.rpc('app_load_inspections', { p_site: siteId, p_since: since }))) as { forms: InspectionForm[]; inspections: Inspection[] };
+  return {
+    forms: d.forms.map((f) => ({ ...f, models: f.models ?? [] })),
+    inspections: d.inspections.map((i) => ({ ...i, smu: i.smu === undefined ? undefined : Number(i.smu), score: i.score === undefined || i.score === null ? null : Number(i.score), defects: i.defects ?? [] })),
+  };
+}
+
+export async function saveForms(siteId: string, forms: InspectionForm[], audit: AuditEntry[]): Promise<void> {
+  for (const f of forms) must(await remote!.rpc('app_save_form', { p_site: siteId, f }));
+  if (audit.length) must(await remote!.rpc('app_log', { p_site: siteId, p_entries: audit }));
+}
+
+/** An outbox send failed. `refused` means the database said no, so retrying will not help. */
+export class SendError extends Error {
+  constructor(message: string, readonly refused: boolean) { super(message); }
+}
+
+function sent(r: { error: { message: string; code?: string } | null }): void {
+  if (!r.error) return;
+  // Postgres classes 22 (bad data), 23 (rule broken), 42 (not allowed) and P0 (raised by a guard).
+  throw new SendError(r.error.message, /^(22|23|42|P0)/.test(r.error.code ?? ''));
+}
+
+/** A submitted inspection, or a later step on it. The database sets who and when. */
+export async function sendInspection(siteId: string, i: Inspection, audit: AuditEntry[]): Promise<void> {
+  sent(await remote!.rpc('app_save_inspection', { p_site: siteId, i }));
+  if (audit.length) sent(await remote!.rpc('app_log', { p_site: siteId, p_entries: audit }));
+}
+
+export async function sendPhoto(siteId: string, p: { id: string; inspectionId: string; itemId: string; data: string }): Promise<void> {
+  sent(await remote!.rpc('app_save_photo', { p_site: siteId, p }));
+}
+
+export async function loadPhoto(siteId: string, id: string): Promise<string | undefined> {
+  return (must(await remote!.rpc('app_load_photo', { p_site: siteId, p_id: id })) as string | null) ?? undefined;
 }
