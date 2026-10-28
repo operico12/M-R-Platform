@@ -3,7 +3,7 @@
 // The anon key is public by design: row-level security decides what each
 // signed-in person can read and write. Never put the service_role key here.
 
-import { DEFAULT_FLAG_RULES, DEFAULT_WORK_SETTINGS, withAlertDefaults, type AlertAnswer, type AlertSettings, emptyFishbone, type WorkSettings, type ImprovementAction, type Project, type Rca, type AuditEntry, type Dataset, type DownFlag, type FlagRulesConfig, type ReasonCode, type Role, type ShiftCalendar, type SiteUser, type SmuReading, type Target, type WorkOrder, type Asset } from '@mr/core';
+import { DEFAULT_FLAG_RULES, DEFAULT_WORK_SETTINGS, withAlertDefaults, type AuditRecord, type AlertAnswer, type AlertSettings, emptyFishbone, type WorkSettings, type ImprovementAction, type Project, type Rca, type AuditEntry, type Dataset, type DownFlag, type FlagRulesConfig, type ReasonCode, type Role, type ShiftCalendar, type SiteUser, type SmuReading, type Target, type WorkOrder, type Asset } from '@mr/core';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 
 const url = import.meta.env.VITE_SUPABASE_URL as string | undefined;
@@ -137,4 +137,9 @@ export async function saveSetting(siteId: string, key: 'work' | 'alerts', value:
 export async function saveAlertAnswer(siteId: string, a: AlertAnswer, audit: AuditEntry[]): Promise<void> {
   must(await remote!.rpc('app_save_alert_answer', { p_site: siteId, p_answer: a }));
   if (audit.length) must(await remote!.rpc('app_log', { p_site: siteId, p_entries: audit }));
+}
+
+/** The audit log between two instants, newest first. Row-level security decides what comes back. */
+export async function loadAudit(siteId: string, from: string, to: string): Promise<AuditRecord[]> {
+  return iso(must(await remote!.rpc('app_load_audit', { p_site: siteId, p_from: from, p_to: to }))) as AuditRecord[];
 }

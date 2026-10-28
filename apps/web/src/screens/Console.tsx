@@ -27,10 +27,11 @@ import { siteTime } from '../format';
 import { useApp } from '../store';
 import { FlagRules } from './DataQuality';
 import { AlertRulesPage } from './AlertRules';
+import { AuditLogPage } from './AuditLog';
 import { WorkSettingsPage } from './WorkSettings';
 
-type Tab = 'users' | 'targets' | 'work' | 'alerts' | 'codes';
-const TABS: Array<[Tab, string]> = [['users', 'Users'], ['targets', 'Targets'], ['work', 'Work settings'], ['alerts', 'Alert rules'], ['codes', 'Flags and codes']];
+type Tab = 'users' | 'targets' | 'work' | 'alerts' | 'codes' | 'audit';
+const TABS: Array<[Tab, string]> = [['users', 'Users'], ['targets', 'Targets'], ['work', 'Work settings'], ['alerts', 'Alert rules'], ['codes', 'Flags and codes'], ['audit', 'Audit log']];
 
 export function Console({ tab }: { tab: string }) {
   const t: Tab = TABS.some(([k]) => k === tab) ? (tab as Tab) : 'users';
@@ -45,6 +46,7 @@ export function Console({ tab }: { tab: string }) {
       {t === 'work' && <WorkSettingsPage />}
       {t === 'alerts' && <AlertRulesPage />}
       {t === 'codes' && <Codes />}
+      {t === 'audit' && <AuditLogPage />}
     </div>
   );
 }

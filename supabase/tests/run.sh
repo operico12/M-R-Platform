@@ -13,3 +13,4 @@ psql -v ON_ERROR_STOP=1 -q -d "$DB" -f tests/improve_api.sql
 psql -v ON_ERROR_STOP=1 -q -d "$DB" -f tests/projects_api.sql
 psql -v ON_ERROR_STOP=1 -q -d "$DB" -f tests/work_api.sql
 psql -v ON_ERROR_STOP=1 -q -d "$DB" -f tests/alerts_api.sql
+psql -v ON_ERROR_STOP=1 -q -d "$DB" -f tests/audit_api.sql
