@@ -9,7 +9,8 @@
     "dev": "pnpm --filter @mr/web dev",
     "build": "pnpm -r build",
     "synth": "pnpm --filter @mr/core synth",
-    "test:db": "bash supabase/tests/run.sh"
+    "test:db": "bash supabase/tests/run.sh",
+    "seed:sql": "pnpm --silent --filter @mr/core seed:sql"
   },
   "packageManager": "pnpm@10.0.0",
   "engines": {

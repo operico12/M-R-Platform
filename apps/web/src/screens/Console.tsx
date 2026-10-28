@@ -124,12 +124,12 @@ function UserForm({ user, onDone }: { user: SiteUser | null; onDone: () => void 
 
   const save = () => {
     const r = user
-      ? app.runConsole((c) => changeUser(c, app.users, user.id, input, reason), app.setUsers)
-      : app.runConsole((c) => addUser(c, app.users, input), app.setUsers);
+      ? app.runConsole('users', (c) => changeUser(c, app.users, user.id, input, reason))
+      : app.runConsole('users', (c) => addUser(c, app.users, input));
     if (r.ok) onDone(); else setErrors(r.errors);
   };
   const remove = () => {
-    const r = app.runConsole((c) => retireUser(c, app.users, user!.id, reason), app.setUsers);
+    const r = app.runConsole('users', (c) => retireUser(c, app.users, user!.id, reason));
     if (r.ok) onDone(); else setErrors(r.errors);
   };
   return (
@@ -182,7 +182,7 @@ function Targets() {
   const save = () => {
     const v = Number(value) / (pct ? 100 : 1);
     const a = Number(amber || 0) / (pct ? 100 : 1);
-    const r = app.runConsole((c) => setTarget(c, app.targetList, { kpi, fleet: 'Haul trucks', model: model || undefined, value: v, amber: a, from: from === 'next_shift' ? 'next_shift' : date, reason }), app.setTargetList);
+    const r = app.runConsole('targets', (c) => setTarget(c, app.targetList, { kpi, fleet: 'Haul trucks', model: model || undefined, value: v, amber: a, from: from === 'next_shift' ? 'next_shift' : date, reason }));
     if (r.ok) { setErrors(null); setSaved(`Saved. ${TARGET_KPIS[kpi].label} target ${fmtTarget(kpi, v)} applies from ${siteTime(r.records.at(-1)!.effectiveFrom, tz, true)}.`); setValue(''); setReason(''); }
     else { setSaved(null); setErrors(r.errors); }
   };
@@ -295,12 +295,12 @@ function CodeForm({ code, onDone }: { code: ReasonCode | null; onDone: () => voi
   const inUse = code ? app.flags.filter((f) => f.reasonCode === code.label).length : 0;
   const save = () => {
     const r = code
-      ? app.runConsole((x) => editCode(x, app.codes, code.id, { label, appliesTo, externalCode: ext }, reason), app.setCodes)
-      : app.runConsole((x) => addCode(x, app.codes, { code: c, label, appliesTo, externalCode: ext }), app.setCodes);
+      ? app.runConsole('codes', (x) => editCode(x, app.codes, code.id, { label, appliesTo, externalCode: ext }, reason))
+      : app.runConsole('codes', (x) => addCode(x, app.codes, { code: c, label, appliesTo, externalCode: ext }));
     if (r.ok) onDone(); else setErrors(r.errors);
   };
   const retire = () => {
-    const r = app.runConsole((x) => retireCode(x, app.codes, code!.id, reason), app.setCodes);
+    const r = app.runConsole('codes', (x) => retireCode(x, app.codes, code!.id, reason));
     if (r.ok) onDone(); else setErrors(r.errors);
   };
   return (

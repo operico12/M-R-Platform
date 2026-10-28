@@ -27,6 +27,7 @@ import {
   defaultReasonCodes,
   targetValue,
 } from '@mr/core';
+import { saveFlags, saveRecords, saveTarget, type Loaded } from './data/remote';
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 
 /** One file load, as a sync run (plan 6.3: every run is logged with counts and errors). */
@@ -49,11 +50,14 @@ export interface AppState {
   targetList: Target[];
   users: SiteUser[];
   codes: ReasonCode[];
-  /** Run a console command; on success keep its records and audit entries. */
-  runConsole: <T>(cmd: (ctx: ConsoleContext) => ConsoleResult<T>, keep: (records: T[]) => void) => ConsoleResult<T>;
-  setTargetList: (t: Target[]) => void;
-  setUsers: (u: SiteUser[]) => void;
-  setCodes: (c: ReasonCode[]) => void;
+  /** Run a console command; on success keep its records and audit entries (and save them when live). */
+  runConsole: <T>(kind: 'targets' | 'users' | 'codes', cmd: (ctx: ConsoleContext) => ConsoleResult<T>) => ConsoleResult<T>;
+  /** 'demo' runs on the synthetic fleet in this browser; 'live' reads and saves through Supabase. */
+  mode: 'demo' | 'live';
+  /** Set when a save to the database failed; the screen shows it and the data is reloaded. */
+  syncError: string | null;
+  clearSyncError: () => void;
+  signOut?: () => void;
   importRuns: ImportRun[];
   applyImport: (fileName: string, r: ImportResult<unknown>) => void;
   newId: () => string;
@@ -72,7 +76,8 @@ export interface AppState {
 const Ctx = createContext<AppState | null>(null);
 
 let idSeq = 0;
-const newId = () => `local-${Date.now().toString(36)}-${++idSeq}`;
+// Live records need database ids (uuid); demo ids just need to be unique.
+const newId = () => (globalThis.crypto?.randomUUID ? globalThis.crypto.randomUUID() : `local-${Date.now().toString(36)}-${++idSeq}`);
 
 function readTheme(): 'light' | 'dark' {
   try {
@@ -84,13 +89,14 @@ function readTheme(): 'light' | 'dark' {
   return window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
 }
 
-export function AppProvider({ children }: { children: ReactNode }) {
-  const [ds, setDs] = useState<Dataset>(() => generateFleet({ seed: 42, units: 40, days: 120 }));
+export function AppProvider({ children, live, onReload, onSignOut }: { children: ReactNode; live?: Loaded; onReload?: () => void; onSignOut?: () => void }) {
+  const [ds, setDs] = useState<Dataset>(() => live?.ds ?? generateFleet({ seed: 42, units: 40, days: 120 }));
+  const [syncError, setSyncError] = useState<string | null>(null);
   const [importRuns, setImportRuns] = useState<ImportRun[]>([]);
-  const [targetList, setTargetList] = useState<Target[]>([]);
-  const [codes, setCodes] = useState<ReasonCode[]>(defaultReasonCodes);
+  const [targetList, setTargetList] = useState<Target[]>(() => live?.targets ?? []);
+  const [codes, setCodes] = useState<ReasonCode[]>(() => (live?.codes.length ? live.codes : defaultReasonCodes()));
   // Demo people, one per role, so "Viewing as" acts as a real user. Names are fictional.
-  const [users, setUsers] = useState<SiteUser[]>(() => [
+  const [users, setUsers] = useState<SiteUser[]>(() => live?.users ?? [
     ['viewer', 'Vic Viewer'], ['technician', 'Tia Technician'], ['supervisor', 'Sam Supervisor'],
     ['reliability_engineer', 'Rae Reliability'], ['superintendent', 'Sol Superintendent'], ['admin', 'Ada Admin'],
   ].map(([role, name]) => ({ id: `demo-${role}`, name: name!, email: `${role}@example.com`, role: role as Role, scope: ['*'], addedAt: '2026-01-01T00:00:00.000Z' })));
@@ -99,7 +105,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [now, setNow] = useState(() => new Date().toISOString());
   const [role, setRole] = useState<Role>('supervisor');
   const [theme, setThemeState] = useState<'light' | 'dark'>(readTheme);
-  const rules = DEFAULT_FLAG_RULES;
+  const rules = live?.rules ?? DEFAULT_FLAG_RULES;
+  const siteId = ds.site.id;
+  // A failed save means the screen no longer matches the database: say so, then reload.
+  const failed = useCallback((e: unknown) => { setSyncError(e instanceof Error ? e.message : String(e)); onReload?.(); }, [onReload]);
 
   useEffect(() => {
     const t = setInterval(() => setNow(new Date().toISOString()), 60_000);
@@ -119,7 +128,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  const actor: Actor = useMemo(() => ({ userId: `demo-${role}`, role, scope: ['*'] }), [role]);
+  const actor: Actor = useMemo(
+    () => (live ? { userId: live.me, role: live.role, scope: live.users.find((u) => u.id === live.me)?.scope ?? [] } : { userId: `demo-${role}`, role, scope: ['*'] }),
+    [role, live],
+  );
 
   const run = useCallback(
     (asset: Asset, cmd: (ctx: FlagContext) => CommandResult): CommandResult => {
@@ -151,10 +163,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
         });
         setAudit((prev) => [...r.audit, ...prev]);
         setNow(nowIso);
+        if (live) saveFlags(siteId, r.flags, r.audit).catch(failed);
       }
       return r;
     },
-    [actor, ds, flags, rules],
+    [actor, ds, flags, rules, live, failed],
   );
 
   const applyImport = useCallback(
@@ -167,12 +180,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
       });
       const run: ImportRun = { id: newId(), at, by: actor.userId, fileName, kind: r.kind, stats: r.stats, issues: r.issues };
       setImportRuns((prev) => [run, ...prev]);
-      setAudit((prev) => [
-        { at, userId: actor.userId, action: `import_${r.kind}`, entity: 'import_run', entityId: run.id, before: null, after: { fileName, ...r.stats }, reason: `File import: ${fileName}` },
-        ...prev,
-      ]);
+      const entry: AuditEntry = { at, userId: actor.userId, action: `import_${r.kind}`, entity: 'import_run', entityId: run.id, before: null, after: { fileName, ...r.stats }, reason: `File import: ${fileName}` };
+      setAudit((prev) => [entry, ...prev]);
+      if (live) {
+        const changed = [...r.inserted, ...r.updated.map((u) => u.after)];
+        saveRecords(siteId, r.kind, changed, [entry]).catch(failed);
+      }
     },
-    [actor],
+    [actor, live, failed],
   );
 
   const scope = { fleet: 'Haul trucks' };
@@ -180,18 +195,27 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const targets: PackTargets = { pa: targetOf('pa')!.value, utilisation: targetOf('utilisation')!.value };
 
   const runConsole = useCallback(
-    <T,>(cmd: (ctx: ConsoleContext) => ConsoleResult<T>, keep: (records: T[]) => void): ConsoleResult<T> => {
+    <T,>(kind: 'targets' | 'users' | 'codes', cmd: (ctx: ConsoleContext) => ConsoleResult<T>): ConsoleResult<T> => {
       const nowIso = new Date().toISOString();
       const r = cmd({ actor, now: nowIso, newId, timeZone: ds.site.timeZone, calendar: ds.calendar });
       if (r.ok) {
-        keep(r.records);
+        if (kind === 'targets') setTargetList(r.records as Target[]);
+        else if (kind === 'users') setUsers(r.records as SiteUser[]);
+        else setCodes(r.records as ReasonCode[]);
         setAudit((prev) => [...r.audit, ...prev]);
+        if (live) {
+          // Save only the records this command touched.
+          const ids = new Set(r.audit.map((a) => a.entityId));
+          const changed = (r.records as Array<{ id: string }>).filter((x) => ids.has(x.id));
+          const p = kind === 'targets' ? Promise.all(changed.map((t) => saveTarget(siteId, t as Target, r.audit))) : saveRecords(siteId, kind, changed, r.audit);
+          p.catch(failed);
+        }
       }
       return r;
     },
-    [actor, ds],
+    [actor, ds, live, failed],
   );
-  const value: AppState = { ds, targets, targetOf, targetList, users, codes, runConsole, setTargetList, setUsers, setCodes, importRuns, applyImport, newId, flags, audit, rules, now, actor, setRole, run, lastSync: ds.generatedAt, theme, setTheme };
+  const value: AppState = { ds, targets, targetOf, targetList, users, codes, runConsole, mode: live ? 'live' : 'demo', syncError, clearSyncError: () => setSyncError(null), signOut: onSignOut, importRuns, applyImport, newId, flags, audit, rules, now, actor, setRole, run, lastSync: ds.generatedAt, theme, setTheme };
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
 

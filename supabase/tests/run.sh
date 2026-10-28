@@ -8,3 +8,4 @@ psql -v ON_ERROR_STOP=1 -q -d postgres -c "drop database if exists $DB" -c "crea
 psql -v ON_ERROR_STOP=1 -q -d "$DB" -f tests/auth_stub.sql
 for f in migrations/*.sql; do psql -v ON_ERROR_STOP=1 -q -d "$DB" -f "$f"; done
 psql -v ON_ERROR_STOP=1 -q -d "$DB" -f tests/schema_smoke.sql
+psql -v ON_ERROR_STOP=1 -q -d "$DB" -f tests/app_api.sql

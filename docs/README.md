@@ -18,3 +18,5 @@ has not settled is a setting in code, not a hard-coded choice.
 | A10 | Test data plan and golden dataset | Plan 3.2, Appendix A and A7 HT107 examples encoded; more Appendix E cases in `rules.test.ts` | `packages/core/test` |
 | A11 | Glossary | Not started | |
 | A12 | Project instruction file | Done | [`CLAUDE.md`](../CLAUDE.md) |
+
+Setup: [connecting a Supabase project](setup-supabase.md).
