@@ -7,3 +7,4 @@ export * from './kpis.js';
 export * from './alerts.js';
 export * from './synth/generate.js';
 export * from './imports.js';
+export * from './filters.js';

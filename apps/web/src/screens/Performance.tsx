@@ -87,7 +87,7 @@ export function Performance() {
         </section>
 
         <section className="card">
-          <h3>Unscheduled downtime by system, last 4 weeks</h3>
+          <h3>Unscheduled downtime by system, last 4 weeks <a className="small" href="#/analysis?type=unscheduled">Filter and drill down →</a></h3>
           <div style={{ height: 260 }}>
             <ResponsiveContainer>
               <ComposedChart data={pareto.map((r) => ({ system: r.key, hours: Math.round(r.hours), cumulative: Math.round(r.cumulative * 100) }))} margin={{ top: 8, right: 0, bottom: 40, left: -10 }}>
@@ -127,7 +127,7 @@ export function Performance() {
               {bad.map(({ a, k }) => (
                 <tr key={a.id}>
                   <td><a href={`#/unit/${a.id}`}>{a.unitNumber}</a></td>
-                  <td className="num">{fmtHours(k.unscheduledDownHours)}</td>
+                  <td className="num"><a href={`#/analysis?type=unscheduled&unit=${a.id}`}>{fmtHours(k.unscheduledDownHours)}</a></td>
                   <td className="num">{k.failures}</td>
                   <td className="num">{fmtPct(k.pa)}</td>
                 </tr>

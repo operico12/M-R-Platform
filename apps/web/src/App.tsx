@@ -1,6 +1,7 @@
 import type { Role } from '@mr/core';
 import { useEffect, useState } from 'react';
 import { Board } from './screens/Board';
+import { Analysis } from './screens/Analysis';
 import { DataQuality, FlagRules } from './screens/DataQuality';
 import { Imports } from './screens/Imports';
 import { Performance } from './screens/Performance';
@@ -23,6 +24,7 @@ const NAV: Array<[string, string]> = [
   ['#/lines', 'Shop lines'],
   ['#/units', 'Units'],
   ['#/performance', 'Performance'],
+  ['#/analysis', 'Downtime analysis'],
   ['#/quality', 'Data quality'],
   ['#/import', 'Data import'],
   ['#/rules', 'Flag rules'],
@@ -41,7 +43,8 @@ function Shell() {
   const hash = useHash();
   const app = useApp();
   const tv = hash.startsWith('#/tv');
-  const [path, arg] = hash.replace(/^#\//, '').split('/');
+  const [route, query = ''] = hash.replace(/^#\//, '').split('?');
+  const [path, arg] = (route ?? '').split('/');
 
   useEffect(() => {
     if (!tv) return;
@@ -58,6 +61,7 @@ function Shell() {
     case 'units': page = <UnitList />; break;
     case 'unit': page = <UnitPage id={arg ?? ''} />; break;
     case 'performance': page = <Performance />; break;
+    case 'analysis': page = <Analysis query={query} />; break;
     case 'quality': page = <DataQuality />; break;
     case 'import': page = <Imports />; break;
     case 'rules': page = <FlagRules />; break;

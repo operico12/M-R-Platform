@@ -97,7 +97,7 @@ main { padding: var(--s4); min-width: 0; }
 .card h3 { margin: 0 0 var(--s2); font-size: 15px; }
 .grid { display: grid; gap: var(--s3); }
 .grid.kpis { grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); }
-.grid.two { grid-template-columns: repeat(auto-fit, minmax(380px, 1fr)); }
+.grid.two { grid-template-columns: repeat(auto-fit, minmax(min(380px, 100%), 1fr)); }
 
 .kpi .value { font-size: 30px; font-weight: 700; line-height: 1.1; }
 .kpi .label { font-size: 13px; color: var(--text-2); display: flex; gap: 6px; align-items: center; }
@@ -191,3 +191,18 @@ td.num, th.num { text-align: right; }
 
 .stack > * + * { margin-top: var(--s3); }
 .legend { display: flex; gap: var(--s3); font-size: 13px; flex-wrap: wrap; }
+
+/* ---------- analytics filter bar (plan 7.5) ---------- */
+label.btn { display: inline-flex; align-items: center; }
+.filterbar { display: flex; flex-wrap: wrap; gap: var(--s2); align-items: center; }
+.filterbar details { position: relative; }
+.filterbar summary { list-style: none; min-height: 40px; padding: 0 12px; border: 1px solid var(--border); border-radius: 20px; background: var(--surface); display: inline-flex; align-items: center; gap: 6px; cursor: pointer; font-size: 14px; }
+.filterbar summary::-webkit-details-marker { display: none; }
+.filterbar summary.on { border-color: var(--brand); color: var(--brand); font-weight: 600; }
+.filterbar .pop { position: absolute; z-index: 20; top: calc(100% + 4px); left: 0; min-width: 220px; max-height: 320px; overflow: auto; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: var(--s2); box-shadow: 0 6px 24px rgba(0, 0, 0, 0.18); }
+.filterbar details:not([open]) .pop { display: none; }
+.filterbar .pop label { display: flex; gap: 8px; align-items: center; min-height: 36px; padding: 0 4px; font-size: 14px; cursor: pointer; }
+.filterbar input[type='date'] { min-height: 40px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); padding: 0 8px; }
+.active-chips { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: var(--s2); }
+.active-chips button { min-height: 32px; border-radius: 16px; border: 1px solid var(--brand); background: transparent; color: var(--brand); padding: 0 10px; cursor: pointer; font-size: 13px; }
+@media (max-width: 600px) { .filterbar .pop { position: fixed; left: 16px; right: 16px; top: auto; } }
