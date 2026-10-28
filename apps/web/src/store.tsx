@@ -18,6 +18,14 @@ import {
   type ImportResult,
   type PackTargets,
   type Role,
+  type ConsoleContext,
+  type ConsoleResult,
+  type ReasonCode,
+  type SiteUser,
+  type Target,
+  type TargetKpi,
+  defaultReasonCodes,
+  targetValue,
 } from '@mr/core';
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 
@@ -34,8 +42,18 @@ export interface ImportRun {
 
 export interface AppState {
   ds: Dataset;
-  /** KPI targets. Placeholders until set in the console (plan 11.4). */
+  /** PA and utilisation targets in force now, for the haul truck fleet. */
   targets: PackTargets;
+  /** Target in force now for a KPI, with its amber band; `set` is false while it is still the placeholder. */
+  targetOf: (kpi: TargetKpi) => { value: number; amber: number; set: boolean } | undefined;
+  targetList: Target[];
+  users: SiteUser[];
+  codes: ReasonCode[];
+  /** Run a console command; on success keep its records and audit entries. */
+  runConsole: <T>(cmd: (ctx: ConsoleContext) => ConsoleResult<T>, keep: (records: T[]) => void) => ConsoleResult<T>;
+  setTargetList: (t: Target[]) => void;
+  setUsers: (u: SiteUser[]) => void;
+  setCodes: (c: ReasonCode[]) => void;
   importRuns: ImportRun[];
   applyImport: (fileName: string, r: ImportResult<unknown>) => void;
   newId: () => string;
@@ -69,6 +87,13 @@ function readTheme(): 'light' | 'dark' {
 export function AppProvider({ children }: { children: ReactNode }) {
   const [ds, setDs] = useState<Dataset>(() => generateFleet({ seed: 42, units: 40, days: 120 }));
   const [importRuns, setImportRuns] = useState<ImportRun[]>([]);
+  const [targetList, setTargetList] = useState<Target[]>([]);
+  const [codes, setCodes] = useState<ReasonCode[]>(defaultReasonCodes);
+  // Demo people, one per role, so "Viewing as" acts as a real user. Names are fictional.
+  const [users, setUsers] = useState<SiteUser[]>(() => [
+    ['viewer', 'Vic Viewer'], ['technician', 'Tia Technician'], ['supervisor', 'Sam Supervisor'],
+    ['reliability_engineer', 'Rae Reliability'], ['superintendent', 'Sol Superintendent'], ['admin', 'Ada Admin'],
+  ].map(([role, name]) => ({ id: `demo-${role}`, name: name!, email: `${role}@example.com`, role: role as Role, scope: ['*'], addedAt: '2026-01-01T00:00:00.000Z' })));
   const [flags, setFlags] = useState<DownFlag[]>(ds.flags);
   const [audit, setAudit] = useState<AuditEntry[]>([]);
   const [now, setNow] = useState(() => new Date().toISOString());
@@ -150,8 +175,23 @@ export function AppProvider({ children }: { children: ReactNode }) {
     [actor],
   );
 
-  const targets: PackTargets = { pa: 0.9, utilisation: 0.85 };
-  const value: AppState = { ds, targets, importRuns, applyImport, newId, flags, audit, rules, now, actor, setRole, run, lastSync: ds.generatedAt, theme, setTheme };
+  const scope = { fleet: 'Haul trucks' };
+  const targetOf = useCallback((kpi: TargetKpi) => targetValue(targetList, kpi, scope, now), [targetList, now]);
+  const targets: PackTargets = { pa: targetOf('pa')!.value, utilisation: targetOf('utilisation')!.value };
+
+  const runConsole = useCallback(
+    <T,>(cmd: (ctx: ConsoleContext) => ConsoleResult<T>, keep: (records: T[]) => void): ConsoleResult<T> => {
+      const nowIso = new Date().toISOString();
+      const r = cmd({ actor, now: nowIso, newId, timeZone: ds.site.timeZone, calendar: ds.calendar });
+      if (r.ok) {
+        keep(r.records);
+        setAudit((prev) => [...r.audit, ...prev]);
+      }
+      return r;
+    },
+    [actor, ds],
+  );
+  const value: AppState = { ds, targets, targetOf, targetList, users, codes, runConsole, setTargetList, setUsers, setCodes, importRuns, applyImport, newId, flags, audit, rules, now, actor, setRole, run, lastSync: ds.generatedAt, theme, setTheme };
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
 

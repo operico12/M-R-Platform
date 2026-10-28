@@ -2,7 +2,8 @@ import type { Role } from '@mr/core';
 import { useEffect, useState } from 'react';
 import { Board } from './screens/Board';
 import { Analysis } from './screens/Analysis';
-import { DataQuality, FlagRules } from './screens/DataQuality';
+import { Console } from './screens/Console';
+import { DataQuality } from './screens/DataQuality';
 import { Imports } from './screens/Imports';
 import { Pack } from './screens/Pack';
 import { Performance } from './screens/Performance';
@@ -29,7 +30,7 @@ const NAV: Array<[string, string]> = [
   ['#/pack', 'Weekly pack'],
   ['#/quality', 'Data quality'],
   ['#/import', 'Data import'],
-  ['#/rules', 'Flag rules'],
+  ['#/console', 'Console'],
 ];
 
 const ROLES: Array<[Role, string]> = [
@@ -67,7 +68,8 @@ function Shell() {
     case 'pack': page = <Pack query={query} />; break;
     case 'quality': page = <DataQuality />; break;
     case 'import': page = <Imports />; break;
-    case 'rules': page = <FlagRules />; break;
+    case 'rules': page = <Console tab="codes" />; break;
+    case 'console': page = <Console tab={arg ?? 'users'} />; break;
     default: page = <Board tv={false} />;
   }
 

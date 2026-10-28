@@ -50,6 +50,36 @@ const MATRIX: Record<Action, Partial<Record<Role, Permission>>> = {
   manage_users: { superintendent: 'approve', admin: 'yes' },
 };
 
+/** Plain-language names for the console's "what this person can do" list. */
+export const ACTION_LABELS: Record<Action, string> = {
+  view_status: 'View status, units and KPIs',
+  view_cost: 'View cost and labour rates',
+  add_notes: 'Add notes, photos and defects',
+  update_stage: 'Update repair stage',
+  set_clear_flag: 'Set or clear down flags',
+  move_location: 'Move a unit between locations',
+  reclassify_flag: 'Reclassify flag type or reason',
+  void_flag: 'Void a flag',
+  change_locked_period: 'Change data in a locked period',
+  run_analyses: 'Run calculators and analyses',
+  publish_weekly_pack: 'Publish the weekly pack',
+  export_reports: 'Export reports and data',
+  edit_codes: 'Edit reason codes',
+  open_close_line: 'Open or close a shop line',
+  edit_shop_structure: 'Edit shops, lines and field locations',
+  change_flag_rules: 'Change flag rules',
+  change_targets: 'Change KPI targets',
+  manage_imports: 'Field mapping, imports and data-quality rules',
+  manage_users: 'Manage users and roles',
+};
+
+/** Everything a role may do, and how (yes, own area, propose, ...). Deny-by-default rows are left out. */
+export function permissionsFor(role: Role): Array<{ action: Action; label: string; permission: Permission }> {
+  return (Object.keys(MATRIX) as Action[])
+    .map((action) => ({ action, label: ACTION_LABELS[action], permission: permission(role, action) }))
+    .filter((x) => x.permission !== 'no');
+}
+
 export function permission(role: Role, action: Action): Permission {
   return MATRIX[action][role] ?? 'no';
 }

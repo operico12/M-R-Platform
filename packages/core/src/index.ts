@@ -9,3 +9,4 @@ export * from './synth/generate.js';
 export * from './imports.js';
 export * from './filters.js';
 export * from './pack.js';
+export * from './console.js';
