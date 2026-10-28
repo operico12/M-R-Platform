@@ -2,6 +2,7 @@ import { openAlerts, type Role } from '@mr/core';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { loadSite, mySites, remote, type Loaded, type RemoteSite } from './data/remote';
 import { Board } from './screens/Board';
+import { CalcPalette, Calculators } from './screens/Calculators';
 import { Actions } from './screens/Actions';
 import { Alerts } from './screens/Alerts';
 import { Analysis } from './screens/Analysis';
@@ -36,6 +37,7 @@ const NAV: Array<[string, string]> = [
   ['#/analysis', 'Downtime analysis'],
   ['#/work', 'Work and PM'],
   ['#/inspections', 'Inspections'],
+  ['#/calc', 'Calculators'],
   ['#/alerts', 'Alerts'],
   ['#/actions', 'Actions'],
   ['#/rca', 'Root cause analysis'],
@@ -80,6 +82,7 @@ function Shell() {
     case 'analysis': page = <Analysis query={query} />; break;
     case 'work': page = <Work />; break;
     case 'alerts': page = <Alerts />; break;
+    case 'calc': page = <Calculators arg={arg || undefined} sub={sub || undefined} query={query} />; break;
     case 'inspections': page = <Inspections arg={arg || undefined} sub={sub} />; break;
     case 'pack': page = <Pack query={query} />; break;
     case 'actions': page = <Actions arg={arg} query={query} />; break;
@@ -141,6 +144,7 @@ function Shell() {
         )}
         {page}
       </main>
+      <CalcPalette />
     </div>
   );
 }
