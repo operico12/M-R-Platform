@@ -12,6 +12,7 @@ import { useMemo, useState, type ReactNode } from 'react';
 import { Bar, BarChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { fromLocalInput, toLocalInput } from '../format';
 import { useApp } from '../store';
+import { SEV_STYLE, useOilByPosition } from './Condition';
 
 type Tab = 'board' | 'forecast' | 'lives' | 'vendors' | 'claims' | 'targets';
 const TABS: Array<[Tab, string]> = [['board', 'Life board'], ['forecast', 'Change-out forecast'], ['lives', 'Lives and Weibull'], ['vendors', 'Rebuild vendors'], ['claims', 'Warranty and cores'], ['targets', 'Target life']];
@@ -123,6 +124,8 @@ function Board({ d }: { d: Data }) {
   const models = [...new Set(d.app.ds.assets.map((a) => a.model))].sort();
   const [model, setModel] = useState('');
   const rows = lifeBoard(d.states, d.app.ds.assets.filter((a) => !model || a.model === model), d.app.lifeTargets, d.today);
+  const oil = useOilByPosition();
+  const anyOil = d.app.oilSamples.length > 0;
   return (
     <section className="card">
       <div className="row" style={{ gap: 12, alignItems: 'center' }}>
@@ -131,7 +134,7 @@ function Board({ d }: { d: Data }) {
           <select value={model} onChange={(e) => setModel(e.target.value)}><option value="">All</option>{models.map((m) => <option key={m}>{m}</option>)}</select>
         </label>
       </div>
-      <p className="small muted">% of target life since the last rebuild. Oil analysis is overlaid when condition monitoring arrives.</p>
+      <p className="small muted">% of target life since the last rebuild. The mark under it is the latest oil result for that compartment (● OK, ◆ Monitor, ▲ Action, ✖ Critical); open it on the Condition page.</p>
       <div className="table-wrap">
         <table className="small">
           <thead><tr><th>Unit</th>{POSITIONS.map((p) => <th key={p.id} title={p.label}>{p.short}</th>)}</tr></thead>
@@ -139,16 +142,18 @@ function Board({ d }: { d: Data }) {
             {rows.map((r) => (
               <tr key={r.unit.id}>
                 <th style={{ textAlign: 'left' }}><a href={`#/unit/${r.unit.id}`}>{r.unit.unitNumber}</a> <span className="muted">{r.unit.model}</span></th>
-                {r.cells.map((c) => (
+                {r.cells.map((c) => { const o = oil(r.unit.id, c.position.id); return (
                   <td key={c.position.id} style={{ padding: 0 }}>
                     {c.state ? (
-                      <a href={`#/components/${c.state.component.id}`} title={`${c.position.label}: ${c.state.component.serial}, ${h0(c.state.hours)} h of ${h0(c.target)} h`}
+                      <a href={`#/components/${c.state.component.id}`} title={`${c.position.label}: ${c.state.component.serial}, ${h0(c.state.hours)} h of ${h0(c.target)} h${o ? `. Oil: ${o.severity}` : ''}`}
                         style={{ display: 'block', minWidth: 52, padding: '8px 6px', textAlign: 'center', textDecoration: 'none', fontWeight: 600, background: bandBg(c.band), color: c.band === 'past' ? '#fff' : 'var(--text)' }}>
                         {c.ratio === null ? h0(c.state.hours) : pct(c.ratio)}
+                        {o ? <span style={{ display: 'block', fontSize: 11, fontWeight: 700, marginTop: 2 }}><span style={{ padding: '0 4px', borderRadius: 3, background: SEV_STYLE[o.severity].bg, color: SEV_STYLE[o.severity].fg }}>{SEV_STYLE[o.severity].shape} {SEV_STYLE[o.severity].short}</span></span>
+                          : anyOil && <span aria-hidden style={{ display: 'block', fontSize: 11, marginTop: 2, visibility: 'hidden' }}>-</span>}
                       </a>
                     ) : <span className="muted" style={{ display: 'block', padding: '8px 6px', textAlign: 'center' }}>empty</span>}
                   </td>
-                ))}
+                ); })}
               </tr>
             ))}
           </tbody>

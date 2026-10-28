@@ -33,6 +33,8 @@ export type Action =
   | 'edit_inspection_forms'
   | 'record_components'
   | 'edit_life_targets'
+  | 'record_condition'
+  | 'edit_condition_settings'
   | 'manage_imports'
   | 'manage_users';
 
@@ -71,6 +73,9 @@ const MATRIX: Record<Action, Partial<Record<Role, Permission>>> = {
   // docs/component-life.md: component events are recorded by those who run change-outs; target life is a reliability setting.
   record_components: { supervisor: 'yes', reliability_engineer: 'yes', superintendent: 'yes' },
   edit_life_targets: { reliability_engineer: 'propose', superintendent: 'approve' },
+  // docs/condition-monitoring.md: recording mirrors component events; settings mirror alert rules.
+  record_condition: { supervisor: 'yes', reliability_engineer: 'yes', superintendent: 'yes' },
+  edit_condition_settings: { reliability_engineer: 'yes', superintendent: 'yes', admin: 'yes' },
   // Field mapping, imports, data-quality rules: data owner only. In phase 1a the Admin role is the data owner (11.7).
   manage_imports: { admin: 'yes' },
   manage_users: { superintendent: 'approve', admin: 'yes' },
@@ -105,6 +110,8 @@ export const ACTION_LABELS: Record<Action, string> = {
   edit_inspection_forms: 'Edit inspection forms',
   record_components: 'Record component installs, removals and rebuilds',
   edit_life_targets: 'Set component target life',
+  record_condition: 'Enter oil results and respond to them',
+  edit_condition_settings: 'Change condition monitoring settings',
   manage_imports: 'Field mapping, imports and data-quality rules',
   manage_users: 'Manage users and roles',
 };

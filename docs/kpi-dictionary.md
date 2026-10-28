@@ -61,9 +61,11 @@ Code: `packages/core/src/reliability.ts`. All use the downtime analysis filters,
 | --- | --- | --- | --- |
 | KPI-030 | Component life ratio (phase 3) | Hours at the end of a component life ÷ target life for that model and kind, over lives that ended in the period | Lag. Shown separately for failures and planned removals (suspensions). Also: % of lives reaching target (ratio ≥ 1) and early failures (failed lives with ratio < 0.25). A life runs from Received or Back from rebuild to Sent to rebuild or Scrapped. Code: `lifeRatio` in `components.ts`; docs/component-life.md. |
 | KPI-031 | Cost per hour of component life (phase 3) | (Purchase or rebuild cost that started each life − warranty recovered) ÷ hours of that life, summed over ended lives | Cost roles only (plan 11.2). Same formula as calculator C-09. Code: `costPerLifeHour` in `components.ts`. |
+| KPI-032 | Condition monitoring response (phase 3, plan 3.3) | Oil alerts responded to within the target time ÷ oil alerts whose target time ended in the period | Lead. An alert is a sample at Action or Critical, not voided. Target time: Critical 24 h, Action 72 h from the lab report (settings). Alerts still inside their time are left out until it ends; late or missing answers count against. Code: `cmResponse` in `condition.ts`; docs/condition-monitoring.md. |
 
 ## Worked examples encoded as tests
 
+- KPI-032: four alerts ending in the week, two answered in time, one 10 h late, one not answered → 50%.
 - Plan 3.2, one 12-hour shift: PA 62.5%, utilisation 90.7%, standby 0.7 h, effective utilisation 56.7%.
 - Plan Appendix A: one truck, one week, 28 h down → PA 83.3%, unchanged by 10 h standby.
 - KPI-015, one truck: 20 h hydraulic down in the 28 days before, 5 h after → −75%, failures 2 → 1; a 6 h

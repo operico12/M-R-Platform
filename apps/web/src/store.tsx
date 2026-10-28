@@ -45,9 +45,10 @@ import {
   defaultReasonCodes,
   targetValue,
   smuIndex, type Component, type ComponentData, type ComponentEvent, type LifeTarget, type RecordResult,
+  DEFAULT_CONDITION_SETTINGS, type CmResponse, type ConditionData, type ConditionSettings, type OilSample,
 } from '@mr/core';
 import { demoImprovements } from './data/demo-improve';
-import { saveComponentRecord, saveViewRecord, saveAnalysisRecord, loadPhoto, saveForms, sendInspection, sendPhoto, SendError, saveAlertAnswer, saveDecision, saveRequests, saveFlags, saveRecords, saveSetting, saveTarget, saveTaskStatus, type Loaded } from './data/remote';
+import { saveCmResponse, saveOilSamples, saveComponentRecord, saveViewRecord, saveAnalysisRecord, loadPhoto, saveForms, sendInspection, sendPhoto, SendError, saveAlertAnswer, saveDecision, saveRequests, saveFlags, saveRecords, saveSetting, saveTarget, saveTaskStatus, type Loaded } from './data/remote';
 import { demoProjects } from './data/demo-projects';
 import { demoForms, demoInspections } from './data/demo-inspections';
 import { backoffMs, forgetPhoto, localPhoto, readDrafts, readOutbox, writeDrafts, writeOutbox, type OutboxItem } from './inspect/device';
@@ -107,6 +108,14 @@ export interface AppState {
   lifeTargets: LifeTarget[];
   /** Register a component, record an event or void one. */
   runComponents: (cmd: (ctx: ConsoleContext, data: ComponentData) => RecordResult) => RecordResult;
+  /** Oil samples (voided ones included), responses and settings (docs/condition-monitoring.md). */
+  oilSamples: OilSample[];
+  cmResponses: CmResponse[];
+  conditionSettings: ConditionSettings;
+  /** Enter, import or void samples. The command gets the current data and returns the new sample list. */
+  runSamples: <R extends ConsoleResult<OilSample>>(cmd: (ctx: ConsoleContext, data: ConditionData, s: ConditionSettings) => R) => R;
+  runResponse: (cmd: (ctx: ConsoleContext, data: ConditionData) => ConsoleResult<CmResponse>) => ConsoleResult<CmResponse>;
+  runConditionSettings: (cmd: (ctx: ConsoleContext, current: ConditionSettings) => ConsoleResult<ConditionSettings>) => ConsoleResult<ConditionSettings>;
   /** Inspection forms, every version (docs/inspections.md). */
   forms: InspectionForm[];
   runForms: (cmd: (ctx: ConsoleContext) => ConsoleResult<InspectionForm>) => ConsoleResult<InspectionForm>;
@@ -396,6 +405,56 @@ export function AppProvider({ children, live, onReload, onSignOut }: { children:
   );
   const [lifeTargets, setLifeTargets] = useState<LifeTarget[]>(ds.lifeTargets ?? []);
 
+  const [oilSamples, setOilSamples] = useState<OilSample[]>(ds.oilSamples ?? []);
+  const [cmResponses, setCmResponses] = useState<CmResponse[]>(ds.cmResponses ?? []);
+  const [conditionSettings, setConditionSettingsState] = useState<ConditionSettings>(() => live?.conditionSettings ?? DEFAULT_CONDITION_SETTINGS);
+  const condRef = useRef({ samples: oilSamples, responses: cmResponses, settings: conditionSettings });
+  condRef.current = { samples: oilSamples, responses: cmResponses, settings: conditionSettings };
+  const runSamples = useCallback(
+    <R extends ConsoleResult<OilSample>,>(cmd: (ctx: ConsoleContext, data: ConditionData, s: ConditionSettings) => R): R => {
+      const prev = condRef.current;
+      const r = cmd({ actor, now: new Date().toISOString(), newId, timeZone: ds.site.timeZone, calendar: ds.calendar }, { samples: prev.samples, responses: prev.responses, assets: ds.assets }, prev.settings);
+      if (r.ok) {
+        condRef.current = { ...prev, samples: r.records };
+        setOilSamples(r.records);
+        setAudit((a) => [...r.audit, ...a]);
+        const before = new Map(prev.samples.map((x) => [x.id, x]));
+        const added = r.records.filter((x) => !before.has(x.id));
+        const voided = r.records.filter((x) => before.has(x.id) && before.get(x.id) !== x && x.voidedAt);
+        if (live && (added.length || voided.length)) saveOilSamples(siteId, added, voided, r.audit).catch(failed);
+      }
+      return r;
+    },
+    [actor, ds, live, failed],
+  );
+  const runResponse = useCallback(
+    (cmd: (ctx: ConsoleContext, data: ConditionData) => ConsoleResult<CmResponse>): ConsoleResult<CmResponse> => {
+      const prev = condRef.current;
+      const r = cmd({ actor, now: new Date().toISOString(), newId, timeZone: ds.site.timeZone, calendar: ds.calendar }, { samples: prev.samples, responses: prev.responses, assets: ds.assets });
+      if (r.ok) {
+        condRef.current = { ...prev, responses: r.records };
+        setCmResponses(r.records);
+        setAudit((a) => [...r.audit, ...a]);
+        const added = r.records.filter((x) => !prev.responses.includes(x));
+        if (live) for (const x of added) saveCmResponse(siteId, x, r.audit).catch(failed);
+      }
+      return r;
+    },
+    [actor, ds, live, failed],
+  );
+  const runConditionSettings = useCallback(
+    (cmd: (ctx: ConsoleContext, current: ConditionSettings) => ConsoleResult<ConditionSettings>): ConsoleResult<ConditionSettings> => {
+      const r = cmd({ actor, now: new Date().toISOString(), newId, timeZone: ds.site.timeZone, calendar: ds.calendar }, condRef.current.settings);
+      if (r.ok) {
+        condRef.current = { ...condRef.current, settings: r.records[0]! };
+        setConditionSettingsState(r.records[0]!);
+        setAudit((a) => [...r.audit, ...a]);
+        if (live) saveSetting(siteId, 'condition', r.records[0]!, r.audit[0]!.reason ?? '', r.audit).catch(failed);
+      }
+      return r;
+    },
+    [actor, ds, live, failed],
+  );
   const ruleAlertList = useMemo(
     () => ruleAlerts({ assets: ds.assets, flags, smu: ds.smu, lifecycle: ds.lifecycle, rules, now, timeZone: ds.site.timeZone, workOrders: ds.workOrders, targets: targetList, workSettings }, alertSettings),
     [ds, flags, rules, now, targetList, workSettings, alertSettings],
@@ -592,7 +651,7 @@ export function AppProvider({ children, live, onReload, onSignOut }: { children:
   }, [live, siteId]);
   const people = useMemo(() => users.filter((u) => !u.retiredAt && !u.invited), [users]);
   const userName = useCallback((id: string) => users.find((u) => u.id === id)?.name ?? 'Unknown user', [users]);
-  const value: AppState = { ds, forms, runForms, inspections, drafts, saveDraft, discardDraft, runInspection, outbox, sendOutbox: () => void sendOutbox(true), dropOutboxItem, photo, workSettings, runWorkSettings, alertSettings, runAlertSettings, alertAnswers, runAlertAnswer, analyses, runAnalysis, views, runView, components, componentEvents, lifeTargets, runComponents, ruleAlerts: ruleAlertList, requests, runRequest, decide, actions: improve.actions, rcas: improve.rcas, projects: improve.projects, runImprove, people, userName, targets, targetOf, targetList, users, codes, runConsole, mode: live ? 'live' : 'demo', syncError, clearSyncError: () => setSyncError(null), signOut: onSignOut, importRuns, applyImport, newId, flags, audit, rules, now, actor, setRole, run, lastSync: ds.generatedAt, theme, setTheme };
+  const value: AppState = { ds, forms, runForms, inspections, drafts, saveDraft, discardDraft, runInspection, outbox, sendOutbox: () => void sendOutbox(true), dropOutboxItem, photo, workSettings, runWorkSettings, alertSettings, runAlertSettings, alertAnswers, runAlertAnswer, analyses, runAnalysis, views, runView, components, componentEvents, lifeTargets, runComponents, oilSamples, cmResponses, conditionSettings, runSamples, runResponse, runConditionSettings, ruleAlerts: ruleAlertList, requests, runRequest, decide, actions: improve.actions, rcas: improve.rcas, projects: improve.projects, runImprove, people, userName, targets, targetOf, targetList, users, codes, runConsole, mode: live ? 'live' : 'demo', syncError, clearSyncError: () => setSyncError(null), signOut: onSignOut, importRuns, applyImport, newId, flags, audit, rules, now, actor, setRole, run, lastSync: ds.generatedAt, theme, setTheme };
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
 

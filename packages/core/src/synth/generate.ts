@@ -12,6 +12,8 @@ import { HOUR_MS, ms, shiftsBetween, toIso, twelveHourCalendar, type ShiftCalend
 import { normaliseWoNumber } from '../imports.js';
 import type { Component, ComponentEvent, LifeTarget } from '../components.js';
 import { generateComponents } from './components.js';
+import type { CmResponse, OilSample } from '../condition.js';
+import { generateOil } from './oil.js';
 import type { Asset, AssetLifecycleInterval, DownFlag, WorkOrder, LocationInterval, ShopLine, ShopLineClosure, SmuReading, Stage, StageInterval } from '../types.js';
 
 export interface SynthOptions {
@@ -40,6 +42,9 @@ export interface Dataset {
   components: Component[];
   componentEvents: ComponentEvent[];
   lifeTargets: LifeTarget[];
+  /** Oil analysis results and responses to them (phase 3, docs/condition-monitoring.md). */
+  oilSamples: OilSample[];
+  cmResponses: CmResponse[];
   generatedAt: string;
 }
 
@@ -466,6 +471,8 @@ export function generateFleet(opts: SynthOptions = {}): Dataset {
   }
 
   const parts = generateComponents({ seed, assets, smu, flags, end });
+  const workOrders = [...wos.values()].sort((a, b) => ms(a.reportedAt!) - ms(b.reportedAt!));
+  const oil = generateOil({ seed, assets, smu, componentEvents: parts.events, workOrders, end });
 
   return {
     tenantId,
@@ -477,11 +484,13 @@ export function generateFleet(opts: SynthOptions = {}): Dataset {
     closures,
     fieldLocations: FIELD_LOCATIONS,
     flags,
-    workOrders: [...wos.values()].sort((a, b) => ms(a.reportedAt!) - ms(b.reportedAt!)),
+    workOrders,
     smu: smu.sort((a, b) => ms(a.at) - ms(b.at)),
     components: parts.components,
     componentEvents: parts.events,
     lifeTargets: parts.targets,
+    oilSamples: oil.samples,
+    cmResponses: oil.responses,
     generatedAt: toIso(end),
   };
 }
