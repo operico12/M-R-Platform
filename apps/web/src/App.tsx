@@ -1,5 +1,5 @@
 import { openAlerts, type Role } from '@mr/core';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { loadSite, mySites, remote, type Loaded, type RemoteSite } from './data/remote';
 import { Board } from './screens/Board';
 import { Explorer } from './screens/Explorer';
@@ -179,11 +179,15 @@ type LiveState =
 function Live() {
   const [st, setSt] = useState<LiveState>({ step: 'checking' });
   const [site, setSite] = useState<RemoteSite | null>(null);
+  // Who the loaded site belongs to. Supabase reports "signed in" again each time the tab comes back
+  // into view; that must not reload the site (and lose what is on screen) for the same person.
+  const loadedFor = useRef<string | null>(null);
 
   const load = useCallback(async () => {
     try {
       const { data } = await remote!.auth.getSession();
-      if (!data.session) return setSt({ step: 'signed_out' });
+      if (!data.session) { loadedFor.current = null; return setSt({ step: 'signed_out' }); }
+      loadedFor.current = data.session.user.id;
       setSt({ step: 'loading' });
       const sites = await mySites();
       const chosen = sites[0];
@@ -198,8 +202,8 @@ function Live() {
 
   useEffect(() => {
     void load();
-    const { data } = remote!.auth.onAuthStateChange((event) => {
-      if (event === 'SIGNED_IN' || event === 'SIGNED_OUT') void load();
+    const { data } = remote!.auth.onAuthStateChange((event, session) => {
+      if (event === 'SIGNED_OUT' || (event === 'SIGNED_IN' && session?.user.id !== loadedFor.current)) void load();
     });
     return () => data.subscription.unsubscribe();
   }, [load]);
