@@ -17,6 +17,8 @@ const EXPECTED: Partial<Record<Action, Record<Role, string>>> = {
   change_locked_period: { viewer: 'no', technician: 'no', supervisor: 'request', reliability_engineer: 'request', superintendent: 'approve', admin: 'request' },
   record_components: { viewer: 'no', technician: 'no', supervisor: 'yes', reliability_engineer: 'yes', superintendent: 'yes', admin: 'no' },
   edit_life_targets: { viewer: 'no', technician: 'no', supervisor: 'no', reliability_engineer: 'propose', superintendent: 'approve', admin: 'no' },
+  record_condition: { viewer: 'no', technician: 'no', supervisor: 'yes', reliability_engineer: 'yes', superintendent: 'yes', admin: 'no' },
+  edit_condition_settings: { viewer: 'no', technician: 'no', supervisor: 'no', reliability_engineer: 'yes', superintendent: 'yes', admin: 'yes' },
   manage_imports: { viewer: 'no', technician: 'no', supervisor: 'no', reliability_engineer: 'no', superintendent: 'no', admin: 'yes' },
 };
 

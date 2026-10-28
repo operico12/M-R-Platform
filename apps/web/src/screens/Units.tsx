@@ -7,6 +7,7 @@ import { STATUS_WORD, fmtHours, fmtNum, fmtPct, siteTime, unitStatus } from '../
 import { newHref } from '../improve/describe';
 import { useApp } from '../store';
 import { UnitComponents } from './Components';
+import { UnitCondition } from './Condition';
 
 const DAY = 864e5;
 
@@ -133,6 +134,7 @@ export function UnitPage({ id }: { id: string }) {
       </section>
 
       <UnitComponents unitId={id} />
+      <UnitCondition unitId={id} />
 
       <section>
         <h3>Down flags</h3>
