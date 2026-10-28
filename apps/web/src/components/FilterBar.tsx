@@ -4,7 +4,7 @@
 import { EMPTY_FILTER, SYSTEMS, type AnalyticsFilter, type Dataset, type RangePreset } from '@mr/core';
 import { useEffect, useRef, type ReactNode } from 'react';
 
-type ListKey = 'models' | 'units' | 'types' | 'systems' | 'components' | 'where' | 'lines' | 'detection' | 'shifts' | 'crews';
+type ListKey = 'models' | 'units' | 'types' | 'systems' | 'components' | 'modes' | 'where' | 'lines' | 'detection' | 'shifts' | 'crews' | 'weekdays';
 
 export interface Option { value: string; label: string }
 
@@ -17,11 +17,13 @@ export function filterOptions(ds: Dataset): Record<ListKey, { title: string; opt
     types: { title: 'Type', options: [{ value: 'unscheduled', label: 'Unscheduled' }, { value: 'scheduled', label: 'Scheduled' }] },
     systems: { title: 'System', options: systems.map((v) => ({ value: v, label: v })) },
     components: { title: 'Component', options: uniq(ds.flags.map((f) => f.release?.component)).map((v) => ({ value: v, label: v })) },
+    modes: { title: 'Failure mode', options: uniq(ds.flags.map((f) => f.release?.failureModes?.[0])).map((v) => ({ value: v, label: v })) },
     where: { title: 'Field or shop', options: [{ value: 'field', label: 'Fixed in the field' }, { value: 'shop', label: 'Went to the shop' }] },
     lines: { title: 'Shop line', options: ds.shopLines.map((l) => ({ value: l.id, label: l.name ?? `Line ${l.number}` })) },
     detection: { title: 'Detected by', options: ['operator', 'pm', 'inspection', 'condition_monitoring', 'alarm', 'other'].map((v) => ({ value: v, label: v === 'pm' ? 'PM' : v.replace('_', ' ').replace(/^./, (c) => c.toUpperCase()) })) },
     shifts: { title: 'Shift', options: ds.calendar.shifts.map((s) => ({ value: s.name, label: `${s.name[0]!.toUpperCase()}${s.name.slice(1)} (from ${s.startLocal})` })) },
     crews: { title: 'Crew', options: uniq((ds.calendar.rotation?.pattern ?? []).flatMap((d) => Object.values(d))).map((v) => ({ value: v, label: `Crew ${v}` })) },
+    weekdays: { title: 'Day of week', options: ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'].map((l, i) => ({ value: String(i + 1), label: l })) },
   };
 }
 
