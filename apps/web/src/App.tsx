@@ -2,11 +2,13 @@ import type { Role } from '@mr/core';
 import { useCallback, useEffect, useState } from 'react';
 import { loadSite, mySites, remote, type Loaded, type RemoteSite } from './data/remote';
 import { Board } from './screens/Board';
+import { Actions } from './screens/Actions';
 import { Analysis } from './screens/Analysis';
 import { Console } from './screens/Console';
 import { DataQuality } from './screens/DataQuality';
 import { Imports } from './screens/Imports';
 import { Pack } from './screens/Pack';
+import { RcaScreen } from './screens/Rca';
 import { Performance } from './screens/Performance';
 import { ShopLines } from './screens/ShopLines';
 import { UnitList, UnitPage } from './screens/Units';
@@ -28,6 +30,8 @@ const NAV: Array<[string, string]> = [
   ['#/units', 'Units'],
   ['#/performance', 'Performance'],
   ['#/analysis', 'Downtime analysis'],
+  ['#/actions', 'Actions'],
+  ['#/rca', 'Root cause analysis'],
   ['#/pack', 'Weekly pack'],
   ['#/quality', 'Data quality'],
   ['#/import', 'Data import'],
@@ -67,6 +71,8 @@ function Shell() {
     case 'performance': page = <Performance />; break;
     case 'analysis': page = <Analysis query={query} />; break;
     case 'pack': page = <Pack query={query} />; break;
+    case 'actions': page = <Actions arg={arg} query={query} />; break;
+    case 'rca': page = <RcaScreen arg={arg} query={query} />; break;
     case 'quality': page = <DataQuality />; break;
     case 'import': page = <Imports />; break;
     case 'rules': page = <Console tab="codes" />; break;

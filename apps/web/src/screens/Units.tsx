@@ -1,9 +1,10 @@
 // Unit list and unit page (plan 4.2, Figure 3).
 
-import { buildEvents, computeKpis, flagDownHours, openWorkOrders, stageHours, timeToFirstWrench, workOrdersForFlag, type Asset } from '@mr/core';
+import { buildEvents, can, computeKpis, flagDownHours, openWorkOrders, stageHours, timeToFirstWrench, workOrdersForFlag, type Asset } from '@mr/core';
 import { useMemo, useState } from 'react';
 import { FlagSheet } from '../components/FlagSheet';
 import { STATUS_WORD, fmtHours, fmtNum, fmtPct, siteTime, unitStatus } from '../format';
+import { newHref } from '../improve/describe';
 import { useApp } from '../store';
 
 const DAY = 864e5;
@@ -80,7 +81,20 @@ export function UnitPage({ id }: { id: string }) {
         <span className="muted">{a.model} · {a.fleet} · serial {a.serial} · {a.externalAssetId}</span>
         <span className={`status ${s.status === 'parked' ? 'stale' : s.status}`}>{STATUS_WORD[s.status]}</span>
         <button className="btn primary" onClick={() => setSheet(a)}>{s.flag ? 'Update flag' : app.actor.role === 'technician' ? 'Propose down' : 'Flag down'}</button>
+        {can(app.actor, 'create_actions') && <a className="btn" style={{ display: 'inline-flex', alignItems: 'center', textDecoration: 'none' }} href={newHref('actions', { kind: 'unit', unitId: a.id })}>Raise action</a>}
+        {can(app.actor, 'run_rcas') && <a className="btn" style={{ display: 'inline-flex', alignItems: 'center', textDecoration: 'none' }} href={newHref('rca', { kind: 'unit', unitId: a.id })}>Start RCA</a>}
       </div>
+      {(() => {
+        const mine = app.actions.filter((x) => x.source.unitId === a.id && (x.status === 'open' || x.status === 'in_progress'));
+        const rcas = app.rcas.filter((x) => x.source.unitId === a.id && x.status === 'open');
+        if (!mine.length && !rcas.length) return null;
+        return (
+          <p className="small">
+            {rcas.map((x) => <span key={x.id}>Open RCA: <a href={`#/rca/${x.id}`}>{x.title}</a>. </span>)}
+            {mine.map((x) => <span key={x.id}>Open action: <a href={`#/actions/${x.id}`}>{x.title}</a> (due {x.due}). </span>)}
+          </p>
+        );
+      })()}
       <div className="trust">SMU {lastSmu ? `${lastSmu.hours.toLocaleString()} h at ${siteTime(lastSmu.at, tz, true)}` : 'no reading'}</div>
 
       <div className="grid kpis">

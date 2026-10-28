@@ -3,7 +3,7 @@
 // The anon key is public by design: row-level security decides what each
 // signed-in person can read and write. Never put the service_role key here.
 
-import { DEFAULT_FLAG_RULES, type AuditEntry, type Dataset, type DownFlag, type FlagRulesConfig, type ReasonCode, type Role, type ShiftCalendar, type SiteUser, type SmuReading, type Target, type WorkOrder, type Asset } from '@mr/core';
+import { DEFAULT_FLAG_RULES, emptyFishbone, type ImprovementAction, type Rca, type AuditEntry, type Dataset, type DownFlag, type FlagRulesConfig, type ReasonCode, type Role, type ShiftCalendar, type SiteUser, type SmuReading, type Target, type WorkOrder, type Asset } from '@mr/core';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 
 const url = import.meta.env.VITE_SUPABASE_URL as string | undefined;
@@ -26,6 +26,8 @@ export interface Loaded {
   users: SiteUser[];
   codes: ReasonCode[];
   targets: Target[];
+  actions: ImprovementAction[];
+  rcas: Rca[];
 }
 
 /** Postgres returns "+00:00" offsets; the app compares ISO strings, so make them all "Z". */
@@ -49,7 +51,9 @@ export async function mySites(): Promise<RemoteSite[]> {
 }
 
 export async function loadSite(siteId: string): Promise<Loaded> {
-  const d = iso(must(await remote!.rpc('app_load', { p_site: siteId }))) as {
+  const [main, imp] = await Promise.all([remote!.rpc('app_load', { p_site: siteId }), remote!.rpc('app_load_improve', { p_site: siteId })]);
+  const improve = iso(must(imp)) as { actions: ImprovementAction[]; rcas: Rca[] };
+  const d = iso(must(main)) as {
     site: { id: string; tenantId: string; name: string; timeZone: string };
     role: Role; me: string;
     calendar: { shifts: ShiftCalendar['shifts']; rotation?: ShiftCalendar['rotation'] } | null;
@@ -72,6 +76,8 @@ export async function loadSite(siteId: string): Promise<Loaded> {
     role: d.role,
     me: d.me,
     rules: { ...DEFAULT_FLAG_RULES, ...(d.rules ?? {}) },
+    actions: improve.actions,
+    rcas: improve.rcas.map((r) => ({ ...r, fishbone: { ...emptyFishbone(), ...(r.fishbone as Partial<Rca['fishbone']>) } })),
     users: d.users, codes: d.codes, targets: d.targets.map((t) => ({ ...t, value: Number(t.value), amber: Number(t.amber) })),
   };
 }
@@ -81,8 +87,8 @@ export async function saveFlags(siteId: string, flags: DownFlag[], audit: AuditE
   if (audit.length) must(await remote!.rpc('app_log', { p_site: siteId, p_entries: audit }));
 }
 
-export async function saveRecords(siteId: string, kind: 'smu' | 'work_orders' | 'assets' | 'codes' | 'users', rows: unknown[], audit: AuditEntry[] = []): Promise<void> {
-  const fn = { smu: 'app_save_smu', work_orders: 'app_save_work_orders', assets: 'app_save_assets', codes: 'app_save_codes', users: 'app_save_users' }[kind];
+export async function saveRecords(siteId: string, kind: 'smu' | 'work_orders' | 'assets' | 'codes' | 'users' | 'actions' | 'rcas', rows: unknown[], audit: AuditEntry[] = []): Promise<void> {
+  const fn = { smu: 'app_save_smu', work_orders: 'app_save_work_orders', assets: 'app_save_assets', codes: 'app_save_codes', users: 'app_save_users', actions: 'app_save_actions', rcas: 'app_save_rcas' }[kind];
   for (let i = 0; i < rows.length; i += 1000) must(await remote!.rpc(fn, { p_site: siteId, p_rows: rows.slice(i, i + 1000) }));
   if (audit.length) must(await remote!.rpc('app_log', { p_site: siteId, p_entries: audit }));
 }

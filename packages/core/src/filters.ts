@@ -150,8 +150,8 @@ export interface FilteredAnalysis {
   stageHours: Record<Stage, number>;
 }
 
-export function analyse(input: KpiInput & { calendar: ShiftCalendar; timeZone: string }, f: AnalyticsFilter): FilteredAnalysis {
-  const period = filterPeriod(f, input.timeZone, input.now);
+/** `period` overrides the filter's own range (used for before-and-after windows). */
+export function analyse(input: KpiInput & { calendar: ShiftCalendar; timeZone: string }, f: AnalyticsFilter, period: Period = filterPeriod(f, input.timeZone, input.now)): FilteredAnalysis {
   const assets = filterAssets(input.assets, f);
   const ids = new Set(assets.map((a) => a.id));
   const unitFlags = countingFlags(input.flags).filter((fl) => ids.has(fl.unitId));

@@ -1,11 +1,12 @@
 // Downtime analysis (MVP screen 3, plan 7.5 and 7.6): Pareto and trend for any
 // slice of the data, every number drilling down to the events behind it.
 
-import { STAGE_LABELS, analyse, flagDownHours, filterFromQuery, filterToQuery, flagSystem, flagWhere, paretoOf, toCsv, weeklyTrend, type AnalyticsFilter, type ParetoKey, type Stage } from '@mr/core';
+import { EMPTY_FILTER, STAGE_LABELS, can, analyse, flagDownHours, filterFromQuery, filterToQuery, flagSystem, flagWhere, paretoOf, toCsv, weeklyTrend, type AnalyticsFilter, type ParetoKey, type Stage } from '@mr/core';
 import { useMemo, useState } from 'react';
-import { Bar, CartesianGrid, ComposedChart, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import { Bar, CartesianGrid, ComposedChart, Line, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { FilterBar } from '../components/FilterBar';
 import { fmtHours, fmtNum, fmtPct, siteTime } from '../format';
+import { newHref } from '../improve/describe';
 import { useApp } from '../store';
 
 const GROUPS: Array<[ParetoKey, string]> = [['system', 'System'], ['component', 'Component'], ['failure_mode', 'Failure mode'], ['unit', 'Unit'], ['reason', 'Reason code']];
@@ -28,6 +29,19 @@ export function Analysis({ query }: { query: string }) {
   );
   const pareto = useMemo(() => paretoOf(a, by, unitName).slice(0, 15), [a, by]);
   const trend = useMemo(() => weeklyTrend(a, tz), [a]);
+  // Plan 7.7: actions raised on this same slice (any date range) are marked on the weekly chart
+  // in the week they started and the week they were done.
+  const sliceKey = filterToQuery({ ...filter, range: EMPTY_FILTER.range });
+  const sliceActions = app.actions.filter((x) => x.source.query !== undefined && x.status !== 'cancelled' && filterToQuery({ ...filterFromQuery(x.source.query), range: EMPTY_FILTER.range }) === sliceKey && (sliceKey !== '' || x.source.kind === 'analysis'));
+  const weekOf = (iso: string) => (Date.parse(iso) < Date.parse(a.period.to) ? [...trend].reverse().find((t) => Date.parse(t.from) <= Date.parse(iso))?.week : undefined);
+  const markers = [...new Map(sliceActions.flatMap((x) => {
+    const out: Array<{ week: string; kind: 'started' | 'done' }> = [];
+    const st = weekOf(x.startedAt ?? x.createdAt);
+    if (st) out.push({ week: st, kind: 'started' });
+    const dn = x.doneAt ? weekOf(x.doneAt) : undefined;
+    if (dn) out.push({ week: dn, kind: 'done' });
+    return out;
+  }).map((m) => [`${m.week}|${m.kind}`, m])).values()];
   const stages = (Object.keys(a.stageHours) as Stage[]).map((s) => ({ stage: STAGE_LABELS[s], hours: Math.round(a.stageHours[s]) })).filter((x) => x.hours > 0);
   const rows = [...a.events].sort((x, y) => y.hours - x.hours);
 
@@ -65,7 +79,11 @@ export function Analysis({ query }: { query: string }) {
         value={filter}
         onChange={setFilter}
         matched={`${a.events.length} events matched`}
-        extra={<button className="btn" onClick={() => void navigator.clipboard?.writeText(window.location.href)} title="Copy a link to this view">Copy link</button>}
+        extra={<>
+          <button className="btn" onClick={() => void navigator.clipboard?.writeText(window.location.href)} title="Copy a link to this view">Copy link</button>
+          {can(app.actor, 'create_actions') && <a className="btn" style={{ display: 'inline-flex', alignItems: 'center', textDecoration: 'none' }} href={newHref('actions', { kind: 'analysis', query: filterToQuery(filter) })}>Raise action</a>}
+          {can(app.actor, 'run_rcas') && <a className="btn" style={{ display: 'inline-flex', alignItems: 'center', textDecoration: 'none' }} href={newHref('rca', { kind: 'analysis', query: filterToQuery(filter) })}>Start RCA</a>}
+        </>}
       />
 
       <div className="grid kpis">
@@ -113,10 +131,14 @@ export function Analysis({ query }: { query: string }) {
                 <Tooltip />
                 <Bar yAxisId="h" dataKey="hours" name="Down h" fill="var(--brand)" />
                 <Line yAxisId="n" dataKey="failures" name="Failures" stroke="var(--down)" strokeWidth={2} dot />
+                {markers.map((m) => <ReferenceLine key={`${m.week}|${m.kind}`} yAxisId="h" x={m.week} stroke={m.kind === 'done' ? 'var(--run)' : 'var(--text-2)'} strokeWidth={2} strokeDasharray="4 3" label={{ value: m.kind === 'done' ? 'Action done' : 'Action started', position: m.kind === 'done' ? 'insideTopLeft' : 'insideBottomLeft', fill: m.kind === 'done' ? 'var(--run)' : 'var(--text-2)', fontSize: 11 }} />)}
               </ComposedChart>
             </ResponsiveContainer>
           </div>
-          <p className="small muted">Weeks start Monday 00:00 site time. Events count in the week they start.</p>
+          <p className="small muted">Weeks start Monday 00:00 site time. Events count in the week they start.{markers.length ? ' Dashed lines mark the weeks an action on this slice started (grey) and was done (green).' : ''}</p>
+          {sliceActions.length > 0 && (
+            <p className="small">Actions on this slice: {sliceActions.map((x, i) => <span key={x.id}>{i ? ', ' : ''}<a href={`#/actions/${x.id}`}>{x.title}</a></span>)}</p>
+          )}
         </section>
 
         <section className="card">

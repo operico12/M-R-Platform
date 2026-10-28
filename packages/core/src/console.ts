@@ -172,6 +172,8 @@ export interface SiteUser {
   addedAt: Iso;
   retiredAt?: Iso;
   retiredReason?: string;
+  /** Live mode: added but has not signed in yet, so has no account id to own work. */
+  invited?: boolean;
 }
 
 export interface UserInput {

@@ -16,6 +16,8 @@ export type Action =
   | 'void_flag'
   | 'change_locked_period'
   | 'run_analyses'
+  | 'create_actions'
+  | 'run_rcas'
   | 'publish_weekly_pack'
   | 'export_reports'
   | 'edit_codes'
@@ -38,6 +40,9 @@ const MATRIX: Record<Action, Partial<Record<Role, Permission>>> = {
   void_flag: { supervisor: 'area', reliability_engineer: 'yes', superintendent: 'yes' },
   change_locked_period: { supervisor: 'request', reliability_engineer: 'request', superintendent: 'approve', admin: 'request' },
   run_analyses: { supervisor: 'yes', reliability_engineer: 'yes', superintendent: 'yes' },
+  // Phase 2 improvement loop. Anyone can be an action's owner; the owner can start and close it.
+  create_actions: { supervisor: 'yes', reliability_engineer: 'yes', superintendent: 'yes' },
+  run_rcas: { reliability_engineer: 'yes', superintendent: 'yes' },
   publish_weekly_pack: { reliability_engineer: 'yes', superintendent: 'yes' },
   export_reports: { supervisor: 'yes', reliability_engineer: 'yes', superintendent: 'yes', admin: 'yes' },
   edit_codes: { reliability_engineer: 'propose', admin: 'yes' },
@@ -62,6 +67,8 @@ export const ACTION_LABELS: Record<Action, string> = {
   void_flag: 'Void a flag',
   change_locked_period: 'Change data in a locked period',
   run_analyses: 'Run calculators and analyses',
+  create_actions: 'Raise and manage improvement actions',
+  run_rcas: 'Lead root cause analyses',
   publish_weekly_pack: 'Publish the weekly pack',
   export_reports: 'Export reports and data',
   edit_codes: 'Edit reason codes',

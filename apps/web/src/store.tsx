@@ -24,9 +24,12 @@ import {
   type SiteUser,
   type Target,
   type TargetKpi,
+  type ImprovementAction,
+  type Rca,
   defaultReasonCodes,
   targetValue,
 } from '@mr/core';
+import { demoImprovements } from './data/demo-improve';
 import { saveFlags, saveRecords, saveTarget, type Loaded } from './data/remote';
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 
@@ -52,6 +55,13 @@ export interface AppState {
   codes: ReasonCode[];
   /** Run a console command; on success keep its records and audit entries (and save them when live). */
   runConsole: <T>(kind: 'targets' | 'users' | 'codes', cmd: (ctx: ConsoleContext) => ConsoleResult<T>) => ConsoleResult<T>;
+  actions: ImprovementAction[];
+  rcas: Rca[];
+  /** Run an action or RCA command; same as runConsole. */
+  runImprove: <T>(kind: 'actions' | 'rcas', cmd: (ctx: ConsoleContext) => ConsoleResult<T>) => ConsoleResult<T>;
+  /** Users who can own an action or lead an RCA: active, and signed in at least once. */
+  people: SiteUser[];
+  userName: (id: string) => string;
   /** 'demo' runs on the synthetic fleet in this browser; 'live' reads and saves through Supabase. */
   mode: 'demo' | 'live';
   /** Set when a save to the database failed; the screen shows it and the data is reloaded. */
@@ -101,6 +111,7 @@ export function AppProvider({ children, live, onReload, onSignOut }: { children:
     ['reliability_engineer', 'Rae Reliability'], ['superintendent', 'Sol Superintendent'], ['admin', 'Ada Admin'],
   ].map(([role, name]) => ({ id: `demo-${role}`, name: name!, email: `${role}@example.com`, role: role as Role, scope: ['*'], addedAt: '2026-01-01T00:00:00.000Z' })));
   const [flags, setFlags] = useState<DownFlag[]>(ds.flags);
+  const [improve, setImprove] = useState(() => (live ? { actions: live.actions, rcas: live.rcas } : demoImprovements(ds)));
   const [audit, setAudit] = useState<AuditEntry[]>([]);
   const [now, setNow] = useState(() => new Date().toISOString());
   const [role, setRole] = useState<Role>('supervisor');
@@ -215,7 +226,26 @@ export function AppProvider({ children, live, onReload, onSignOut }: { children:
     },
     [actor, ds, live, failed],
   );
-  const value: AppState = { ds, targets, targetOf, targetList, users, codes, runConsole, mode: live ? 'live' : 'demo', syncError, clearSyncError: () => setSyncError(null), signOut: onSignOut, importRuns, applyImport, newId, flags, audit, rules, now, actor, setRole, run, lastSync: ds.generatedAt, theme, setTheme };
+  const runImprove = useCallback(
+    <T,>(kind: 'actions' | 'rcas', cmd: (ctx: ConsoleContext) => ConsoleResult<T>): ConsoleResult<T> => {
+      const nowIso = new Date().toISOString();
+      const r = cmd({ actor, now: nowIso, newId, timeZone: ds.site.timeZone, calendar: ds.calendar });
+      if (r.ok) {
+        setImprove((prev) => ({ ...prev, [kind]: r.records }));
+        setAudit((prev) => [...r.audit, ...prev]);
+        setNow(nowIso);
+        if (live) {
+          const ids = new Set(r.audit.map((a) => a.entityId));
+          saveRecords(siteId, kind, (r.records as Array<{ id: string }>).filter((x) => ids.has(x.id)), r.audit).catch(failed);
+        }
+      }
+      return r;
+    },
+    [actor, ds, live, failed],
+  );
+  const people = useMemo(() => users.filter((u) => !u.retiredAt && !u.invited), [users]);
+  const userName = useCallback((id: string) => users.find((u) => u.id === id)?.name ?? 'Unknown user', [users]);
+  const value: AppState = { ds, actions: improve.actions, rcas: improve.rcas, runImprove, people, userName, targets, targetOf, targetList, users, codes, runConsole, mode: live ? 'live' : 'demo', syncError, clearSyncError: () => setSyncError(null), signOut: onSignOut, importRuns, applyImport, newId, flags, audit, rules, now, actor, setRole, run, lastSync: ds.generatedAt, theme, setTheme };
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
 

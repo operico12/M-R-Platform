@@ -19,10 +19,13 @@ flag intervals and SMU readings; nothing is typed in. Fleet figures are ratios o
 | KPI-012 | Shop release vs plan | releases on or before the first ETA ÷ releases with an ETA | D10. |
 | KPI-013 | Field repair share | unscheduled events released from Down in field ÷ unscheduled events released | |
 | KPI-014 | Repair duration | flag start → release, by repair type | Show median and spread (next). |
+| KPI-015 | Action effect (phase 2) | (after − before) ÷ before, on matching down h per 1,000 calendar h | Plan 7.7. Same filters as the action's slice, date range ignored. Equal windows either side of the done time: up to 28 days, cut to the time since done. Judged after 7 days. A change within ±10% reads "no clear change". Code: `actionEffect`, `effectVerdict` in `improve.ts`. |
 
 ## Worked examples encoded as tests
 
 - Plan 3.2, one 12-hour shift: PA 62.5%, utilisation 90.7%, standby 0.7 h, effective utilisation 56.7%.
 - Plan Appendix A: one truck, one week, 28 h down → PA 83.3%, unchanged by 10 h standby.
+- KPI-015, one truck: 20 h hydraulic down in the 28 days before, 5 h after → −75%, failures 2 → 1; a 6 h
+  tyre stop is outside the slice but still lowers PA before (646 ÷ 672).
 - A7 section 10, HT107: 10 h 08 down (9 h 58 day, 10 min night), repair 4 h 55, waiting 5 h 13 by stage,
   locations 1 h 28 / 45 / 50 / 7 h 05, first wrench 38 min, missed first ETA.
