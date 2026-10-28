@@ -15,6 +15,7 @@ const EXPECTED: Partial<Record<Action, Record<Role, string>>> = {
   publish_weekly_pack: { viewer: 'no', technician: 'no', supervisor: 'no', reliability_engineer: 'yes', superintendent: 'yes', admin: 'no' },
   change_targets: { viewer: 'no', technician: 'no', supervisor: 'no', reliability_engineer: 'propose', superintendent: 'approve', admin: 'no' },
   change_locked_period: { viewer: 'no', technician: 'no', supervisor: 'request', reliability_engineer: 'request', superintendent: 'approve', admin: 'request' },
+  manage_imports: { viewer: 'no', technician: 'no', supervisor: 'no', reliability_engineer: 'no', superintendent: 'no', admin: 'yes' },
 };
 
 describe('permission matrix (plan 11.2)', () => {

@@ -5,6 +5,7 @@ import {
   LOCATION_LABELS,
   STAGE_LABELS,
   SYSTEMS,
+  activeCodes,
   can,
   canPropose,
   changeStage,
@@ -34,8 +35,6 @@ import { useMemo, useState } from 'react';
 import { fmtHours, fromLocalInput, hoursSince, locationLabel, siteTime, stageLabel, toLocalInput } from '../format';
 import { useApp } from '../store';
 
-const UNSCHED_REASONS = Object.keys(SYSTEMS);
-const SCHED_REASONS = ['PM 250', 'PM 500', 'PM 1000', 'Planned component change', 'Planned inspection', 'Shutdown'];
 
 export function FlagSheet({ asset, onClose }: { asset: Asset; onClose: () => void }) {
   const app = useApp();
@@ -91,7 +90,8 @@ function FlagDownForm({ asset, onDone }: { asset: Asset; onDone: () => void }) {
   const freeLines = useFreeLines(asset);
 
   if (!direct && !propose) return <Locked who="Supervisors, reliability engineers and superintendents" />;
-  const reasons = type === 'unscheduled' ? UNSCHED_REASONS : SCHED_REASONS;
+  // Active reason codes from the console; retired codes cannot be picked.
+  const reasons = activeCodes(app.codes, type).map((c) => c.label);
 
   const submit = () => {
     const startIso = earlier ? fromLocalInput(start, tz) : new Date().toISOString();

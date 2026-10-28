@@ -215,7 +215,7 @@ export interface AuditEntry {
   at: Iso;
   userId: string;
   action: string;
-  entity: 'down_flag';
+  entity: 'down_flag' | 'import_run' | 'target' | 'user' | 'code' | 'action' | 'rca' | 'project' | 'settings' | 'alert' | 'approval' | 'inspection' | 'inspection_form' | 'analysis';
   entityId: string;
   before: unknown;
   after: unknown;
@@ -223,4 +223,52 @@ export interface AuditEntry {
   /** The time the user said it happened, when back-dated. */
   effectiveAt?: Iso;
   offline?: boolean;
+}
+
+/** How a work order type is treated in analysis. The ERP's own codes map to these (A3). */
+export type WorkClass = 'pm' | 'corrective' | 'inspection' | 'project' | 'other';
+
+/** Whether open work can be scheduled (KPI-021). The ERP's statuses map to these in the import mapping. */
+export type WorkReadiness = 'ready' | 'in_progress' | 'waiting_approval' | 'waiting_parts' | 'waiting_shutdown' | 'unknown';
+
+/**
+ * A work order copied from the ERP. The ERP stays the system of record (plan 6.3):
+ * the platform only reads these, keyed by source system plus source ID.
+ */
+export interface WorkOrder {
+  id: string;
+  tenantId: string;
+  siteId: string;
+  /** Linked unit, if the work order's asset matched one. */
+  assetId?: string;
+  sourceSystem: string;
+  sourceId: string;
+  /** As shown in the ERP. */
+  number: string;
+  /** Trimmed, upper case, without a "WO-" prefix or leading zeros. Used to link flags. */
+  numberNormalised: string;
+  /** The ERP asset number given on the work order. */
+  externalAssetId?: string;
+  woType?: string;
+  workClass: WorkClass;
+  status?: string;
+  /** False once the ERP status is one of the closed statuses. */
+  open: boolean;
+  priority?: string;
+  description?: string;
+  reportedAt?: Iso;
+  completedAt?: Iso;
+  sourceModifiedAt?: Iso;
+  /** Phase 2 work and PM view (KPI-018 to 023). All optional: older exports work without them. */
+  targetStart?: Iso;
+  /** The due date for a PM. */
+  targetFinish?: Iso;
+  scheduledStart?: Iso;
+  scheduledFinish?: Iso;
+  estimatedHours?: number;
+  actualLabourHours?: number;
+  /** The PM record that generated it. */
+  pmNumber?: string;
+  /** The work order it was raised from, for example a PM that found a defect. */
+  originWorkOrder?: string;
 }

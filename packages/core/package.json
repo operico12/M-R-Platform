@@ -8,7 +8,8 @@
   "scripts": {
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
-    "synth": "tsx src/synth/cli.ts"
+    "synth": "tsx src/synth/cli.ts",
+    "seed:sql": "tsx src/synth/seed-sql.ts"
   },
   "dependencies": {
     "luxon": "^3.7.2"

@@ -7,6 +7,7 @@ import { computeKpis, lineOccupancy } from '../src/kpis.js';
 import { smuRisingWhileDown } from '../src/alerts.js';
 import { generateFleet } from '../src/synth/generate.js';
 import { ms } from '../src/time.js';
+import { importAssets, importSmu, importWorkOrders, parseCsv, toSourceCsv } from '../src/imports.js';
 
 const END = '2026-10-26T20:00:00.000Z';
 const ds = generateFleet({ seed: 7, units: 40, days: 120, end: END });
@@ -82,5 +83,18 @@ describe('synthetic fleet', () => {
   it('SMU never rises while a unit is flagged down (no false R14 checks)', () => {
     const al = smuRisingWhileDown({ assets: ds.assets, flags: ds.flags, smu: ds.smu, rules: DEFAULT_FLAG_RULES, calendar: ds.calendar, now: END, since: ds.flags[0]!.start });
     expect(al).toEqual([]);
+  });
+
+  it('exports to Maximo-style CSV and reads back with no changes and no errors', () => {
+    const files = toSourceCsv(ds, ds.site.timeZone);
+    const ctx = { tenantId: ds.tenantId, siteId: ds.site.id, timeZone: ds.site.timeZone, now: END, newId: () => 'x' };
+    const a = importAssets(parseCsv(files.assets), ds.assets, ctx);
+    expect(a.stats).toMatchObject({ inserted: 0, updated: 0, failed: 0, unchanged: ds.assets.length });
+    const w = importWorkOrders(parseCsv(files.workOrders), ds.workOrders, ds.assets, ctx);
+    expect(w.stats).toMatchObject({ inserted: 0, updated: 0, failed: 0 });
+    expect(w.issues).toEqual([]);
+    const s = importSmu(parseCsv(files.smu), [], ds.assets, ctx);
+    expect(s.stats.failed).toBe(0);
+    expect(s.stats.inserted).toBe(ds.smu.length);
   });
 });

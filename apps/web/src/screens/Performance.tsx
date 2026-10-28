@@ -2,14 +2,12 @@
 // MTBF, MTTR and mean downtime, trend against target, downtime by system,
 // where downtime goes by stage, bad actors. Weekly pack export.
 
-import { OPEN_A7_SETTINGS, STAGE_LABELS, computeKpis, downtimePareto, recentWeeks, type KpiResult, type Stage } from '@mr/core';
+import { OPEN_A7_SETTINGS, rag as coreRag, STAGE_LABELS, computeKpis, downtimePareto, recentWeeks, type KpiResult, type Stage } from '@mr/core';
 import { useMemo } from 'react';
 import { Bar, CartesianGrid, ComposedChart, Legend, Line, LineChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { fmtHours, fmtNum, fmtPct, siteTime } from '../format';
 import { useApp } from '../store';
 
-// Placeholder targets until the superintendent sets them in the console (plan 11.4).
-const TARGETS = { pa: 0.9, utilisation: 0.85 };
 
 const FORMULAS: Record<string, string> = {
   pa: 'PA = (calendar h − maintenance downtime h) ÷ calendar h. Standby is not deducted.',
@@ -21,6 +19,7 @@ const FORMULAS: Record<string, string> = {
 
 export function Performance() {
   const app = useApp();
+  const TARGETS = app.targets;
   const tz = app.ds.site.timeZone;
   const weeks = useMemo(() => recentWeeks(tz, app.now, 12), [tz, app.now]);
   const input = useMemo(
@@ -54,13 +53,14 @@ export function Performance() {
       <div className="page-head">
         <h2>Performance · Haul trucks</h2>
         <span className="muted small">Week of {last.w.label} (last complete week) · site time zone {tz}</span>
-        <button className="btn" onClick={exportPack}>Export weekly pack (CSV)</button>
+        <a className="btn primary" href="#/pack" style={{ display: 'inline-flex', alignItems: 'center', textDecoration: 'none' }}>Weekly pack</a>
+        <button className="btn" onClick={exportPack}>Weekly figures (CSV)</button>
       </div>
       <div className="trust"><span>Last sync {siteTime(app.lastSync, tz, true)}</span><span>Source: down flags + SMU readings</span></div>
 
       <div className="grid kpis">
-        <Kpi id="pa" label="Physical availability" v={fmtPct(last.k.pa)} d={delta(last.k.pa, prev.k.pa)} rag={rag(last.k.pa, TARGETS.pa)} target={`Target ${fmtPct(TARGETS.pa, 0)}`} />
-        <Kpi id="util" label="Utilisation" v={fmtPct(last.k.utilisation)} d={delta(last.k.utilisation, prev.k.utilisation)} rag={rag(last.k.utilisation, TARGETS.utilisation)} target={`Target ${fmtPct(TARGETS.utilisation, 0)}`} />
+        <Kpi id="pa" label="Physical availability" v={fmtPct(last.k.pa)} d={delta(last.k.pa, prev.k.pa)} rag={coreRag('pa', last.k.pa, app.targetOf('pa'))} target={`Target ${fmtPct(TARGETS.pa, 0)}`} />
+        <Kpi id="util" label="Utilisation" v={fmtPct(last.k.utilisation)} d={delta(last.k.utilisation, prev.k.utilisation)} rag={coreRag('utilisation', last.k.utilisation, app.targetOf('utilisation'))} target={`Target ${fmtPct(TARGETS.utilisation, 0)}`} />
         <Kpi id="mtbf" label="MTBF (op. h)" v={fmtNum(last.k.mtbf, 0)} d={`${last.k.failures} failures, ${last.k.minorStops} minor stops`} />
         <Kpi id="mttr" label="MTTR" v={fmtHours(last.k.mttr)} d={`${last.k.repairs} repairs`} flag={unsettled('mttrDenominator')?.question} />
         <Kpi id="mdt" label="Mean downtime" v={fmtHours(last.k.meanDowntime)} d={`Gap to MTTR = logistics: ${fmtHours((last.k.meanDowntime ?? 0) - (last.k.mttr ?? 0))}`} flag={unsettled('meanDowntime')?.question} />
@@ -87,7 +87,7 @@ export function Performance() {
         </section>
 
         <section className="card">
-          <h3>Unscheduled downtime by system, last 4 weeks</h3>
+          <h3>Unscheduled downtime by system, last 4 weeks <a className="small" href="#/analysis?type=unscheduled">Filter and drill down →</a></h3>
           <div style={{ height: 260 }}>
             <ResponsiveContainer>
               <ComposedChart data={pareto.map((r) => ({ system: r.key, hours: Math.round(r.hours), cumulative: Math.round(r.cumulative * 100) }))} margin={{ top: 8, right: 0, bottom: 40, left: -10 }}>
@@ -127,7 +127,7 @@ export function Performance() {
               {bad.map(({ a, k }) => (
                 <tr key={a.id}>
                   <td><a href={`#/unit/${a.id}`}>{a.unitNumber}</a></td>
-                  <td className="num">{fmtHours(k.unscheduledDownHours)}</td>
+                  <td className="num"><a href={`#/analysis?type=unscheduled&unit=${a.id}`}>{fmtHours(k.unscheduledDownHours)}</a></td>
                   <td className="num">{k.failures}</td>
                   <td className="num">{fmtPct(k.pa)}</td>
                 </tr>
@@ -142,12 +142,6 @@ export function Performance() {
 
 const pct = (x: number | null) => (x === null ? null : Math.round(x * 1000) / 10);
 const delta = (a: number | null, b: number | null) => (a === null || b === null ? '' : `${a >= b ? '▲' : '▼'} ${Math.abs((a - b) * 100).toFixed(1)} pts vs prior week`);
-function rag(v: number | null, target: number): 'green' | 'amber' | 'red' | undefined {
-  if (v === null) return undefined;
-  if (v >= target) return 'green';
-  if (v >= target - 0.03) return 'amber';
-  return 'red';
-}
 
 function Kpi({ id, label, v, d, rag: r, target, flag }: { id: string; label: string; v: string; d?: string; rag?: 'green' | 'amber' | 'red'; target?: string; flag?: string }) {
   return (

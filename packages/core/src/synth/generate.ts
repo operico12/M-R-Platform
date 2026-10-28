@@ -6,9 +6,11 @@
 // 250 SMU hours, some PMs that overrun with a defect, and repairs that move
 // through realistic stages and locations. SMU is read at each shift change.
 
+import { DateTime } from 'luxon';
 import { DEFAULT_FLAG_RULES } from '../config.js';
 import { HOUR_MS, ms, shiftsBetween, toIso, twelveHourCalendar, type ShiftCalendar } from '../time.js';
-import type { Asset, AssetLifecycleInterval, DownFlag, LocationInterval, ShopLine, ShopLineClosure, SmuReading, Stage, StageInterval } from '../types.js';
+import { normaliseWoNumber } from '../imports.js';
+import type { Asset, AssetLifecycleInterval, DownFlag, WorkOrder, LocationInterval, ShopLine, ShopLineClosure, SmuReading, Stage, StageInterval } from '../types.js';
 
 export interface SynthOptions {
   seed?: number;
@@ -30,6 +32,8 @@ export interface Dataset {
   fieldLocations: string[];
   flags: DownFlag[];
   smu: SmuReading[];
+  /** Work orders as the ERP would hold them. */
+  workOrders: WorkOrder[];
   generatedAt: string;
 }
 
@@ -46,6 +50,9 @@ export const SYSTEMS: Record<string, { components: string[]; modes: string[]; we
   'Final drives': { components: ['Planetary', 'Wheel bearing', 'Seal'], modes: ['Leak', 'Noise', 'Metal in oil'], weight: 4, repairH: 12 },
   Steering: { components: ['Steering cylinder', 'Pump', 'Tie rod'], modes: ['Leak', 'Play'], weight: 4, repairH: 3 },
 };
+
+/** Starter cause codes (A9 reference lists). */
+export const CAUSES = ['Wear', 'Contamination', 'Fatigue', 'Installation error', 'Operator damage', 'Design', 'Lubrication'];
 
 export const FIELD_LOCATIONS = ['Pit 1 north', 'Pit 2 north ramp', 'Pit 2 south', 'Bench 1450', 'Bench 1480', 'Main haul road', 'ROM pad', 'Waste dump 3', 'Crusher pad'];
 
@@ -95,7 +102,7 @@ export function generateFleet(opts: SynthOptions = {}): Dataset {
       model: big ? '797F' : '793F',
       assetClass: 'mobile',
       serial: `${big ? 'LAJ' : 'SSP'}${String(10000 + i * 37).padStart(5, '0')}`,
-      externalAssetId: `MX-${num}`,
+      externalAssetId: `HT${num}`, // Maximo ASSETNUM is the unit number here
     };
   });
 
@@ -364,6 +371,94 @@ export function generateFleet(opts: SynthOptions = {}): Dataset {
     return [close(f, t)];
   }
 
+  // Work orders as Maximo would hold them: one per flag work order, plus a
+  // backlog of open work not yet done (deferred defects, upcoming PMs).
+  flags.sort((a, b) => ms(a.start) - ms(b.start));
+  // Failure coding as people really enter it (phase 2 code-quality checks): mostly
+  // complete, with cause codes on most, and some "Other", "Unknown" and mismatches.
+  // Own random stream, so durations, stages and KPIs stay the same for a seed.
+  const cq = rng(seed + 104729);
+  const sysNames = Object.keys(SYSTEMS);
+  for (const f of flags) {
+    const rel = f.release;
+    if (!rel?.system || !SYSTEMS[rel.system]) continue;
+    const x = cq();
+    if (x < 0.07) rel.component = 'Other';
+    else if (x < 0.1) rel.failureModes = ['Unknown'];
+    else if (x < 0.12) {
+      const other = SYSTEMS[sysNames[Math.floor(cq() * sysNames.length)]!]!;
+      rel.component = other.components[Math.floor(cq() * other.components.length)];
+    }
+    if (cq() < 0.7) rel.causeCode = CAUSES[Math.floor(cq() * CAUSES.length)];
+  }
+  const wos = new Map<string, WorkOrder>();
+  const woFor = (a: Asset, number: string, w: Omit<WorkOrder, 'id' | 'tenantId' | 'siteId' | 'sourceSystem' | 'sourceId' | 'number' | 'numberNormalised' | 'assetId' | 'externalAssetId'>) => {
+    const key = normaliseWoNumber(number);
+    if (wos.has(key)) return;
+    wos.set(key, { id: `wo-${key}`, tenantId, siteId, assetId: a.id, externalAssetId: a.externalAssetId, sourceSystem: 'maximo', sourceId: key, number: key, numberNormalised: key, ...w });
+  };
+  const unitOf = new Map(assets.map((a) => [a.id, a]));
+  // Planning fields (phase 2 work view) use their own random stream, so the
+  // fleet, flags and SMU stay exactly as before for a given seed.
+  const q = rng(seed + 7919);
+  const DAY = 24 * HOUR_MS;
+  const half = (h: number) => Math.max(0.5, Math.round(h * 2) / 2);
+  const dayStart = (t: number) => DateTime.fromMillis(t, { zone: tz }).startOf('day').toMillis();
+  const pmDone: Array<{ unit: string; number: string; at: number }> = [];
+  for (const f of flags) {
+    const a = unitOf.get(f.unitId)!;
+    for (const n of f.workOrders) {
+      const pm = n.startsWith('PM-');
+      const done = f.state === 'released';
+      const s0 = ms(f.start);
+      const durH = ((f.end ? ms(f.end) : end) - s0) / HOUR_MS;
+      const em = !pm && q() < 0.35;
+      // PMs: most done near their due date, some late. Scheduled on the day they started, sometimes slipped.
+      const due = pm ? dayStart(s0 + (q() < 0.85 ? (Math.floor(q() * 4) - 2) * DAY : -(5 + Math.floor(q() * 6)) * DAY)) : undefined;
+      const sched = pm ? (q() < 0.8 ? s0 : s0 - 2 * DAY) : !em ? s0 : undefined;
+      woFor(a, n, {
+        woType: pm ? 'PM' : em ? 'EM' : 'CM', workClass: pm ? 'pm' : 'corrective', status: done ? 'COMP' : 'INPRG', open: !done,
+        priority: pm ? '3' : em ? '1' : '2', description: pm ? `${f.reasonCode} service` : `${f.system ?? f.reasonCode}: ${f.release?.failureModes?.[0] ?? 'repair'}`,
+        reportedAt: f.start, completedAt: f.end ?? undefined, sourceModifiedAt: f.end ?? f.start,
+        targetStart: due !== undefined ? toIso(due) : undefined, targetFinish: due !== undefined ? toIso(due + DAY - 60_000) : undefined,
+        scheduledStart: sched !== undefined ? toIso(round5(sched)) : undefined,
+        scheduledFinish: sched !== undefined ? toIso(round5(sched + (f.plannedDurationHours ?? Math.min(durH, 12)) * HOUR_MS)) : undefined,
+        estimatedHours: half((f.plannedDurationHours ?? Math.min(durH, 24)) * 1.5),
+        actualLabourHours: done ? half(durH * (1.2 + q())) : undefined,
+        pmNumber: pm ? `PM250-${a.unitNumber}` : undefined,
+      });
+      if (pm && done) pmDone.push({ unit: a.id, number: normaliseWoNumber(n), at: ms(f.end!) });
+    }
+  }
+  const backlog = ['Weeping hose at hoist cylinder', 'Cracked step', 'Seat belt worn', 'Body liner wear check', 'Replace cab filter', 'Light bar inoperative', 'Oil sample follow-up'];
+  for (const a of assets) {
+    const n = Math.floor(r() * 4);
+    for (let i = 0; i < n; i++) {
+      const at = round5(end - r() * 21 * 24 * HOUR_MS);
+      const st = pick(['WAPPR', 'APPR', 'WMATL', 'WSCH']);
+      const from = pmDone.filter((x) => x.unit === a.id && x.at <= at).at(-1);
+      const sched = st === 'WSCH' ? round5(end + (Math.floor(q() * 10) - 3) * DAY) : undefined;
+      woFor(a, String(Math.floor(200000 + r() * 799999)), {
+        woType: 'CM', workClass: 'corrective', status: st, open: true, priority: pick(['2', '3', '4']),
+        description: pick(backlog), reportedAt: toIso(at), sourceModifiedAt: toIso(at),
+        estimatedHours: q() < 0.9 ? half(1 + q() * 11) : undefined,
+        originWorkOrder: from && q() < 0.5 ? from.number : undefined,
+        scheduledStart: sched !== undefined ? toIso(sched) : undefined, scheduledFinish: sched !== undefined ? toIso(sched + 4 * HOUR_MS) : undefined,
+      });
+    }
+  }
+  // The next PM for each haul truck: due in the next two weeks, a few already overdue.
+  for (const a of assets.filter((x) => x.fleet === 'Haul trucks')) {
+    const due = dayStart(end + (Math.floor(q() * 17) - 3) * DAY);
+    const number = `PM-${Math.floor(300000 + q() * 699999)}`;
+    woFor(a, number, {
+      woType: 'PM', workClass: 'pm', status: 'WSCH', open: true, priority: '3', description: 'PM 250 service',
+      reportedAt: toIso(round5(Math.min(due - 7 * DAY, end - HOUR_MS))), sourceModifiedAt: toIso(round5(Math.min(due - 7 * DAY, end - HOUR_MS))),
+      targetStart: toIso(due), targetFinish: toIso(due + DAY - 60_000), scheduledStart: toIso(due + 7 * HOUR_MS), scheduledFinish: toIso(due + 15 * HOUR_MS),
+      estimatedHours: 16, pmNumber: `PM250-${a.unitNumber}`,
+    });
+  }
+
   return {
     tenantId,
     site: { id: siteId, name: 'Demo mine (synthetic)', timeZone: tz },
@@ -373,7 +468,8 @@ export function generateFleet(opts: SynthOptions = {}): Dataset {
     shopLines,
     closures,
     fieldLocations: FIELD_LOCATIONS,
-    flags: flags.sort((a, b) => ms(a.start) - ms(b.start)),
+    flags,
+    workOrders: [...wos.values()].sort((a, b) => ms(a.reportedAt!) - ms(b.reportedAt!)),
     smu: smu.sort((a, b) => ms(a.at) - ms(b.at)),
     generatedAt: toIso(end),
   };

@@ -8,7 +8,7 @@ has not settled is a setting in code, not a hard-coded choice.
 | --- | --- | --- | --- |
 | A1 | Vision and MVP scope | Covered by plan v10 sections 1 and 5 | Build plan |
 | A2 | Time model and KPI dictionary | Tier 1 entries drafted from plan 3.3 and A7 section 9 | [kpi-dictionary.md](kpi-dictionary.md) |
-| A3 | Data source and field mapping | Not started (needs a sample Maximo export) | |
+| A3 | Data source and field mapping | Placeholder Maximo column mapping in code, editable as a setting; needs a real sample export to confirm. Phase 2 adds optional work order columns TARGSTARTDATE, TARGCOMPDATE, SCHEDSTART, SCHEDFINISH, ESTDUR, ACTLABHRS, PMNUM, ORIGRECORDID and a status → readiness map | `MAXIMO_DEFAULT_MAPPING` in `packages/core/src/imports.ts` |
 | A4 | MVP requirements and acceptance tests | Acceptance tests partly encoded as golden tests | `packages/core/test` |
 | A5 | Architecture decision records | ADR-001 to ADR-004 | [adr/](adr/) |
 | A6 | Data-use, security and ownership | Not started. Repo uses synthetic data only | |
@@ -18,3 +18,7 @@ has not settled is a setting in code, not a hard-coded choice.
 | A10 | Test data plan and golden dataset | Plan 3.2, Appendix A and A7 HT107 examples encoded; more Appendix E cases in `rules.test.ts` | `packages/core/test` |
 | A11 | Glossary | Not started | |
 | A12 | Project instruction file | Done | [`CLAUDE.md`](../CLAUDE.md) |
+
+Phase 2 rules: [reliability and threshold alerts](alert-rules.md), [approvals](approvals.md).
+
+Setup: [connecting a Supabase project](setup-supabase.md).
