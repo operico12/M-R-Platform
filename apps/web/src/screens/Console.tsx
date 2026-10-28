@@ -26,10 +26,11 @@ import { useState, type ReactNode } from 'react';
 import { siteTime } from '../format';
 import { useApp } from '../store';
 import { FlagRules } from './DataQuality';
+import { AlertRulesPage } from './AlertRules';
 import { WorkSettingsPage } from './WorkSettings';
 
-type Tab = 'users' | 'targets' | 'work' | 'codes';
-const TABS: Array<[Tab, string]> = [['users', 'Users'], ['targets', 'Targets'], ['work', 'Work settings'], ['codes', 'Flags and codes']];
+type Tab = 'users' | 'targets' | 'work' | 'alerts' | 'codes';
+const TABS: Array<[Tab, string]> = [['users', 'Users'], ['targets', 'Targets'], ['work', 'Work settings'], ['alerts', 'Alert rules'], ['codes', 'Flags and codes']];
 
 export function Console({ tab }: { tab: string }) {
   const t: Tab = TABS.some(([k]) => k === tab) ? (tab as Tab) : 'users';
@@ -42,6 +43,7 @@ export function Console({ tab }: { tab: string }) {
       {t === 'users' && <Users />}
       {t === 'targets' && <Targets />}
       {t === 'work' && <WorkSettingsPage />}
+      {t === 'alerts' && <AlertRulesPage />}
       {t === 'codes' && <Codes />}
     </div>
   );

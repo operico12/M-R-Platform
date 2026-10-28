@@ -255,3 +255,4 @@ label.btn { display: inline-flex; align-items: center; }
 .linklike { background: none; border: 0; padding: 0; color: var(--brand); text-decoration: underline; cursor: pointer; text-align: left; font: inherit; }
 a.chip { color: var(--text); text-decoration: none; }
 a.chip[aria-pressed='true'] { color: var(--brand-ink); }
+.nav-count { display: inline-block; min-width: 20px; padding: 0 6px; margin-left: 6px; border-radius: 10px; background: var(--down); color: #fff; font-size: 12px; font-weight: 700; line-height: 20px; text-align: center; }

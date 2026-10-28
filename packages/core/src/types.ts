@@ -215,7 +215,7 @@ export interface AuditEntry {
   at: Iso;
   userId: string;
   action: string;
-  entity: 'down_flag' | 'import_run' | 'target' | 'user' | 'code' | 'action' | 'rca' | 'project' | 'settings';
+  entity: 'down_flag' | 'import_run' | 'target' | 'user' | 'code' | 'action' | 'rca' | 'project' | 'settings' | 'alert';
   entityId: string;
   before: unknown;
   after: unknown;

@@ -3,7 +3,7 @@
 // The anon key is public by design: row-level security decides what each
 // signed-in person can read and write. Never put the service_role key here.
 
-import { DEFAULT_FLAG_RULES, DEFAULT_WORK_SETTINGS, emptyFishbone, type WorkSettings, type ImprovementAction, type Project, type Rca, type AuditEntry, type Dataset, type DownFlag, type FlagRulesConfig, type ReasonCode, type Role, type ShiftCalendar, type SiteUser, type SmuReading, type Target, type WorkOrder, type Asset } from '@mr/core';
+import { DEFAULT_FLAG_RULES, DEFAULT_WORK_SETTINGS, withAlertDefaults, type AlertAnswer, type AlertSettings, emptyFishbone, type WorkSettings, type ImprovementAction, type Project, type Rca, type AuditEntry, type Dataset, type DownFlag, type FlagRulesConfig, type ReasonCode, type Role, type ShiftCalendar, type SiteUser, type SmuReading, type Target, type WorkOrder, type Asset } from '@mr/core';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 
 const url = import.meta.env.VITE_SUPABASE_URL as string | undefined;
@@ -30,6 +30,8 @@ export interface Loaded {
   rcas: Rca[];
   projects: Project[];
   workSettings: WorkSettings;
+  alertSettings: AlertSettings;
+  alertAnswers: AlertAnswer[];
 }
 
 /** Postgres returns "+00:00" offsets; the app compares ISO strings, so make them all "Z". */
@@ -53,11 +55,12 @@ export async function mySites(): Promise<RemoteSite[]> {
 }
 
 export async function loadSite(siteId: string): Promise<Loaded> {
-  const [main, imp, proj, wk] = await Promise.all([
+  const [main, imp, proj, wk, ans] = await Promise.all([
     remote!.rpc('app_load', { p_site: siteId }), remote!.rpc('app_load_improve', { p_site: siteId }), remote!.rpc('app_load_projects', { p_site: siteId }),
     remote!.rpc('app_load_work', { p_site: siteId }),
+    remote!.rpc('app_load_alert_answers', { p_site: siteId }),
   ]);
-  const work = iso(must(wk)) as { plans: Array<Partial<WorkOrder> & { id: string }>; settings: { work?: Partial<WorkSettings> } };
+  const work = iso(must(wk)) as { plans: Array<Partial<WorkOrder> & { id: string }>; settings: { work?: Partial<WorkSettings>; alerts?: Partial<AlertSettings> } };
   const plans = new Map(work.plans.map((x) => [x.id, x]));
   const num = (v: unknown) => (v === undefined || v === null ? undefined : Number(v));
   const projects = (iso(must(proj)) as Project[]).map((p) => ({
@@ -97,6 +100,8 @@ export async function loadSite(siteId: string): Promise<Loaded> {
     actions: improve.actions,
     projects,
     workSettings: { ...DEFAULT_WORK_SETTINGS, ...(work.settings.work ?? {}) },
+    alertSettings: withAlertDefaults(work.settings.alerts),
+    alertAnswers: iso(must(ans)) as AlertAnswer[],
     rcas: improve.rcas.map((r) => ({ ...r, fishbone: { ...emptyFishbone(), ...(r.fishbone as Partial<Rca['fishbone']>) } })),
     users: d.users, codes: d.codes, targets: d.targets.map((t) => ({ ...t, value: Number(t.value), amber: Number(t.amber) })),
   };
@@ -123,7 +128,13 @@ export async function saveTaskStatus(siteId: string, projectId: string, taskId: 
   must(await remote!.rpc('app_set_task_status', { p_site: siteId, p_project: projectId, p_task: taskId, p_status: status, p_note: note ?? null }));
 }
 
-export async function saveSetting(siteId: string, key: 'work', value: object, reason: string, audit: AuditEntry[]): Promise<void> {
+export async function saveSetting(siteId: string, key: 'work' | 'alerts', value: object, reason: string, audit: AuditEntry[]): Promise<void> {
   must(await remote!.rpc('app_save_setting', { p_site: siteId, p_key: key, p_value: value, p_reason: reason }));
+  if (audit.length) must(await remote!.rpc('app_log', { p_site: siteId, p_entries: audit }));
+}
+
+/** Answers are append-only; the database sets who and when. */
+export async function saveAlertAnswer(siteId: string, a: AlertAnswer, audit: AuditEntry[]): Promise<void> {
+  must(await remote!.rpc('app_save_alert_answer', { p_site: siteId, p_answer: a }));
   if (audit.length) must(await remote!.rpc('app_log', { p_site: siteId, p_entries: audit }));
 }

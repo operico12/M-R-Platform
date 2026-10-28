@@ -1,8 +1,9 @@
-import type { Role } from '@mr/core';
-import { useCallback, useEffect, useState } from 'react';
+import { openAlerts, type Role } from '@mr/core';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { loadSite, mySites, remote, type Loaded, type RemoteSite } from './data/remote';
 import { Board } from './screens/Board';
 import { Actions } from './screens/Actions';
+import { Alerts } from './screens/Alerts';
 import { Analysis } from './screens/Analysis';
 import { Console } from './screens/Console';
 import { DataQuality } from './screens/DataQuality';
@@ -33,6 +34,7 @@ const NAV: Array<[string, string]> = [
   ['#/performance', 'Performance'],
   ['#/analysis', 'Downtime analysis'],
   ['#/work', 'Work and PM'],
+  ['#/alerts', 'Alerts'],
   ['#/actions', 'Actions'],
   ['#/rca', 'Root cause analysis'],
   ['#/projects', 'Projects'],
@@ -75,6 +77,7 @@ function Shell() {
     case 'performance': page = <Performance />; break;
     case 'analysis': page = <Analysis query={query} />; break;
     case 'work': page = <Work />; break;
+    case 'alerts': page = <Alerts />; break;
     case 'pack': page = <Pack query={query} />; break;
     case 'actions': page = <Actions arg={arg} query={query} />; break;
     case 'rca': page = <RcaScreen arg={arg} query={query} />; break;
@@ -86,6 +89,11 @@ function Shell() {
     default: page = <Board tv={false} />;
   }
 
+  const openCount = useMemo(
+    () => openAlerts(app.ruleAlerts, app.alertAnswers, app.now, app.alertSettings.snoozeDays, app.ds.site.timeZone).open.length,
+    [app.ruleAlerts, app.alertAnswers, app.now, app.alertSettings.snoozeDays, app.ds.site.timeZone],
+  );
+
   if (tv) return <div className="tv"><main>{page}</main></div>;
 
   return (
@@ -93,7 +101,9 @@ function Shell() {
       <nav className="nav" aria-label="Main">
         <h1>M&amp;R Platform<small>{app.ds.site.name}</small></h1>
         {NAV.map(([href, label]) => (
-          <a key={href} href={href} aria-current={hash.startsWith(href) || (href === '#/units' && path === 'unit') ? 'page' : undefined}>{label}</a>
+          <a key={href} href={href} aria-current={hash.startsWith(href) || (href === '#/units' && path === 'unit') ? 'page' : undefined}>
+            {label}{href === '#/alerts' && openCount > 0 && <span className="nav-count" aria-label={`${openCount} open`}>{openCount}</span>}
+          </a>
         ))}
         <a href="#/tv">TV mode</a>
         <div className="grow" />

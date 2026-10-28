@@ -19,4 +19,6 @@ has not settled is a setting in code, not a hard-coded choice.
 | A11 | Glossary | Not started | |
 | A12 | Project instruction file | Done | [`CLAUDE.md`](../CLAUDE.md) |
 
+Phase 2 rules: [reliability and threshold alerts](alert-rules.md).
+
 Setup: [connecting a Supabase project](setup-supabase.md).
