@@ -40,6 +40,18 @@ Copy `apps/web/.env.example` to `apps/web/.env.local` and fill in:
 
 For a hosted build, set the same two values as build environment variables. Never use the service_role key in the app.
 
+## 6. Host it on Vercel
+
+`vercel.json` in the repo root has the install, build and output settings, so the defaults work.
+
+1. On vercel.com, Add New, Project, and import the GitHub repo. Leave the Root Directory as the repo root.
+2. Under Environment Variables, add `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` (the anon key only). Then Deploy.
+3. In Supabase, Authentication, URL configuration:
+   - Site URL: the production address, for example `https://m-r-platform.vercel.app`.
+   - Redirect URLs: the same address, plus `https://*-<your-vercel-team>.vercel.app/**` for preview deployments.
+
+The app uses `#/` page addresses, so no rewrite rules are needed.
+
 ## How saving works
 
 - Every change still runs through the core rules in the browser first.
