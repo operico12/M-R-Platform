@@ -29,26 +29,30 @@ export interface AnalyticsFilter {
   /** True: everything except the chosen systems. */
   systemsExclude: boolean;
   components: string[];
+  /** First failure mode on the release. */
+  modes: string[];
   where: Array<'field' | 'shop'>;
   lines: string[];
   detection: DetectionMethod[];
   shifts: string[];
   crews: string[];
+  /** ISO day of week at the flag start, site time: '1' Monday to '7' Sunday. */
+  weekdays: string[];
   /** Only events that count as failures (R9, D1). */
   failuresOnly: boolean;
 }
 
 export const EMPTY_FILTER: AnalyticsFilter = {
   range: { preset: '28d' },
-  fleets: [], models: [], units: [], types: [], systems: [], systemsExclude: false, components: [],
-  where: [], lines: [], detection: [], shifts: [], crews: [], failuresOnly: false,
+  fleets: [], models: [], units: [], types: [], systems: [], systemsExclude: false, components: [], modes: [],
+  where: [], lines: [], detection: [], shifts: [], crews: [], weekdays: [], failuresOnly: false,
 };
 
 // ---------- the link ----------
 
 const LIST_KEYS: Array<[keyof AnalyticsFilter, string]> = [
-  ['fleets', 'fleet'], ['models', 'model'], ['units', 'unit'], ['types', 'type'], ['systems', 'system'], ['components', 'component'],
-  ['where', 'where'], ['lines', 'line'], ['detection', 'detection'], ['shifts', 'shift'], ['crews', 'crew'],
+  ['fleets', 'fleet'], ['models', 'model'], ['units', 'unit'], ['types', 'type'], ['systems', 'system'], ['components', 'component'], ['modes', 'mode'],
+  ['where', 'where'], ['lines', 'line'], ['detection', 'detection'], ['shifts', 'shift'], ['crews', 'crew'], ['weekdays', 'weekday'],
 ];
 
 export function filterToQuery(f: AnalyticsFilter): string {
@@ -114,6 +118,7 @@ export function flagMatches(fl: DownFlag, f: AnalyticsFilter, calendar: ShiftCal
   if (f.types.length && !f.types.includes(fl.type)) return false;
   if (f.systems.length && f.systems.includes(flagSystem(fl)) === f.systemsExclude) return false;
   if (f.components.length && !f.components.includes(fl.release?.component ?? '')) return false;
+  if (f.modes.length && !f.modes.includes(fl.release?.failureModes?.[0] ?? '')) return false;
   if (f.where.length && !f.where.includes(flagWhere(fl))) return false;
   if (f.lines.length && !fl.locations.some((l) => l.shopLineId && f.lines.includes(l.shopLineId))) return false;
   if (f.detection.length && !f.detection.includes(fl.release?.detectionMethod as DetectionMethod)) return false;
@@ -122,11 +127,12 @@ export function flagMatches(fl: DownFlag, f: AnalyticsFilter, calendar: ShiftCal
     if (f.shifts.length && !f.shifts.includes(sh.name)) return false;
     if (f.crews.length && !f.crews.includes(sh.crew ?? '')) return false;
   }
+  if (f.weekdays.length && !f.weekdays.includes(String(DateTime.fromISO(fl.start, { zone: calendar.timeZone }).weekday))) return false;
   return true;
 }
 
 export function hasDowntimeFilters(f: AnalyticsFilter): boolean {
-  return !!(f.types.length || f.systems.length || f.components.length || f.where.length || f.lines.length || f.detection.length || f.shifts.length || f.crews.length || f.failuresOnly);
+  return !!(f.types.length || f.systems.length || f.components.length || f.modes.length || f.weekdays.length || f.where.length || f.lines.length || f.detection.length || f.shifts.length || f.crews.length || f.failuresOnly);
 }
 
 export interface FilteredEvent {

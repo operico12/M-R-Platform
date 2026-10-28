@@ -3,7 +3,7 @@
 // The anon key is public by design: row-level security decides what each
 // signed-in person can read and write. Never put the service_role key here.
 
-import { DEFAULT_FLAG_RULES, DEFAULT_WORK_SETTINGS, withAlertDefaults, type ApprovalRequest, type AuditRecord, type AlertAnswer, type AlertSettings, emptyFishbone, type WorkSettings, type ImprovementAction, type Project, type Rca, type AuditEntry, type Dataset, type DownFlag, type FlagRulesConfig, type ReasonCode, type Role, type ShiftCalendar, type SiteUser, type SmuReading, type Target, type WorkOrder, type Asset, type Inspection, type InspectionForm, type SavedAnalysis } from '@mr/core';
+import { DEFAULT_FLAG_RULES, DEFAULT_WORK_SETTINGS, withAlertDefaults, type ApprovalRequest, type AuditRecord, type AlertAnswer, type AlertSettings, emptyFishbone, type WorkSettings, type ImprovementAction, type Project, type Rca, type AuditEntry, type Dataset, type DownFlag, type FlagRulesConfig, type ReasonCode, type Role, type ShiftCalendar, type SiteUser, type SmuReading, type Target, type WorkOrder, type Asset, type Inspection, type InspectionForm, type SavedAnalysis, type SavedView } from '@mr/core';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 
 const url = import.meta.env.VITE_SUPABASE_URL as string | undefined;
@@ -36,6 +36,7 @@ export interface Loaded {
   forms: InspectionForm[];
   inspections: Inspection[];
   analyses: SavedAnalysis[];
+  views: SavedView[];
 }
 
 /** Postgres returns "+00:00" offsets; the app compares ISO strings, so make them all "Z". */
@@ -51,6 +52,19 @@ function must<T>(r: { data: T; error: { message: string } | null }): T {
   return r.data;
 }
 
+/**
+ * For features added after a site was set up: if the database does not have the function yet
+ * (PostgREST PGRST202), the feature starts empty instead of the whole site failing to load.
+ * The missing migration still needs running; the console logs which one.
+ */
+function optional<T>(r: { data: T; error: { message: string; code?: string } | null }, empty: T, what: string): T {
+  if (r.error?.code === 'PGRST202') {
+    console.warn(`${what} is not set up in this database yet. Run its migration in supabase/migrations.`);
+    return empty;
+  }
+  return must(r);
+}
+
 /** Turns any pending invite for the signed-in email into a membership, then lists the person's sites. */
 export async function mySites(): Promise<RemoteSite[]> {
   if (!remote) return [];
@@ -59,12 +73,13 @@ export async function mySites(): Promise<RemoteSite[]> {
 }
 
 export async function loadSite(siteId: string): Promise<Loaded> {
-  const [main, imp, proj, wk, ans, appr, anl] = await Promise.all([
+  const [main, imp, proj, wk, ans, appr, anl, vw] = await Promise.all([
     remote!.rpc('app_load', { p_site: siteId }), remote!.rpc('app_load_improve', { p_site: siteId }), remote!.rpc('app_load_projects', { p_site: siteId }),
     remote!.rpc('app_load_work', { p_site: siteId }),
     remote!.rpc('app_load_alert_answers', { p_site: siteId }),
     remote!.rpc('app_load_approvals', { p_site: siteId }),
     remote!.rpc('app_load_analyses', { p_site: siteId }),
+    remote!.rpc('app_load_views', { p_site: siteId }),
   ]);
   const insp = await loadInspections(siteId);
   const work = iso(must(wk)) as { plans: Array<Partial<WorkOrder> & { id: string }>; settings: { work?: Partial<WorkSettings>; alerts?: Partial<AlertSettings> } };
@@ -115,7 +130,8 @@ export async function loadSite(siteId: string): Promise<Loaded> {
     requests: approvals.requests,
     forms: insp.forms,
     inspections: insp.inspections,
-    analyses: iso(must(anl)) as SavedAnalysis[],
+    analyses: iso(optional(anl, [], 'Saved analyses')) as SavedAnalysis[],
+    views: iso(optional(vw, [], 'Saved views')) as SavedView[],
     rcas: improve.rcas.map((r) => ({ ...r, fishbone: { ...emptyFishbone(), ...(r.fishbone as Partial<Rca['fishbone']>) } })),
     users: d.users.map((u) => { const a = acting.get(u.id); return a ? { ...u, actingRole: a.role, actingUntil: a.until } : u; }),
     codes: d.codes,
@@ -158,6 +174,12 @@ export async function saveAlertAnswer(siteId: string, a: AlertAnswer, audit: Aud
 /** A new saved analysis, or a void. The database sets who and when. */
 export async function saveAnalysisRecord(siteId: string, a: SavedAnalysis, audit: AuditEntry[]): Promise<void> {
   must(await remote!.rpc('app_save_analysis', { p_site: siteId, a }));
+  if (audit.length) must(await remote!.rpc('app_log', { p_site: siteId, p_entries: audit }));
+}
+
+/** A new saved view, or retiring one. The database sets who and when. */
+export async function saveViewRecord(siteId: string, v: SavedView, audit: AuditEntry[]): Promise<void> {
+  must(await remote!.rpc('app_save_view', { p_site: siteId, v }));
   if (audit.length) must(await remote!.rpc('app_log', { p_site: siteId, p_entries: audit }));
 }
 

@@ -2,6 +2,7 @@ import { openAlerts, type Role } from '@mr/core';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { loadSite, mySites, remote, type Loaded, type RemoteSite } from './data/remote';
 import { Board } from './screens/Board';
+import { Explorer } from './screens/Explorer';
 import { CalcPalette, Calculators } from './screens/Calculators';
 import { Actions } from './screens/Actions';
 import { Alerts } from './screens/Alerts';
@@ -35,6 +36,7 @@ const NAV: Array<[string, string]> = [
   ['#/units', 'Units'],
   ['#/performance', 'Performance'],
   ['#/analysis', 'Downtime analysis'],
+  ['#/explore', 'Explorer'],
   ['#/work', 'Work and PM'],
   ['#/inspections', 'Inspections'],
   ['#/calc', 'Calculators'],
@@ -80,6 +82,7 @@ function Shell() {
     case 'unit': page = <UnitPage id={arg ?? ''} />; break;
     case 'performance': page = <Performance />; break;
     case 'analysis': page = <Analysis query={query} />; break;
+    case 'explore': page = <Explorer query={query} />; break;
     case 'work': page = <Work />; break;
     case 'alerts': page = <Alerts />; break;
     case 'calc': page = <Calculators arg={arg || undefined} sub={sub || undefined} query={query} />; break;

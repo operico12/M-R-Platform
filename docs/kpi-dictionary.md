@@ -48,6 +48,13 @@ Code: `packages/core/src/reliability.ts`. All use the downtime analysis filters,
 | KPI-026 | Failure coding quality | Released failure flags with complete, specific, consistent coding ÷ released failure flags | Checks: component not "Other"; failure mode not "Unknown"; component belongs to the system (A9 reference list); cause code given. Shown by crew and shift, never by named person (plan 11.2). |
 | KPI-027 | Bad actors | Units ranked by matching down h in the period | With failures, repeat failures and the top system for each. |
 
+## Analytics explorer (phase 2, plan 7.5 and 7.6)
+
+| ID | Measure | Formula | Notes |
+| --- | --- | --- | --- |
+| KPI-028 | Explorer compare (phase 2) | Slice A vs slice B on each measure; difference and % change | Outside normal variation when two-sided p < 0.05 and both sides have ≥ 5 events. Failure rate: conditional binomial test (normal approximation). Per-event durations: Mann-Whitney U (normal approximation, tie correction). Counts and sums are not tested. Code: `compareSlices` in `explorer.ts`; docs/analytics-explorer.md. |
+| KPI-029 | Control chart (phase 2) | XmR on a weekly value (down h, events or failures): centre = mean, limits = mean ± 2.66 × mean moving range, lower limit ≥ 0 | At least 6 weeks. A week outside the limits is flagged. Code: `controlChart` in `explorer.ts`. |
+
 ## Worked examples encoded as tests
 
 - Plan 3.2, one 12-hour shift: PA 62.5%, utilisation 90.7%, standby 0.7 h, effective utilisation 56.7%.

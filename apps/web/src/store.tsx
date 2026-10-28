@@ -30,6 +30,7 @@ import {
   type WorkSettings,
   type AlertAnswer,
   type SavedAnalysis,
+  type SavedView,
   type ApprovalRequest,
   type DecideResult,
   decideRequest,
@@ -45,7 +46,7 @@ import {
   targetValue,
 } from '@mr/core';
 import { demoImprovements } from './data/demo-improve';
-import { saveAnalysisRecord, loadPhoto, saveForms, sendInspection, sendPhoto, SendError, saveAlertAnswer, saveDecision, saveRequests, saveFlags, saveRecords, saveSetting, saveTarget, saveTaskStatus, type Loaded } from './data/remote';
+import { saveViewRecord, saveAnalysisRecord, loadPhoto, saveForms, sendInspection, sendPhoto, SendError, saveAlertAnswer, saveDecision, saveRequests, saveFlags, saveRecords, saveSetting, saveTarget, saveTaskStatus, type Loaded } from './data/remote';
 import { demoProjects } from './data/demo-projects';
 import { demoForms, demoInspections } from './data/demo-inspections';
 import { backoffMs, forgetPhoto, localPhoto, readDrafts, readOutbox, writeDrafts, writeOutbox, type OutboxItem } from './inspect/device';
@@ -96,6 +97,9 @@ export interface AppState {
   analyses: SavedAnalysis[];
   /** Save or void an analysis; the command gets the current list and returns the new one. */
   runAnalysis: (cmd: (ctx: ConsoleContext, list: SavedAnalysis[]) => ConsoleResult<SavedAnalysis>) => ConsoleResult<SavedAnalysis>;
+  /** Saved explorer views this person can see, retired ones included (docs/analytics-explorer.md). */
+  views: SavedView[];
+  runView: (cmd: (ctx: ConsoleContext, list: SavedView[]) => ConsoleResult<SavedView>) => ConsoleResult<SavedView>;
   /** Inspection forms, every version (docs/inspections.md). */
   forms: InspectionForm[];
   runForms: (cmd: (ctx: ConsoleContext) => ConsoleResult<InspectionForm>) => ConsoleResult<InspectionForm>;
@@ -343,6 +347,23 @@ export function AppProvider({ children, live, onReload, onSignOut }: { children:
     },
     [actor, ds, live, failed],
   );
+  const [views, setViews] = useState<SavedView[]>(() => live?.views ?? []);
+  const viewsRef = useRef(views);
+  viewsRef.current = views;
+  const runView = useCallback(
+    (cmd: (ctx: ConsoleContext, list: SavedView[]) => ConsoleResult<SavedView>): ConsoleResult<SavedView> => {
+      const r = cmd({ actor, now: new Date().toISOString(), newId, timeZone: ds.site.timeZone, calendar: ds.calendar }, viewsRef.current);
+      if (r.ok) {
+        viewsRef.current = r.records;
+        setViews(r.records);
+        setAudit((prev) => [...r.audit, ...prev]);
+        const changed = r.records.find((x) => x.id === r.audit[0]?.entityId);
+        if (live && changed) saveViewRecord(siteId, changed, r.audit).catch(failed);
+      }
+      return r;
+    },
+    [actor, ds, live, failed],
+  );
   const ruleAlertList = useMemo(
     () => ruleAlerts({ assets: ds.assets, flags, smu: ds.smu, lifecycle: ds.lifecycle, rules, now, timeZone: ds.site.timeZone, workOrders: ds.workOrders, targets: targetList, workSettings }, alertSettings),
     [ds, flags, rules, now, targetList, workSettings, alertSettings],
@@ -537,7 +558,7 @@ export function AppProvider({ children, live, onReload, onSignOut }: { children:
   }, [live, siteId]);
   const people = useMemo(() => users.filter((u) => !u.retiredAt && !u.invited), [users]);
   const userName = useCallback((id: string) => users.find((u) => u.id === id)?.name ?? 'Unknown user', [users]);
-  const value: AppState = { ds, forms, runForms, inspections, drafts, saveDraft, discardDraft, runInspection, outbox, sendOutbox: () => void sendOutbox(true), dropOutboxItem, photo, workSettings, runWorkSettings, alertSettings, runAlertSettings, alertAnswers, runAlertAnswer, analyses, runAnalysis, ruleAlerts: ruleAlertList, requests, runRequest, decide, actions: improve.actions, rcas: improve.rcas, projects: improve.projects, runImprove, people, userName, targets, targetOf, targetList, users, codes, runConsole, mode: live ? 'live' : 'demo', syncError, clearSyncError: () => setSyncError(null), signOut: onSignOut, importRuns, applyImport, newId, flags, audit, rules, now, actor, setRole, run, lastSync: ds.generatedAt, theme, setTheme };
+  const value: AppState = { ds, forms, runForms, inspections, drafts, saveDraft, discardDraft, runInspection, outbox, sendOutbox: () => void sendOutbox(true), dropOutboxItem, photo, workSettings, runWorkSettings, alertSettings, runAlertSettings, alertAnswers, runAlertAnswer, analyses, runAnalysis, views, runView, ruleAlerts: ruleAlertList, requests, runRequest, decide, actions: improve.actions, rcas: improve.rcas, projects: improve.projects, runImprove, people, userName, targets, targetOf, targetList, users, codes, runConsole, mode: live ? 'live' : 'demo', syncError, clearSyncError: () => setSyncError(null), signOut: onSignOut, importRuns, applyImport, newId, flags, audit, rules, now, actor, setRole, run, lastSync: ds.generatedAt, theme, setTheme };
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
 
