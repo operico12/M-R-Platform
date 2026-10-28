@@ -5,6 +5,7 @@ import { EMPTY_FILTER, STAGE_LABELS, can, analyse, flagDownHours, filterFromQuer
 import { useMemo, useState } from 'react';
 import { Bar, CartesianGrid, ComposedChart, Line, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { FilterBar } from '../components/FilterBar';
+import { ReliabilityViews } from '../components/ReliabilityViews';
 import { fmtHours, fmtNum, fmtPct, siteTime } from '../format';
 import { newHref } from '../improve/describe';
 import { useApp } from '../store';
@@ -158,6 +159,8 @@ export function Analysis({ query }: { query: string }) {
           <p className="small muted">In repair is wrench time; every other stage is waiting.</p>
         </section>
       </div>
+
+      <ReliabilityViews a={a} onUnit={(id) => setFilter({ ...filter, units: [id] })} onSystem={(sys) => setFilter({ ...filter, systems: [sys], systemsExclude: false })} />
 
       <section>
         <div className="row" style={{ justifyContent: 'space-between' }}>

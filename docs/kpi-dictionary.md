@@ -37,6 +37,17 @@ Code: `work.ts`. Hours are the work order's actual labour hours, else its estima
 | KPI-022 | Work from inspections % | corrective work raised from a PM or inspection ÷ corrective work reported in the period | Raised from = origin work order (ORIGRECORDID) is a PM or inspection. |
 | KPI-023 | Work order aging | open work orders by days since reported: 0–7, 8–30, 31–90, over 90 | By readiness. |
 
+## Reliability analysis (phase 2, plan 7 downtime analysis)
+
+Code: `packages/core/src/reliability.ts`. All use the downtime analysis filters, so they follow the same slice.
+
+| ID | Measure | Formula | Notes |
+| --- | --- | --- | --- |
+| KPI-024 | Jack-knife chart | Per group (system, component, failure mode or unit): failure events against mean down h per event, log scales. Failures only (unscheduled events); planned work such as PMs is left out | Limits (Knights 2001): event limit = total events ÷ number of groups; duration limit = total down h ÷ total events. Above both = acute and chronic; events only = chronic; duration only = acute. Down hours = events × mean, so diagonals are equal downtime. |
+| KPI-025 | Repeat failures | Failures on the same unit and system within N days of the last release on that unit and system ÷ failures | Plan tier 3. N default 30 (plan text), set on the page. SMU-based windows come later. |
+| KPI-026 | Failure coding quality | Released failure flags with complete, specific, consistent coding ÷ released failure flags | Checks: component not "Other"; failure mode not "Unknown"; component belongs to the system (A9 reference list); cause code given. Shown by crew and shift, never by named person (plan 11.2). |
+| KPI-027 | Bad actors | Units ranked by matching down h in the period | With failures, repeat failures and the top system for each. |
+
 ## Worked examples encoded as tests
 
 - Plan 3.2, one 12-hour shift: PA 62.5%, utilisation 90.7%, standby 0.7 h, effective utilisation 56.7%.

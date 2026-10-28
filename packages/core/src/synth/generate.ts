@@ -51,6 +51,9 @@ export const SYSTEMS: Record<string, { components: string[]; modes: string[]; we
   Steering: { components: ['Steering cylinder', 'Pump', 'Tie rod'], modes: ['Leak', 'Play'], weight: 4, repairH: 3 },
 };
 
+/** Starter cause codes (A9 reference lists). */
+export const CAUSES = ['Wear', 'Contamination', 'Fatigue', 'Installation error', 'Operator damage', 'Design', 'Lubrication'];
+
 export const FIELD_LOCATIONS = ['Pit 1 north', 'Pit 2 north ramp', 'Pit 2 south', 'Bench 1450', 'Bench 1480', 'Main haul road', 'ROM pad', 'Waste dump 3', 'Crusher pad'];
 
 /** Mulberry32: small, fast, deterministic. */
@@ -371,6 +374,23 @@ export function generateFleet(opts: SynthOptions = {}): Dataset {
   // Work orders as Maximo would hold them: one per flag work order, plus a
   // backlog of open work not yet done (deferred defects, upcoming PMs).
   flags.sort((a, b) => ms(a.start) - ms(b.start));
+  // Failure coding as people really enter it (phase 2 code-quality checks): mostly
+  // complete, with cause codes on most, and some "Other", "Unknown" and mismatches.
+  // Own random stream, so durations, stages and KPIs stay the same for a seed.
+  const cq = rng(seed + 104729);
+  const sysNames = Object.keys(SYSTEMS);
+  for (const f of flags) {
+    const rel = f.release;
+    if (!rel?.system || !SYSTEMS[rel.system]) continue;
+    const x = cq();
+    if (x < 0.07) rel.component = 'Other';
+    else if (x < 0.1) rel.failureModes = ['Unknown'];
+    else if (x < 0.12) {
+      const other = SYSTEMS[sysNames[Math.floor(cq() * sysNames.length)]!]!;
+      rel.component = other.components[Math.floor(cq() * other.components.length)];
+    }
+    if (cq() < 0.7) rel.causeCode = CAUSES[Math.floor(cq() * CAUSES.length)];
+  }
   const wos = new Map<string, WorkOrder>();
   const woFor = (a: Asset, number: string, w: Omit<WorkOrder, 'id' | 'tenantId' | 'siteId' | 'sourceSystem' | 'sourceId' | 'number' | 'numberNormalised' | 'assetId' | 'externalAssetId'>) => {
     const key = normaliseWoNumber(number);
