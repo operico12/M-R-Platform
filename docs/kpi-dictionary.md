@@ -20,6 +20,8 @@ flag intervals and SMU readings; nothing is typed in. Fleet figures are ratios o
 | KPI-013 | Field repair share | unscheduled events released from Down in field ÷ unscheduled events released | |
 | KPI-014 | Repair duration | flag start → release, by repair type | Show median and spread (next). |
 | KPI-015 | Action effect (phase 2) | (after − before) ÷ before, on matching down h per 1,000 calendar h | Plan 7.7. Same filters as the action's slice, date range ignored. Equal windows either side of the done time: up to 28 days, cut to the time since done. Judged after 7 days. A change within ±10% reads "no clear change". Code: `actionEffect`, `effectVerdict` in `improve.ts`. |
+| KPI-016 | Project benefit (phase 2) | (baseline rate − after rate) × after calendar h, rates in matching down h per 1,000 calendar h | Plan 8. Baseline: 90 days before the project went in progress. After: since it closed, up to 365 days; early reading under 28 days. Downtime during the project is left out. Per year = avoided ÷ after days × 365. Value = avoided h × the project's value per down hour. Code: `projectBenefit` in `projects.ts`. |
+| KPI-017 | Project status (phase 2) | Late, at risk or on track, from the records | Late: past its end date, or an open task past due (site date). At risk: a task due within 7 days not started, actual + forecast over budget, an open issue or a risk scoring ≥ 6 (likelihood × impact, 1 to 3 each), or a change request waiting. Code: `projectHealth`. |
 
 ## Worked examples encoded as tests
 
@@ -27,5 +29,7 @@ flag intervals and SMU readings; nothing is typed in. Fleet figures are ratios o
 - Plan Appendix A: one truck, one week, 28 h down → PA 83.3%, unchanged by 10 h standby.
 - KPI-015, one truck: 20 h hydraulic down in the 28 days before, 5 h after → −75%, failures 2 → 1; a 6 h
   tyre stop is outside the slice but still lowers PA before (646 ÷ 672).
+- KPI-016, one truck: 54 h hydraulic down in the 90 days before work (25 per 1,000 h), 9 h in the 30 days after
+  closing (12.5 per 1,000 h) → 9 h avoided, 109.5 h a year; 100 h down during the project is left out.
 - A7 section 10, HT107: 10 h 08 down (9 h 58 day, 10 min night), repair 4 h 55, waiting 5 h 13 by stage,
   locations 1 h 28 / 45 / 50 / 7 h 05, first wrench 38 min, missed first ETA.

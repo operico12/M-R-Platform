@@ -83,6 +83,7 @@ export function Analysis({ query }: { query: string }) {
           <button className="btn" onClick={() => void navigator.clipboard?.writeText(window.location.href)} title="Copy a link to this view">Copy link</button>
           {can(app.actor, 'create_actions') && <a className="btn" style={{ display: 'inline-flex', alignItems: 'center', textDecoration: 'none' }} href={newHref('actions', { kind: 'analysis', query: filterToQuery(filter) })}>Raise action</a>}
           {can(app.actor, 'run_rcas') && <a className="btn" style={{ display: 'inline-flex', alignItems: 'center', textDecoration: 'none' }} href={newHref('rca', { kind: 'analysis', query: filterToQuery(filter) })}>Start RCA</a>}
+          {can(app.actor, 'run_projects') && <a className="btn" style={{ display: 'inline-flex', alignItems: 'center', textDecoration: 'none' }} href={newHref('projects', { kind: 'analysis', query: filterToQuery(filter) })}>Start project</a>}
         </>}
       />
 

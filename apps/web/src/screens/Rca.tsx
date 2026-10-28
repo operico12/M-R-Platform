@@ -162,7 +162,10 @@ function RcaPage({ id }: { id: string }) {
       <section className="card">
         <div className="row" style={{ justifyContent: 'space-between' }}>
           <h3 style={{ margin: 0 }}>Actions ({acts.length})</h3>
-          {can(app.actor, 'create_actions') && r.status !== 'cancelled' && <a className="btn primary" style={linkBtn} href={newHref('actions', { kind: 'rca', rcaId: r.id })}>Raise action</a>}
+          <div className="row">
+            {can(app.actor, 'run_projects') && r.status !== 'cancelled' && <a className="btn" style={linkBtn} href={newHref('projects', { kind: 'rca', rcaId: r.id })}>Start project</a>}
+            {can(app.actor, 'create_actions') && r.status !== 'cancelled' && <a className="btn primary" style={linkBtn} href={newHref('actions', { kind: 'rca', rcaId: r.id })}>Raise action</a>}
+          </div>
         </div>
         <div className="table-wrap">
           <table>

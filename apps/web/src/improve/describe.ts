@@ -26,7 +26,7 @@ export function describeQuery(query: string, ds: Dataset): string {
 export const analysisHref = (query?: string) => `#/analysis${query ? `?${query}` : ''}`;
 
 /** Query string for the "new action" and "new RCA" forms. */
-export function newHref(kind: 'actions' | 'rca', src: { kind: string; query?: string; unitId?: string; flagId?: string; rcaId?: string }): string {
+export function newHref(kind: 'actions' | 'rca' | 'projects', src: { kind: string; query?: string; unitId?: string; flagId?: string; rcaId?: string }): string {
   const q = new URLSearchParams({ src: src.kind });
   if (src.query !== undefined) q.set('q', src.query);
   if (src.unitId) q.set('unit', src.unitId);

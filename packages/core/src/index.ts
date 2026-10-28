@@ -11,3 +11,4 @@ export * from './filters.js';
 export * from './pack.js';
 export * from './console.js';
 export * from './improve.js';
+export * from './projects.js';

@@ -26,11 +26,14 @@ import {
   type TargetKpi,
   type ImprovementAction,
   type Rca,
+  type Project,
+  can,
   defaultReasonCodes,
   targetValue,
 } from '@mr/core';
 import { demoImprovements } from './data/demo-improve';
-import { saveFlags, saveRecords, saveTarget, type Loaded } from './data/remote';
+import { saveFlags, saveRecords, saveTarget, saveTaskStatus, type Loaded } from './data/remote';
+import { demoProjects } from './data/demo-projects';
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 
 /** One file load, as a sync run (plan 6.3: every run is logged with counts and errors). */
@@ -57,8 +60,9 @@ export interface AppState {
   runConsole: <T>(kind: 'targets' | 'users' | 'codes', cmd: (ctx: ConsoleContext) => ConsoleResult<T>) => ConsoleResult<T>;
   actions: ImprovementAction[];
   rcas: Rca[];
-  /** Run an action or RCA command; same as runConsole. */
-  runImprove: <T>(kind: 'actions' | 'rcas', cmd: (ctx: ConsoleContext) => ConsoleResult<T>) => ConsoleResult<T>;
+  projects: Project[];
+  /** Run an action, RCA or project command; same as runConsole. */
+  runImprove: <T>(kind: 'actions' | 'rcas' | 'projects', cmd: (ctx: ConsoleContext) => ConsoleResult<T>) => ConsoleResult<T>;
   /** Users who can own an action or lead an RCA: active, and signed in at least once. */
   people: SiteUser[];
   userName: (id: string) => string;
@@ -111,7 +115,7 @@ export function AppProvider({ children, live, onReload, onSignOut }: { children:
     ['reliability_engineer', 'Rae Reliability'], ['superintendent', 'Sol Superintendent'], ['admin', 'Ada Admin'],
   ].map(([role, name]) => ({ id: `demo-${role}`, name: name!, email: `${role}@example.com`, role: role as Role, scope: ['*'], addedAt: '2026-01-01T00:00:00.000Z' })));
   const [flags, setFlags] = useState<DownFlag[]>(ds.flags);
-  const [improve, setImprove] = useState(() => (live ? { actions: live.actions, rcas: live.rcas } : demoImprovements(ds)));
+  const [improve, setImprove] = useState(() => (live ? { actions: live.actions, rcas: live.rcas, projects: live.projects } : { ...demoImprovements(ds), projects: demoProjects(ds) }));
   const [audit, setAudit] = useState<AuditEntry[]>([]);
   const [now, setNow] = useState(() => new Date().toISOString());
   const [role, setRole] = useState<Role>('supervisor');
@@ -227,7 +231,7 @@ export function AppProvider({ children, live, onReload, onSignOut }: { children:
     [actor, ds, live, failed],
   );
   const runImprove = useCallback(
-    <T,>(kind: 'actions' | 'rcas', cmd: (ctx: ConsoleContext) => ConsoleResult<T>): ConsoleResult<T> => {
+    <T,>(kind: 'actions' | 'rcas' | 'projects', cmd: (ctx: ConsoleContext) => ConsoleResult<T>): ConsoleResult<T> => {
       const nowIso = new Date().toISOString();
       const r = cmd({ actor, now: nowIso, newId, timeZone: ds.site.timeZone, calendar: ds.calendar });
       if (r.ok) {
@@ -236,7 +240,16 @@ export function AppProvider({ children, live, onReload, onSignOut }: { children:
         setNow(nowIso);
         if (live) {
           const ids = new Set(r.audit.map((a) => a.entityId));
-          saveRecords(siteId, kind, (r.records as Array<{ id: string }>).filter((x) => ids.has(x.id)), r.audit).catch(failed);
+          const changed = (r.records as Array<{ id: string }>).filter((x) => ids.has(x.id));
+          if (kind === 'projects' && !can(actor, 'run_projects')) {
+            // A task owner: the database lets them change only their own task's status.
+            const before = r.audit[0]!.before as Project;
+            const after = changed[0] as Project;
+            const t = after.tasks.find((x) => before.tasks.find((y) => y.id === x.id)?.status !== x.status);
+            if (t) saveTaskStatus(siteId, after.id, t.id, t.status, t.note).catch(failed);
+          } else {
+            saveRecords(siteId, kind, changed, r.audit).catch(failed);
+          }
         }
       }
       return r;
@@ -245,7 +258,7 @@ export function AppProvider({ children, live, onReload, onSignOut }: { children:
   );
   const people = useMemo(() => users.filter((u) => !u.retiredAt && !u.invited), [users]);
   const userName = useCallback((id: string) => users.find((u) => u.id === id)?.name ?? 'Unknown user', [users]);
-  const value: AppState = { ds, actions: improve.actions, rcas: improve.rcas, runImprove, people, userName, targets, targetOf, targetList, users, codes, runConsole, mode: live ? 'live' : 'demo', syncError, clearSyncError: () => setSyncError(null), signOut: onSignOut, importRuns, applyImport, newId, flags, audit, rules, now, actor, setRole, run, lastSync: ds.generatedAt, theme, setTheme };
+  const value: AppState = { ds, actions: improve.actions, rcas: improve.rcas, projects: improve.projects, runImprove, people, userName, targets, targetOf, targetList, users, codes, runConsole, mode: live ? 'live' : 'demo', syncError, clearSyncError: () => setSyncError(null), signOut: onSignOut, importRuns, applyImport, newId, flags, audit, rules, now, actor, setRole, run, lastSync: ds.generatedAt, theme, setTheme };
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
 

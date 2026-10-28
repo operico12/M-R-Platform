@@ -54,7 +54,7 @@ function ActionList({ query }: { query: string }) {
       </div>
       <div className="row" style={{ justifyContent: 'space-between' }}>
         <div className="chips" role="tablist">
-          {VIEWS.map(([k, l]) => <a key={k} className="chip" role="tab" aria-selected={view === k} aria-pressed={view === k} href={`#/actions?view=${k}`} style={{ display: 'inline-flex', alignItems: 'center', textDecoration: 'none', color: 'inherit', minHeight: 40 }}>{l}</a>)}
+          {VIEWS.map(([k, l]) => <a key={k} className="chip" role="tab" aria-selected={view === k} aria-pressed={view === k} href={`#/actions?view=${k}`} style={{ display: 'inline-flex', alignItems: 'center', textDecoration: 'none', minHeight: 40 }}>{l}</a>)}
         </div>
         {can(app.actor, 'create_actions') && <a className="btn primary" style={{ display: 'inline-flex', alignItems: 'center', textDecoration: 'none' }} href="#/actions/new?src=manual">New action</a>}
       </div>

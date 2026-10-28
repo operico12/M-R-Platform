@@ -8,6 +8,7 @@ import { Console } from './screens/Console';
 import { DataQuality } from './screens/DataQuality';
 import { Imports } from './screens/Imports';
 import { Pack } from './screens/Pack';
+import { Projects } from './screens/Projects';
 import { RcaScreen } from './screens/Rca';
 import { Performance } from './screens/Performance';
 import { ShopLines } from './screens/ShopLines';
@@ -32,6 +33,7 @@ const NAV: Array<[string, string]> = [
   ['#/analysis', 'Downtime analysis'],
   ['#/actions', 'Actions'],
   ['#/rca', 'Root cause analysis'],
+  ['#/projects', 'Projects'],
   ['#/pack', 'Weekly pack'],
   ['#/quality', 'Data quality'],
   ['#/import', 'Data import'],
@@ -73,6 +75,7 @@ function Shell() {
     case 'pack': page = <Pack query={query} />; break;
     case 'actions': page = <Actions arg={arg} query={query} />; break;
     case 'rca': page = <RcaScreen arg={arg} query={query} />; break;
+    case 'projects': page = <Projects arg={arg} query={query} />; break;
     case 'quality': page = <DataQuality />; break;
     case 'import': page = <Imports />; break;
     case 'rules': page = <Console tab="codes" />; break;

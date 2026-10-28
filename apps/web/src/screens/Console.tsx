@@ -36,7 +36,7 @@ export function Console({ tab }: { tab: string }) {
     <div className="stack">
       <div className="page-head"><h2>Console</h2><span className="muted small">Every change is in the audit trail with who, when, before and after.</span></div>
       <div className="chips" role="tablist">
-        {TABS.map(([k, l]) => <a key={k} role="tab" aria-selected={t === k} className="chip" aria-pressed={t === k} style={{ display: 'inline-flex', alignItems: 'center', textDecoration: 'none', color: 'inherit', minHeight: 40 }} href={`#/console/${k}`}>{l}</a>)}
+        {TABS.map(([k, l]) => <a key={k} role="tab" aria-selected={t === k} className="chip" aria-pressed={t === k} style={{ display: 'inline-flex', alignItems: 'center', textDecoration: 'none', minHeight: 40 }} href={`#/console/${k}`}>{l}</a>)}
       </div>
       {t === 'users' && <Users />}
       {t === 'targets' && <Targets />}

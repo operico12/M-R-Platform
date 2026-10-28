@@ -18,6 +18,8 @@ export type Action =
   | 'run_analyses'
   | 'create_actions'
   | 'run_rcas'
+  | 'run_projects'
+  | 'approve_projects'
   | 'publish_weekly_pack'
   | 'export_reports'
   | 'edit_codes'
@@ -43,6 +45,9 @@ const MATRIX: Record<Action, Partial<Record<Role, Permission>>> = {
   // Phase 2 improvement loop. Anyone can be an action's owner; the owner can start and close it.
   create_actions: { supervisor: 'yes', reliability_engineer: 'yes', superintendent: 'yes' },
   run_rcas: { reliability_engineer: 'yes', superintendent: 'yes' },
+  // Plan 11.2: create and run projects; approve project gates and budgets.
+  run_projects: { reliability_engineer: 'yes', superintendent: 'yes' },
+  approve_projects: { superintendent: 'yes' },
   publish_weekly_pack: { reliability_engineer: 'yes', superintendent: 'yes' },
   export_reports: { supervisor: 'yes', reliability_engineer: 'yes', superintendent: 'yes', admin: 'yes' },
   edit_codes: { reliability_engineer: 'propose', admin: 'yes' },
@@ -69,6 +74,8 @@ export const ACTION_LABELS: Record<Action, string> = {
   run_analyses: 'Run calculators and analyses',
   create_actions: 'Raise and manage improvement actions',
   run_rcas: 'Lead root cause analyses',
+  run_projects: 'Create and run projects',
+  approve_projects: 'Approve project gates, budgets and change requests',
   publish_weekly_pack: 'Publish the weekly pack',
   export_reports: 'Export reports and data',
   edit_codes: 'Edit reason codes',
