@@ -8,8 +8,6 @@ import { Bar, CartesianGrid, ComposedChart, Legend, Line, LineChart, ReferenceLi
 import { fmtHours, fmtNum, fmtPct, siteTime } from '../format';
 import { useApp } from '../store';
 
-// Placeholder targets until the superintendent sets them in the console (plan 11.4).
-const TARGETS = { pa: 0.9, utilisation: 0.85 };
 
 const FORMULAS: Record<string, string> = {
   pa: 'PA = (calendar h − maintenance downtime h) ÷ calendar h. Standby is not deducted.',
@@ -21,6 +19,7 @@ const FORMULAS: Record<string, string> = {
 
 export function Performance() {
   const app = useApp();
+  const TARGETS = app.targets;
   const tz = app.ds.site.timeZone;
   const weeks = useMemo(() => recentWeeks(tz, app.now, 12), [tz, app.now]);
   const input = useMemo(
@@ -54,7 +53,8 @@ export function Performance() {
       <div className="page-head">
         <h2>Performance · Haul trucks</h2>
         <span className="muted small">Week of {last.w.label} (last complete week) · site time zone {tz}</span>
-        <button className="btn" onClick={exportPack}>Export weekly pack (CSV)</button>
+        <a className="btn primary" href="#/pack" style={{ display: 'inline-flex', alignItems: 'center', textDecoration: 'none' }}>Weekly pack</a>
+        <button className="btn" onClick={exportPack}>Weekly figures (CSV)</button>
       </div>
       <div className="trust"><span>Last sync {siteTime(app.lastSync, tz, true)}</span><span>Source: down flags + SMU readings</span></div>
 

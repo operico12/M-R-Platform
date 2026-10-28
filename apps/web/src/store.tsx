@@ -16,6 +16,7 @@ import {
   type FlagRulesConfig,
   type ImportKind,
   type ImportResult,
+  type PackTargets,
   type Role,
 } from '@mr/core';
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
@@ -33,6 +34,8 @@ export interface ImportRun {
 
 export interface AppState {
   ds: Dataset;
+  /** KPI targets. Placeholders until set in the console (plan 11.4). */
+  targets: PackTargets;
   importRuns: ImportRun[];
   applyImport: (fileName: string, r: ImportResult<unknown>) => void;
   newId: () => string;
@@ -147,7 +150,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
     [actor],
   );
 
-  const value: AppState = { ds, importRuns, applyImport, newId, flags, audit, rules, now, actor, setRole, run, lastSync: ds.generatedAt, theme, setTheme };
+  const targets: PackTargets = { pa: 0.9, utilisation: 0.85 };
+  const value: AppState = { ds, targets, importRuns, applyImport, newId, flags, audit, rules, now, actor, setRole, run, lastSync: ds.generatedAt, theme, setTheme };
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
 

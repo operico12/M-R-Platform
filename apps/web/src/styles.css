@@ -206,3 +206,19 @@ label.btn { display: inline-flex; align-items: center; }
 .active-chips { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: var(--s2); }
 .active-chips button { min-height: 32px; border-radius: 16px; border: 1px solid var(--brand); background: transparent; color: var(--brand); padding: 0 10px; cursor: pointer; font-size: 13px; }
 @media (max-width: 600px) { .filterbar .pop { position: fixed; left: 16px; right: 16px; top: auto; } }
+
+/* ---------- weekly pack print (save as PDF) ---------- */
+@media print {
+  :root, :root[data-theme='dark'] {
+    --bg: #ffffff; --surface: #ffffff; --surface-2: #eef0f3; --border: #d9dde3; --text: #1b1f24; --text-2: #4a525d;
+    --brand: #1f3a5f; --down: #c62828; --standby: #607d8b; color-scheme: light;
+  }
+  @page { size: A4 landscape; margin: 12mm; }
+  .nav, .no-print { display: none !important; }
+  .shell { display: block; }
+  main { padding: 0; }
+  .pack .card.page { break-after: page; border: none; padding: 0; }
+  .pack .card.page:last-child { break-after: auto; }
+  .card, table, tr { break-inside: avoid; }
+}
+.pack .card.page { overflow-x: auto; }
