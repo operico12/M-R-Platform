@@ -98,6 +98,20 @@ do $$ begin
   raise exception 'supervisor could set a target';
 exception when insufficient_privilege then null; end $$;
 
+-- Tenants: a member sees their own tenant; someone with no site sees none; nobody changes them.
+select pg_temp.as_user('a0000000-0000-0000-0000-00000000000b', 'sam@example.com');
+do $$ begin if (select count(*) from tenants) <> 1 then raise exception 'member cannot see their tenant'; end if; end $$;
+do $$ begin
+  update tenants set name = 'x';
+  raise exception 'tenant was changed';
+exception when insufficient_privilege then null; end $$;
+select pg_temp.as_user('a0000000-0000-0000-0000-0000000000ff', 'nobody@example.com');
+do $$ begin if (select count(*) from tenants) <> 0 then raise exception 'non-member sees a tenant'; end if; end $$;
+reset role;
+set local role anon;
+do $$ begin if (select count(*) from tenants) <> 0 then raise exception 'anon sees a tenant'; end if;
+exception when insufficient_privilege then null; end $$;
+
 reset role;
 do $$ declare n int; begin
   select count(*) into n from audit_log where action = 'move_location' and reason = 'towed in' and user_id = 'a0000000-0000-0000-0000-00000000000b';
