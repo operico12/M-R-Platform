@@ -43,6 +43,7 @@ line says otherwise.
 | Prioritisation | Risk matrix | No |
 | Cost | Cost per hour of component life | No |
 | Converters | MTBF and failure rate | No |
+| Cost (phase 3) | Rebuild or replace | Mean component lives from the component history |
 
 Pareto and jack-knife are already on the downtime analysis page. Later phases add Crow-AMSAA, spares,
 RCM intervals, simulation and the rest of 7.2.
@@ -191,3 +192,20 @@ RCM intervals, simulation and the rest of 7.2.
 - **Worked example:** MTBF 500 h gives λ = 0.002 per hour, which is 2,000 per million hours. R(100 h)
   = 0.8187.
 - **Reference:** arithmetic.
+
+## C-11 Rebuild or replace (phase 3)
+
+- **Formulas**, for each option, as a cost per hour of life:
+  - Rebuild = (rebuild price + change-out hours × cost per down hour) ÷ expected life after rebuild.
+  - Replace = (new price + change-out hours × cost per down hour − core credit) ÷ expected new life.
+  - Break-even life = rebuild cost ÷ replace cost per hour. This is how long a rebuild must last to
+    match a new one.
+  - Yearly difference = the gap per hour × operating hours a year.
+- **Uses platform data:** the expected lives open with the mean ended life of rebuilt and of new
+  components of that kind and model, when there are at least 3 of each (docs/component-life.md).
+- **Worked example:**
+  - Inputs: rebuild $280,000 for 16,000 h; new $600,000 for 22,000 h; 24 h change-out at $2,500 an
+    hour; $60,000 core credit; 6,000 h a year.
+  - Rebuild costs $21.25 an hour and replace costs $27.27 an hour.
+  - Break-even life is 12,467 h, and rebuilding saves $36,136 a year.
+- **Reference:** life cycle costing arithmetic (plan 7.1 "Life cycle cost / rebuild vs replace").

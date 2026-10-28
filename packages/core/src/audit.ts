@@ -30,6 +30,7 @@ export const AUDIT_ENTITY_LABELS: Record<string, string> = {
   approval: 'Approval request', change_requests: 'Approval request',
   inspection: 'Inspection', inspections: 'Inspection', inspection_form: 'Inspection form', inspection_forms: 'Inspection form', inspection_photos: 'Inspection photo',
   analysis: 'Saved analysis', saved_analyses: 'Saved analysis', view: 'Saved view', saved_views: 'Saved view',
+  component: 'Component', components: 'Component', component_events: 'Component', component_event_costs: 'Component cost', life_target: 'Target life', life_targets: 'Target life',
   smu_readings: 'SMU reading', work_orders: 'Work order', assets: 'Asset', asset_attributes: 'Asset',
   shop_lines: 'Shop line', shop_line_closures: 'Shop line', periods: 'Period', flag_rules: 'Flag rules',
 };

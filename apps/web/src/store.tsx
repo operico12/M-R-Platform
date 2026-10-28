@@ -44,9 +44,10 @@ import {
   can,
   defaultReasonCodes,
   targetValue,
+  smuIndex, type Component, type ComponentData, type ComponentEvent, type LifeTarget, type RecordResult,
 } from '@mr/core';
 import { demoImprovements } from './data/demo-improve';
-import { saveViewRecord, saveAnalysisRecord, loadPhoto, saveForms, sendInspection, sendPhoto, SendError, saveAlertAnswer, saveDecision, saveRequests, saveFlags, saveRecords, saveSetting, saveTarget, saveTaskStatus, type Loaded } from './data/remote';
+import { saveComponentRecord, saveLifeTarget, saveViewRecord, saveAnalysisRecord, loadPhoto, saveForms, sendInspection, sendPhoto, SendError, saveAlertAnswer, saveDecision, saveRequests, saveFlags, saveRecords, saveSetting, saveTarget, saveTaskStatus, type Loaded } from './data/remote';
 import { demoProjects } from './data/demo-projects';
 import { demoForms, demoInspections } from './data/demo-inspections';
 import { backoffMs, forgetPhoto, localPhoto, readDrafts, readOutbox, writeDrafts, writeOutbox, type OutboxItem } from './inspect/device';
@@ -100,6 +101,13 @@ export interface AppState {
   /** Saved explorer views this person can see, retired ones included (docs/analytics-explorer.md). */
   views: SavedView[];
   runView: (cmd: (ctx: ConsoleContext, list: SavedView[]) => ConsoleResult<SavedView>) => ConsoleResult<SavedView>;
+  /** Component serials, their events and target lives (docs/component-life.md). Costs only for cost roles. */
+  components: Component[];
+  componentEvents: ComponentEvent[];
+  lifeTargets: LifeTarget[];
+  /** Register a component, record an event or void one. */
+  runComponents: (cmd: (ctx: ConsoleContext, data: ComponentData) => RecordResult) => RecordResult;
+  runLifeTarget: (cmd: (ctx: ConsoleContext, list: LifeTarget[]) => ConsoleResult<LifeTarget>) => ConsoleResult<LifeTarget>;
   /** Inspection forms, every version (docs/inspections.md). */
   forms: InspectionForm[];
   runForms: (cmd: (ctx: ConsoleContext) => ConsoleResult<InspectionForm>) => ConsoleResult<InspectionForm>;
@@ -364,6 +372,46 @@ export function AppProvider({ children, live, onReload, onSignOut }: { children:
     },
     [actor, ds, live, failed],
   );
+  const smuIdx = useMemo(() => smuIndex(ds.smu), [ds.smu]);
+  const [components, setComponents] = useState<Component[]>(ds.components ?? []);
+  const [componentEvents, setComponentEvents] = useState<ComponentEvent[]>(ds.componentEvents ?? []);
+  const compRef = useRef({ components, events: componentEvents });
+  compRef.current = { components, events: componentEvents };
+  const runComponents = useCallback(
+    (cmd: (ctx: ConsoleContext, data: ComponentData) => RecordResult): RecordResult => {
+      const prev = compRef.current;
+      const r = cmd({ actor, now: new Date().toISOString(), newId, timeZone: ds.site.timeZone, calendar: ds.calendar }, { components: prev.components, events: prev.events, assets: ds.assets, smu: smuIdx });
+      if (r.ok) {
+        compRef.current = { components: r.components, events: r.events };
+        setComponents(r.components);
+        setComponentEvents(r.events);
+        setAudit((a) => [...r.audit, ...a]);
+        const before = new Map(prev.events.map((e) => [e.id, e]));
+        const changed = r.events.filter((e) => before.get(e.id) !== e);
+        const added = r.components.find((c) => !prev.components.includes(c)) ?? null;
+        if (live) saveComponentRecord(siteId, added, changed, r.audit).catch(failed);
+      }
+      return r;
+    },
+    [actor, ds, smuIdx, live, failed],
+  );
+  const [lifeTargets, setLifeTargets] = useState<LifeTarget[]>(ds.lifeTargets ?? []);
+  const targetsRef = useRef(lifeTargets);
+  targetsRef.current = lifeTargets;
+  const runLifeTarget = useCallback(
+    (cmd: (ctx: ConsoleContext, list: LifeTarget[]) => ConsoleResult<LifeTarget>): ConsoleResult<LifeTarget> => {
+      const r = cmd({ actor, now: new Date().toISOString(), newId, timeZone: ds.site.timeZone, calendar: ds.calendar }, targetsRef.current);
+      if (r.ok) {
+        const added = r.records.find((t) => !targetsRef.current.includes(t));
+        targetsRef.current = r.records;
+        setLifeTargets(r.records);
+        setAudit((a) => [...r.audit, ...a]);
+        if (live && added) saveLifeTarget(siteId, added, r.audit).catch(failed);
+      }
+      return r;
+    },
+    [actor, ds, live, failed],
+  );
   const ruleAlertList = useMemo(
     () => ruleAlerts({ assets: ds.assets, flags, smu: ds.smu, lifecycle: ds.lifecycle, rules, now, timeZone: ds.site.timeZone, workOrders: ds.workOrders, targets: targetList, workSettings }, alertSettings),
     [ds, flags, rules, now, targetList, workSettings, alertSettings],
@@ -558,7 +606,7 @@ export function AppProvider({ children, live, onReload, onSignOut }: { children:
   }, [live, siteId]);
   const people = useMemo(() => users.filter((u) => !u.retiredAt && !u.invited), [users]);
   const userName = useCallback((id: string) => users.find((u) => u.id === id)?.name ?? 'Unknown user', [users]);
-  const value: AppState = { ds, forms, runForms, inspections, drafts, saveDraft, discardDraft, runInspection, outbox, sendOutbox: () => void sendOutbox(true), dropOutboxItem, photo, workSettings, runWorkSettings, alertSettings, runAlertSettings, alertAnswers, runAlertAnswer, analyses, runAnalysis, views, runView, ruleAlerts: ruleAlertList, requests, runRequest, decide, actions: improve.actions, rcas: improve.rcas, projects: improve.projects, runImprove, people, userName, targets, targetOf, targetList, users, codes, runConsole, mode: live ? 'live' : 'demo', syncError, clearSyncError: () => setSyncError(null), signOut: onSignOut, importRuns, applyImport, newId, flags, audit, rules, now, actor, setRole, run, lastSync: ds.generatedAt, theme, setTheme };
+  const value: AppState = { ds, forms, runForms, inspections, drafts, saveDraft, discardDraft, runInspection, outbox, sendOutbox: () => void sendOutbox(true), dropOutboxItem, photo, workSettings, runWorkSettings, alertSettings, runAlertSettings, alertAnswers, runAlertAnswer, analyses, runAnalysis, views, runView, components, componentEvents, lifeTargets, runComponents, runLifeTarget, ruleAlerts: ruleAlertList, requests, runRequest, decide, actions: improve.actions, rcas: improve.rcas, projects: improve.projects, runImprove, people, userName, targets, targetOf, targetList, users, codes, runConsole, mode: live ? 'live' : 'demo', syncError, clearSyncError: () => setSyncError(null), signOut: onSignOut, importRuns, applyImport, newId, flags, audit, rules, now, actor, setRole, run, lastSync: ds.generatedAt, theme, setTheme };
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
 

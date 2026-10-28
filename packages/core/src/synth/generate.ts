@@ -10,6 +10,8 @@ import { DateTime } from 'luxon';
 import { DEFAULT_FLAG_RULES } from '../config.js';
 import { HOUR_MS, ms, shiftsBetween, toIso, twelveHourCalendar, type ShiftCalendar } from '../time.js';
 import { normaliseWoNumber } from '../imports.js';
+import type { Component, ComponentEvent, LifeTarget } from '../components.js';
+import { generateComponents } from './components.js';
 import type { Asset, AssetLifecycleInterval, DownFlag, WorkOrder, LocationInterval, ShopLine, ShopLineClosure, SmuReading, Stage, StageInterval } from '../types.js';
 
 export interface SynthOptions {
@@ -34,6 +36,10 @@ export interface Dataset {
   smu: SmuReading[];
   /** Work orders as the ERP would hold them. */
   workOrders: WorkOrder[];
+  /** Major components by serial, their event history and target lives (phase 3). */
+  components: Component[];
+  componentEvents: ComponentEvent[];
+  lifeTargets: LifeTarget[];
   generatedAt: string;
 }
 
@@ -459,6 +465,8 @@ export function generateFleet(opts: SynthOptions = {}): Dataset {
     });
   }
 
+  const parts = generateComponents({ seed, assets, smu, flags, end });
+
   return {
     tenantId,
     site: { id: siteId, name: 'Demo mine (synthetic)', timeZone: tz },
@@ -471,6 +479,9 @@ export function generateFleet(opts: SynthOptions = {}): Dataset {
     flags,
     workOrders: [...wos.values()].sort((a, b) => ms(a.reportedAt!) - ms(b.reportedAt!)),
     smu: smu.sort((a, b) => ms(a.at) - ms(b.at)),
+    components: parts.components,
+    componentEvents: parts.events,
+    lifeTargets: parts.targets,
     generatedAt: toIso(end),
   };
 }

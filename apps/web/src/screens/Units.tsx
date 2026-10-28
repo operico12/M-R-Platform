@@ -6,6 +6,7 @@ import { FlagSheet } from '../components/FlagSheet';
 import { STATUS_WORD, fmtHours, fmtNum, fmtPct, siteTime, unitStatus } from '../format';
 import { newHref } from '../improve/describe';
 import { useApp } from '../store';
+import { UnitComponents } from './Components';
 
 const DAY = 864e5;
 
@@ -130,6 +131,8 @@ export function UnitPage({ id }: { id: string }) {
         )}
         <p className="small muted">From the last ERP import. The ERP stays the system of record; nothing is written back.</p>
       </section>
+
+      <UnitComponents unitId={id} />
 
       <section>
         <h3>Down flags</h3>

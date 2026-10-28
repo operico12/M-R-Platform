@@ -31,6 +31,8 @@ export type Action =
   | 'view_audit_log'
   | 'sign_off_inspections'
   | 'edit_inspection_forms'
+  | 'record_components'
+  | 'edit_life_targets'
   | 'manage_imports'
   | 'manage_users';
 
@@ -66,6 +68,9 @@ const MATRIX: Record<Action, Partial<Record<Role, Permission>>> = {
   // docs/inspections.md: sign-off mirrors "sign shift handover"; forms are site setup.
   sign_off_inspections: { supervisor: 'yes', superintendent: 'yes' },
   edit_inspection_forms: { reliability_engineer: 'yes', superintendent: 'yes', admin: 'yes' },
+  // docs/component-life.md: component events are recorded by those who run change-outs; target life is a reliability setting.
+  record_components: { supervisor: 'yes', reliability_engineer: 'yes', superintendent: 'yes' },
+  edit_life_targets: { reliability_engineer: 'yes', superintendent: 'yes' },
   // Field mapping, imports, data-quality rules: data owner only. In phase 1a the Admin role is the data owner (11.7).
   manage_imports: { admin: 'yes' },
   manage_users: { superintendent: 'approve', admin: 'yes' },
@@ -98,6 +103,8 @@ export const ACTION_LABELS: Record<Action, string> = {
   view_audit_log: 'Read the full audit log',
   sign_off_inspections: 'Sign off inspections',
   edit_inspection_forms: 'Edit inspection forms',
+  record_components: 'Record component installs, removals and rebuilds',
+  edit_life_targets: 'Set component target life',
   manage_imports: 'Field mapping, imports and data-quality rules',
   manage_users: 'Manage users and roles',
 };

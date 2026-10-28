@@ -55,6 +55,13 @@ Code: `packages/core/src/reliability.ts`. All use the downtime analysis filters,
 | KPI-028 | Explorer compare (phase 2) | Slice A vs slice B on each measure; difference and % change | Outside normal variation when two-sided p < 0.05 and both sides have ≥ 5 events. Failure rate: conditional binomial test (normal approximation). Per-event durations: Mann-Whitney U (normal approximation, tie correction). Counts and sums are not tested. Code: `compareSlices` in `explorer.ts`; docs/analytics-explorer.md. |
 | KPI-029 | Control chart (phase 2) | XmR on a weekly value (down h, events or failures): centre = mean, limits = mean ± 2.66 × mean moving range, lower limit ≥ 0 | At least 6 weeks. A week outside the limits is flagged. Code: `controlChart` in `explorer.ts`. |
 
+## Component life (phase 3, plan 3.3 tier 2 and 4.2)
+
+| ID | KPI | Formula | Notes |
+| --- | --- | --- | --- |
+| KPI-030 | Component life ratio (phase 3) | Hours at the end of a component life ÷ target life for that model and kind, over lives that ended in the period | Lag. Shown separately for failures and planned removals (suspensions). Also: % of lives reaching target (ratio ≥ 1) and early failures (failed lives with ratio < 0.25). A life runs from Received or Back from rebuild to Sent to rebuild or Scrapped. Code: `lifeRatio` in `components.ts`; docs/component-life.md. |
+| KPI-031 | Cost per hour of component life (phase 3) | (Purchase or rebuild cost that started each life − warranty recovered) ÷ hours of that life, summed over ended lives | Cost roles only (plan 11.2). Same formula as calculator C-09. Code: `costPerLifeHour` in `components.ts`. |
+
 ## Worked examples encoded as tests
 
 - Plan 3.2, one 12-hour shift: PA 62.5%, utilisation 90.7%, standby 0.7 h, effective utilisation 56.7%.
