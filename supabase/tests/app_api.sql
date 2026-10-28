@@ -86,8 +86,12 @@ do $$ begin
   if (app_load('10000000-0000-0000-0000-000000000002')->>'role') <> 'reliability_engineer' then raise exception 'Kim has the wrong role'; end if;
 end $$;
 
--- The reliability engineer sets a target; the supervisor cannot.
-select app_save_target('10000000-0000-0000-0000-000000000002', '{"id": "40000000-0000-0000-0000-000000000001", "kpi": "pa", "fleet": "Haul trucks", "value": 0.92, "amber": 0.02, "effectiveFrom": "2026-11-01T07:00:00Z", "reason": "plan"}'::jsonb);
+-- Phase 2: nobody sets a target directly any more, not even the reliability
+-- engineer; it goes through an approved request (approvals_api.sql).
+do $$ begin
+  perform app_save_target('10000000-0000-0000-0000-000000000002', '{"id": "40000000-0000-0000-0000-000000000001", "kpi": "pa", "fleet": "Haul trucks", "value": 0.92, "amber": 0.02, "effectiveFrom": "2026-11-01T07:00:00Z", "reason": "plan"}'::jsonb);
+  raise exception 'reliability engineer set a target without approval';
+exception when insufficient_privilege then null; end $$;
 select pg_temp.as_user('a0000000-0000-0000-0000-00000000000b', 'sam@example.com');
 do $$ begin
   perform app_save_target('10000000-0000-0000-0000-000000000002', '{"id": "40000000-0000-0000-0000-000000000002", "kpi": "pa", "value": 0.5, "amber": 0, "effectiveFrom": "2026-11-01T07:00:00Z", "reason": "x"}'::jsonb);

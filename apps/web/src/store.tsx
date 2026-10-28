@@ -29,6 +29,9 @@ import {
   type Project,
   type WorkSettings,
   type AlertAnswer,
+  type ApprovalRequest,
+  type DecideResult,
+  decideRequest,
   type RuleAlert,
   ruleAlerts,
   type AlertSettings,
@@ -39,7 +42,7 @@ import {
   targetValue,
 } from '@mr/core';
 import { demoImprovements } from './data/demo-improve';
-import { saveAlertAnswer, saveFlags, saveRecords, saveSetting, saveTarget, saveTaskStatus, type Loaded } from './data/remote';
+import { saveAlertAnswer, saveDecision, saveRequests, saveFlags, saveRecords, saveSetting, saveTarget, saveTaskStatus, type Loaded } from './data/remote';
 import { demoProjects } from './data/demo-projects';
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 
@@ -75,6 +78,12 @@ export interface AppState {
   runAlertSettings: (cmd: (ctx: ConsoleContext) => ConsoleResult<AlertSettings>) => ConsoleResult<AlertSettings>;
   /** Answers to reliability and threshold alerts, oldest first. Never changed; a newer answer takes over. */
   alertAnswers: AlertAnswer[];
+  /** Approval requests this person can see (docs/approvals.md). */
+  requests: ApprovalRequest[];
+  /** Ask, add a note or withdraw. */
+  runRequest: (cmd: (ctx: ConsoleContext) => ConsoleResult<ApprovalRequest>) => ConsoleResult<ApprovalRequest>;
+  /** Approve or reject; an approval applies the change. */
+  decide: (id: string, decision: 'approve' | 'reject', note: string) => DecideResult;
   /** Reliability and threshold alerts true now, answered or not (docs/alert-rules.md). */
   ruleAlerts: RuleAlert[];
   runAlertAnswer: (cmd: (ctx: ConsoleContext) => ConsoleResult<AlertAnswer>) => ConsoleResult<AlertAnswer>;
@@ -291,6 +300,42 @@ export function AppProvider({ children, live, onReload, onSignOut }: { children:
     () => ruleAlerts({ assets: ds.assets, flags, smu: ds.smu, lifecycle: ds.lifecycle, rules, now, timeZone: ds.site.timeZone, workOrders: ds.workOrders, targets: targetList, workSettings }, alertSettings),
     [ds, flags, rules, now, targetList, workSettings, alertSettings],
   );
+  const [requests, setRequests] = useState<ApprovalRequest[]>(() => live?.requests ?? []);
+  const runRequest = useCallback(
+    (cmd: (ctx: ConsoleContext) => ConsoleResult<ApprovalRequest>): ConsoleResult<ApprovalRequest> => {
+      const r = cmd({ actor, now: new Date().toISOString(), newId, timeZone: ds.site.timeZone, calendar: ds.calendar });
+      if (r.ok) {
+        setRequests(r.records);
+        setAudit((prev) => [...r.audit, ...prev]);
+        if (live) {
+          const ids = new Set(r.audit.map((a) => a.entityId));
+          saveRequests(siteId, r.records.filter((x) => ids.has(x.id)), r.audit).catch(failed);
+        }
+      }
+      return r;
+    },
+    [actor, ds, live, failed],
+  );
+  const decide = useCallback(
+    (id: string, decision: 'approve' | 'reject', note: string): DecideResult => {
+      const nowIso = new Date().toISOString();
+      const r = decideRequest({ actor, now: nowIso, newId, timeZone: ds.site.timeZone, calendar: ds.calendar }, { requests, targets: targetList, users }, id, decision, note);
+      if (r.ok) {
+        setRequests(r.records);
+        if (r.targets) setTargetList(r.targets);
+        if (r.users) setUsers(r.users);
+        setAudit((prev) => [...r.audit, ...prev]);
+        setNow(nowIso);
+        if (live) {
+          const done = r.records.find((x) => x.id === id)!;
+          const target = done.kind === 'target' ? r.targets?.find((t) => t.id === done.appliedId) : undefined;
+          saveDecision(siteId, id, decision === 'approve' ? 'approved' : 'rejected', note, target, r.audit).catch(failed);
+        }
+      }
+      return r;
+    },
+    [actor, ds, live, failed, requests, targetList, users],
+  );
   const runImprove = useCallback(
     <T,>(kind: 'actions' | 'rcas' | 'projects', cmd: (ctx: ConsoleContext) => ConsoleResult<T>): ConsoleResult<T> => {
       const nowIso = new Date().toISOString();
@@ -319,7 +364,7 @@ export function AppProvider({ children, live, onReload, onSignOut }: { children:
   );
   const people = useMemo(() => users.filter((u) => !u.retiredAt && !u.invited), [users]);
   const userName = useCallback((id: string) => users.find((u) => u.id === id)?.name ?? 'Unknown user', [users]);
-  const value: AppState = { ds, workSettings, runWorkSettings, alertSettings, runAlertSettings, alertAnswers, runAlertAnswer, ruleAlerts: ruleAlertList, actions: improve.actions, rcas: improve.rcas, projects: improve.projects, runImprove, people, userName, targets, targetOf, targetList, users, codes, runConsole, mode: live ? 'live' : 'demo', syncError, clearSyncError: () => setSyncError(null), signOut: onSignOut, importRuns, applyImport, newId, flags, audit, rules, now, actor, setRole, run, lastSync: ds.generatedAt, theme, setTheme };
+  const value: AppState = { ds, workSettings, runWorkSettings, alertSettings, runAlertSettings, alertAnswers, runAlertAnswer, ruleAlerts: ruleAlertList, requests, runRequest, decide, actions: improve.actions, rcas: improve.rcas, projects: improve.projects, runImprove, people, userName, targets, targetOf, targetList, users, codes, runConsole, mode: live ? 'live' : 'demo', syncError, clearSyncError: () => setSyncError(null), signOut: onSignOut, importRuns, applyImport, newId, flags, audit, rules, now, actor, setRole, run, lastSync: ds.generatedAt, theme, setTheme };
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
 

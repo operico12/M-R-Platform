@@ -27,6 +27,7 @@ export const AUDIT_ENTITY_LABELS: Record<string, string> = {
   project: 'Project', projects: 'Project',
   settings: 'Settings', site_settings: 'Settings',
   alert: 'Alert answer', alert_answers: 'Alert answer',
+  approval: 'Approval request', change_requests: 'Approval request',
   smu_readings: 'SMU reading', work_orders: 'Work order', assets: 'Asset', asset_attributes: 'Asset',
   shop_lines: 'Shop line', shop_line_closures: 'Shop line', periods: 'Period', flag_rules: 'Flag rules',
 };

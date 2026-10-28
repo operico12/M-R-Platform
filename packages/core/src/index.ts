@@ -16,3 +16,4 @@ export * from './work.js';
 export * from './reliability.js';
 export * from './alerting.js';
 export * from './audit.js';
+export * from './approvals.js';

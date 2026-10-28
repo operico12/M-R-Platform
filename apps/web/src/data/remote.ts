@@ -3,7 +3,7 @@
 // The anon key is public by design: row-level security decides what each
 // signed-in person can read and write. Never put the service_role key here.
 
-import { DEFAULT_FLAG_RULES, DEFAULT_WORK_SETTINGS, withAlertDefaults, type AuditRecord, type AlertAnswer, type AlertSettings, emptyFishbone, type WorkSettings, type ImprovementAction, type Project, type Rca, type AuditEntry, type Dataset, type DownFlag, type FlagRulesConfig, type ReasonCode, type Role, type ShiftCalendar, type SiteUser, type SmuReading, type Target, type WorkOrder, type Asset } from '@mr/core';
+import { DEFAULT_FLAG_RULES, DEFAULT_WORK_SETTINGS, withAlertDefaults, type ApprovalRequest, type AuditRecord, type AlertAnswer, type AlertSettings, emptyFishbone, type WorkSettings, type ImprovementAction, type Project, type Rca, type AuditEntry, type Dataset, type DownFlag, type FlagRulesConfig, type ReasonCode, type Role, type ShiftCalendar, type SiteUser, type SmuReading, type Target, type WorkOrder, type Asset } from '@mr/core';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 
 const url = import.meta.env.VITE_SUPABASE_URL as string | undefined;
@@ -32,6 +32,7 @@ export interface Loaded {
   workSettings: WorkSettings;
   alertSettings: AlertSettings;
   alertAnswers: AlertAnswer[];
+  requests: ApprovalRequest[];
 }
 
 /** Postgres returns "+00:00" offsets; the app compares ISO strings, so make them all "Z". */
@@ -55,10 +56,11 @@ export async function mySites(): Promise<RemoteSite[]> {
 }
 
 export async function loadSite(siteId: string): Promise<Loaded> {
-  const [main, imp, proj, wk, ans] = await Promise.all([
+  const [main, imp, proj, wk, ans, appr] = await Promise.all([
     remote!.rpc('app_load', { p_site: siteId }), remote!.rpc('app_load_improve', { p_site: siteId }), remote!.rpc('app_load_projects', { p_site: siteId }),
     remote!.rpc('app_load_work', { p_site: siteId }),
     remote!.rpc('app_load_alert_answers', { p_site: siteId }),
+    remote!.rpc('app_load_approvals', { p_site: siteId }),
   ]);
   const work = iso(must(wk)) as { plans: Array<Partial<WorkOrder> & { id: string }>; settings: { work?: Partial<WorkSettings>; alerts?: Partial<AlertSettings> } };
   const plans = new Map(work.plans.map((x) => [x.id, x]));
@@ -79,6 +81,9 @@ export async function loadSite(siteId: string): Promise<Loaded> {
     fieldLocations: string[]; flags: DownFlag[]; smu: SmuReading[]; workOrders: WorkOrder[];
     codes: ReasonCode[]; targets: Target[]; users: SiteUser[];
   };
+  const approvals = iso(must(appr)) as { requests: ApprovalRequest[]; acting: Array<{ userId: string; role: Role; until: string }>; targets: Array<{ id: string; requestId: string; approvedBy?: string }> };
+  const acting = new Map(approvals.acting.map((x) => [x.userId, x]));
+  const approvedTargets = new Map(approvals.targets.map((x) => [x.id, { requestId: x.requestId, approvedBy: x.approvedBy }]));
   const calendar: ShiftCalendar = { timeZone: d.site.timeZone, shifts: d.calendar?.shifts ?? [{ name: 'day', startLocal: '06:00' }, { name: 'night', startLocal: '18:00' }], rotation: d.calendar?.rotation ?? undefined };
   const flags = d.flags.map((f) => ({ ...f, stages: f.stages ?? [], locations: f.locations ?? [], etas: f.etas ?? [], workOrders: f.workOrders ?? [], source: f.source ?? 'app', setBy: f.setBy ?? '', enteredAt: f.enteredAt ?? f.start }));
   return {
@@ -102,8 +107,11 @@ export async function loadSite(siteId: string): Promise<Loaded> {
     workSettings: { ...DEFAULT_WORK_SETTINGS, ...(work.settings.work ?? {}) },
     alertSettings: withAlertDefaults(work.settings.alerts),
     alertAnswers: iso(must(ans)) as AlertAnswer[],
+    requests: approvals.requests,
     rcas: improve.rcas.map((r) => ({ ...r, fishbone: { ...emptyFishbone(), ...(r.fishbone as Partial<Rca['fishbone']>) } })),
-    users: d.users, codes: d.codes, targets: d.targets.map((t) => ({ ...t, value: Number(t.value), amber: Number(t.amber) })),
+    users: d.users.map((u) => { const a = acting.get(u.id); return a ? { ...u, actingRole: a.role, actingUntil: a.until } : u; }),
+    codes: d.codes,
+    targets: d.targets.map((t) => ({ ...t, value: Number(t.value), amber: Number(t.amber), ...(approvedTargets.get(t.id) ?? {}) })),
   };
 }
 
@@ -142,4 +150,16 @@ export async function saveAlertAnswer(siteId: string, a: AlertAnswer, audit: Aud
 /** The audit log between two instants, newest first. Row-level security decides what comes back. */
 export async function loadAudit(siteId: string, from: string, to: string): Promise<AuditRecord[]> {
   return iso(must(await remote!.rpc('app_load_audit', { p_site: siteId, p_from: from, p_to: to }))) as AuditRecord[];
+}
+
+/** New requests, notes and withdrawals. The database sets who asked and when. */
+export async function saveRequests(siteId: string, rows: ApprovalRequest[], audit: AuditEntry[]): Promise<void> {
+  must(await remote!.rpc('app_save_requests', { p_site: siteId, p_rows: rows }));
+  if (audit.length) must(await remote!.rpc('app_log', { p_site: siteId, p_entries: audit }));
+}
+
+/** A decision and what it applies, in one database transaction. */
+export async function saveDecision(siteId: string, id: string, decision: 'approved' | 'rejected', note: string, target: Target | undefined, audit: AuditEntry[]): Promise<void> {
+  must(await remote!.rpc('app_decide_request', { p_site: siteId, p_id: id, p_decision: decision, p_note: note, p_target: target ?? null }));
+  if (audit.length) must(await remote!.rpc('app_log', { p_site: siteId, p_entries: audit }));
 }
