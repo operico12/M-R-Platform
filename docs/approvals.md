@@ -8,6 +8,7 @@ Phase 2 (plan 11.3 "Two people for big changes", 11.4 "Approvals", 11.5 "Propose
 | Change | Who asks | Who approves | Applied as |
 | --- | --- | --- | --- |
 | A KPI target (value, amber band, scope, start) | Reliability engineer or superintendent | A superintendent (or acting superintendent) who did not ask | A new target from the requested start. If that start has passed by the time it is approved, it starts at the next shift instead, and says so |
+| A component target life (model, kind, hours, start date; docs/component-life.md) | Reliability engineer or superintendent | A superintendent who did not ask | A new target life from the requested start date. Lives that ended earlier keep the old target. The database builds it from the request itself, so the values cannot change between asking and applying |
 | Giving someone the Admin or Superintendent role | Admin (data owner) | A superintendent who did not ask | The person's role changes |
 | An acting role with an end date | Admin (data owner) | A superintendent who did not ask | The person acts in that role until the end date, then goes back automatically |
 

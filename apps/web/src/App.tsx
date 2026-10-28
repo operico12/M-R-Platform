@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { loadSite, mySites, remote, type Loaded, type RemoteSite } from './data/remote';
 import { Board } from './screens/Board';
 import { Explorer } from './screens/Explorer';
+import { Components } from './screens/Components';
 import { CalcPalette, Calculators } from './screens/Calculators';
 import { Actions } from './screens/Actions';
 import { Alerts } from './screens/Alerts';
@@ -37,6 +38,7 @@ const NAV: Array<[string, string]> = [
   ['#/performance', 'Performance'],
   ['#/analysis', 'Downtime analysis'],
   ['#/explore', 'Explorer'],
+  ['#/components', 'Components'],
   ['#/work', 'Work and PM'],
   ['#/inspections', 'Inspections'],
   ['#/calc', 'Calculators'],
@@ -83,6 +85,7 @@ function Shell() {
     case 'performance': page = <Performance />; break;
     case 'analysis': page = <Analysis query={query} />; break;
     case 'explore': page = <Explorer query={query} />; break;
+    case 'components': page = <Components arg={arg || undefined} query={query} />; break;
     case 'work': page = <Work />; break;
     case 'alerts': page = <Alerts />; break;
     case 'calc': page = <Calculators arg={arg || undefined} sub={sub || undefined} query={query} />; break;

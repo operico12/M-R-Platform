@@ -4,7 +4,7 @@
 
 import {
   CALCULATORS, CalcError, analyse, availabilityTarget, can, conditionalCurve, conditionalWeibull, costPerHour, downtimeCost, filterFromQuery, filterToQuery,
-  inherentAvailability, lifeData, mtbfConfidence, mtbfRate, repairBySystem, repairTimes, riskMatrix, saveAnalysis, searchCalculators, voidAnalysis, weibull,
+  inherentAvailability, lifeData, mtbfConfidence, mtbfRate, rebuildOrReplace, componentStates, allLives, meanLives, smuIndex, COMPONENT_KINDS, KIND_LABELS, type ComponentKind, repairBySystem, repairTimes, riskMatrix, saveAnalysis, searchCalculators, voidAnalysis, weibull,
   RISK_BANDS, type AnalyticsFilter, type CalcOutput, type CalculatorId, type CalculatorInfo, type LifeTime, type SavedAnalysis,
 } from '@mr/core';
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
@@ -42,6 +42,12 @@ const FIELDS: Record<CalculatorId, Field[]> = {
   ],
   cost_per_hour: [{ key: 'purchase', label: 'Purchase', unit: '$' }, { key: 'fitting', label: 'Fitting', unit: '$' }, { key: 'rebuilds', label: 'Rebuild costs', unit: '$', kind: 'list', hint: 'One per rebuild, separated by commas.' }, { key: 'hours', label: 'Total hours of life', unit: 'h' }],
   mtbf_rate: [{ key: 'mtbf', label: 'MTBF', unit: 'h' }, { key: 'mission', label: 'Mission (for example a shift)', unit: 'h' }],
+  rebuild_or_replace: [
+    { key: 'rebuildPrice', label: 'Rebuild price', unit: '$' }, { key: 'rebuildLife', label: 'Expected life after rebuild', unit: 'h' },
+    { key: 'newPrice', label: 'New price', unit: '$' }, { key: 'newLife', label: 'Expected new life', unit: 'h' },
+    { key: 'changeoutHours', label: 'Change-out downtime', unit: 'h' }, { key: 'costPerDownHour', label: 'Cost per down hour', unit: '$/h', hint: 'C-03 works this out' },
+    { key: 'coreCredit', label: 'Core credit when buying new', unit: '$' }, { key: 'hoursPerYear', label: 'Operating hours a year', unit: 'h' },
+  ],
 };
 
 /** The worked examples from docs/calculators.md; also the starting inputs. */
@@ -56,6 +62,11 @@ const EXAMPLE: Record<CalculatorId, { inputs: Inputs; text: string; assumptions:
   risk_matrix: { inputs: { likelihood: '4', consequence: '4' }, text: '4 × 4 = 16, High.', assumptions: 'Default bands Low 1–4, Medium 5–9, High 10–16, Extreme 20–25. A site with its own corporate matrix should use that.' },
   cost_per_hour: { inputs: { purchase: '180000', fitting: '6000', rebuilds: '45000, 45000', hours: '24000' }, text: '$180,000 + $6,000 + 2 × $45,000 over 24,000 h = $11.50 per hour.', assumptions: 'All costs over the whole life, including rebuilds.' },
   mtbf_rate: { inputs: { mtbf: '500', mission: '100' }, text: 'MTBF 500 h: λ = 0.002 per hour, 2,000 per million hours; R(100 h) = 0.8187.', assumptions: 'Constant failure rate.' },
+  rebuild_or_replace: {
+    inputs: { rebuildPrice: '280000', rebuildLife: '16000', newPrice: '600000', newLife: '22000', changeoutHours: '24', costPerDownHour: '2500', coreCredit: '60000', hoursPerYear: '6000' },
+    text: 'Rebuild $280,000 for 16,000 h vs new $600,000 for 22,000 h, 24 h change-out at $2,500/h, $60,000 core credit: rebuild $21.25/h, new $27.27/h; break-even life 12,467 h; rebuilding saves $36,136 a year at 6,000 h.',
+    assumptions: 'Each option is judged on its cost per hour of life. Expected lives are averages; check the Weibull spread on the Components page before relying on them.',
+  },
 };
 
 const VALUE_LABELS: Record<string, [string, (x: number) => string]> = {
@@ -86,6 +97,10 @@ const VALUE_LABELS: Record<string, [string, (x: number) => string]> = {
   score: ['Score', (x) => String(x)],
   lambda: ['Failure rate λ', (x) => `${x.toPrecision(3)} per h`],
   perMillion: ['Per million hours', (x) => Math.round(x).toLocaleString('en-CA')],
+  rebuildPerHour: ['Rebuild, per hour of life', (x) => `$${x.toFixed(2)}`],
+  replacePerHour: ['New, per hour of life', (x) => `$${x.toFixed(2)}`],
+  breakEvenLife: ['Break-even life for a rebuild', (x) => `${Math.round(x).toLocaleString('en-CA')} h`],
+  annualDifference: ['Difference a year', (x) => `$${Math.round(x).toLocaleString('en-CA')}`],
 };
 
 const nums = (s: string | undefined) => (s ?? '').split(/[\s,;]+/).filter(Boolean).map(Number);
@@ -114,6 +129,10 @@ function compute(id: CalculatorId, i: Inputs): Run {
     case 'risk_matrix': { const p = { likelihood: n('likelihood'), consequence: n('consequence') }; return { out: riskMatrix(p), parsed: p }; }
     case 'cost_per_hour': { const p = { purchase: n('purchase'), fitting: n('fitting'), rebuilds: nums(i.rebuilds), hours: n('hours') }; return { out: costPerHour(p), parsed: p }; }
     case 'mtbf_rate': { const p = { mtbf: n('mtbf'), mission: n('mission') }; return { out: mtbfRate(p), parsed: p }; }
+    case 'rebuild_or_replace': {
+      const p = { rebuildPrice: n('rebuildPrice'), rebuildLife: n('rebuildLife'), newPrice: n('newPrice'), newLife: n('newLife'), changeoutHours: n('changeoutHours'), costPerDownHour: n('costPerDownHour'), coreCredit: n('coreCredit'), hoursPerYear: n('hoursPerYear') };
+      return { out: rebuildOrReplace(p), parsed: p };
+    }
   }
 }
 
@@ -209,7 +228,7 @@ function Calculator({ info, savedId, query }: { info: CalculatorInfo; savedId?: 
   }, [info.id, inputs]);
 
   const a = useMemo(
-    () => (info.usesData ? analyse({ assets: app.ds.assets, flags: app.flags, smu: app.ds.smu, lifecycle: app.ds.lifecycle, rules: app.rules, now: app.now, calendar: app.ds.calendar, timeZone: tz }, filter) : null),
+    () => (info.usesData && info.id !== 'rebuild_or_replace' ? analyse({ assets: app.ds.assets, flags: app.flags, smu: app.ds.smu, lifecycle: app.ds.lifecycle, rules: app.rules, now: app.now, calendar: app.ds.calendar, timeZone: tz }, filter) : null),
     [info.usesData, app.ds, app.flags, app.rules, app.now, filter],
   );
   const repairRows = useMemo(() => (a ? a.events.filter((e) => e.event.end).map((e) => ({ system: e.event.system ?? 'Not recorded', hours: e.hours })) : []), [a]);
@@ -288,6 +307,8 @@ function Calculator({ info, savedId, query }: { info: CalculatorInfo; savedId?: 
           {info.id === 'weibull' && <p className="small muted">Fleet lives assume each repair makes the unit as good as new. Filter to one system or component for a meaningful fit.</p>}
         </section>
       )}
+
+      {info.id === 'rebuild_or_replace' && <ComponentLives query={query} onUse={(next, note, msg) => { setInputs((p) => ({ ...p, ...next })); setDataNote(note); setDataMsg(msg); }} msg={dataMsg} />}
 
       <div className="grid two">
         <section className="card">
@@ -576,5 +597,35 @@ export function CalcPalette() {
         </div>
       </div>
     </>
+  );
+}
+
+// ---------- C-11: fill expected lives from the component history ----------
+
+function ComponentLives({ query, onUse, msg }: { query: string; onUse: (next: Inputs, note: string, msg: string) => void; msg: string | null }) {
+  const app = useApp();
+  const q = new URLSearchParams(query);
+  const models = [...new Set(app.ds.assets.map((a) => a.model))].sort();
+  const [kind, setKind] = useState<ComponentKind>((q.get('kind') as ComponentKind) ?? 'engine');
+  const [model, setModel] = useState(q.get('model') ?? models[0] ?? '');
+  const lives = useMemo(() => allLives(componentStates(app.components, app.componentEvents, app.ds.assets, smuIndex(app.ds.smu), app.now)), [app.components, app.componentEvents, app.ds, app.now]);
+  const m = meanLives(lives, kind, model || undefined);
+  const use = () => {
+    const next: Inputs = {};
+    if (m.rebuilt !== null) next.rebuildLife = String(Math.round(m.rebuilt));
+    if (m.fresh !== null) next.newLife = String(Math.round(m.fresh));
+    const parts = [m.rebuilt !== null ? `rebuilt ${Math.round(m.rebuilt).toLocaleString('en-CA')} h` : 'too few rebuilt lives', m.fresh !== null ? `new ${Math.round(m.fresh).toLocaleString('en-CA')} h` : 'too few new lives'];
+    onUse(next, `Component history: ${KIND_LABELS[kind].toLowerCase()}, ${model}, mean ended life`, `Mean ended life: ${parts.join(', ')} (at least 3 lives each).`);
+  };
+  return (
+    <section className="card">
+      <h3 style={{ marginTop: 0 }}>Use my data</h3>
+      <div className="row" style={{ gap: 8, flexWrap: 'wrap', alignItems: 'end' }}>
+        <label className="field"><span>Component</span><select value={kind} onChange={(e) => setKind(e.target.value as ComponentKind)}>{COMPONENT_KINDS.map((k) => <option key={k} value={k}>{KIND_LABELS[k]}</option>)}</select></label>
+        <label className="field"><span>Model</span><select value={model} onChange={(e) => setModel(e.target.value)}>{models.map((x) => <option key={x}>{x}</option>)}</select></label>
+        <button className="btn primary" onClick={use}>Use my data</button>
+      </div>
+      {msg && <p className="small">{msg} Prices stay as typed: enter your current quotes.</p>}
+    </section>
   );
 }

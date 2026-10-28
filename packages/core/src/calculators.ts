@@ -375,9 +375,29 @@ export function mtbfRate(i: { mtbf: number; mission: number }): CalcOutput {
   return { values: { lambda, perMillion: 1e6 / i.mtbf, reliability: R }, sentence: `An MTBF of ${n1(i.mtbf)} h is ${n1(1e6 / i.mtbf)} failures per million hours; the chance of getting through ${n1(i.mission)} h with no failure is ${pct(R)} if the failure rate is constant.`, warnings: [] };
 }
 
+// ---------- C-11 rebuild or replace ----------
+
+export function rebuildOrReplace(i: { rebuildPrice: number; rebuildLife: number; newPrice: number; newLife: number; changeoutHours: number; costPerDownHour: number; coreCredit: number; hoursPerYear: number }): CalcOutput {
+  positive(i.rebuildLife, 'Expected life after rebuild'); positive(i.newLife, 'Expected new life'); positive(i.hoursPerYear, 'Operating hours a year');
+  if (![i.rebuildPrice, i.newPrice, i.changeoutHours, i.costPerDownHour, i.coreCredit].every((x) => Number.isFinite(x) && x >= 0)) bad('Prices, hours and credits must be 0 or more.');
+  const changeout = i.changeoutHours * i.costPerDownHour;
+  const rebuildCost = i.rebuildPrice + changeout;
+  const replaceCost = i.newPrice + changeout - i.coreCredit;
+  if (!(replaceCost > 0)) bad('The core credit is more than the new price and change-out together.');
+  const rebuildPerHour = rebuildCost / i.rebuildLife;
+  const replacePerHour = replaceCost / i.newLife;
+  const breakEvenLife = rebuildCost / replacePerHour;
+  const annualDifference = Math.abs(rebuildPerHour - replacePerHour) * i.hoursPerYear;
+  const winner = rebuildPerHour < replacePerHour ? 'Rebuild' : rebuildPerHour > replacePerHour ? 'Replace' : 'Either';
+  const sentence = winner === 'Either'
+    ? `Both cost ${money(rebuildPerHour)} per hour of life.`
+    : `${winner} is cheaper: ${money(rebuildPerHour)} per hour rebuilt vs ${money(replacePerHour)} new, about ${money(annualDifference)} a year at ${n0(i.hoursPerYear)} h. A rebuild has to last ${n0(breakEvenLife)} h to match a new one.`;
+  return { values: { rebuildPerHour, replacePerHour, breakEvenLife, annualDifference }, sentence, warnings: i.changeoutHours === 0 ? ['Change-out hours are 0: the downtime cost of each change is left out.'] : [] };
+}
+
 // ---------- catalogue ----------
 
-export type CalculatorId = 'inherent_availability' | 'availability_target' | 'downtime_cost' | 'mtbf_confidence' | 'weibull' | 'conditional_weibull' | 'repair_times' | 'risk_matrix' | 'cost_per_hour' | 'mtbf_rate';
+export type CalculatorId = 'inherent_availability' | 'availability_target' | 'downtime_cost' | 'mtbf_confidence' | 'weibull' | 'conditional_weibull' | 'repair_times' | 'risk_matrix' | 'cost_per_hour' | 'mtbf_rate' | 'rebuild_or_replace';
 
 export interface CalculatorInfo { id: CalculatorId; code: string; group: string; name: string; question: string; usesData: boolean; formula: string; version: number }
 
@@ -393,6 +413,7 @@ export const CALCULATORS: CalculatorInfo[] = [
   { id: 'risk_matrix', code: 'C-08', group: 'Prioritisation', name: 'Risk matrix', question: 'How serious is this risk?', usesData: false, formula: 'score = likelihood × consequence (1 to 5 each)', version: 1 },
   { id: 'cost_per_hour', code: 'C-09', group: 'Cost', name: 'Cost per hour of component life', question: 'What does a component cost per hour it runs?', usesData: false, formula: '(purchase + fitting + rebuilds) ÷ hours of life', version: 1 },
   { id: 'mtbf_rate', code: 'C-10', group: 'Converters', name: 'MTBF and failure rate', question: 'What failure rate is this MTBF, and what are the odds of getting through a shift?', usesData: false, formula: 'λ = 1 ÷ MTBF;  R(t) = exp(−t ÷ MTBF)', version: 1 },
+  { id: 'rebuild_or_replace', code: 'C-11', group: 'Cost', name: 'Rebuild or replace', question: 'Is it cheaper to rebuild this component or buy a new one?', usesData: true, formula: '(price + change-out h × cost per down h − core credit) ÷ expected life, for each option', version: 1 },
 ];
 
 /** Search by name, code, group or question; every word must match. */
