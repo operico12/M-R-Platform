@@ -48,13 +48,17 @@ import {
   DEFAULT_CONDITION_SETTINGS, type CmResponse, type ConditionData, type ConditionSettings, type OilSample,
   DEFAULT_RCM_SETTINGS, type JobPlanVersion, type RcmMode, type RcmSettings, DEFAULT_SPARES_SETTINGS, type SparesSettings,
   DEFAULT_ASSIST_SETTINGS, STARTER_CODES, buildSuggester, type AssistSettings, type Suggester,
+  type PlantNode, type Shutdown, type ScopeItem, type RunOutcome, type Round, type RoundResult, startRound,
+  DEFAULT_IMPORT_SOURCE, mappingFor, setImportSource, type ImportMapping, type ImportSource,
+  addSite, retireSite, createApiKey, revokeApiKey, apiKeyFromHex, type ApiKeyInput, type ApiKeyRecord, twelveHourCalendar as _cal, type SiteInput, type SiteRecord, type SiteSnapshot,
   DEFAULT_PLANT_SETTINGS, generatePlant, type ClassifyResult, type DelayContext, type PlantSettings, type ProcessDelay, type RunSignal,
 } from '@mr/core';
 import { demoImprovements } from './data/demo-improve';
-import { saveProcessDelays, saveRunSignals, type PlantData, saveRcmModes, saveJobPlanVersion, saveCmResponse, saveOilSamples, saveComponentRecord, saveViewRecord, saveAnalysisRecord, loadPhoto, saveForms, sendInspection, sendPhoto, SendError, saveAlertAnswer, saveDecision, saveRequests, saveFlags, saveRecords, saveSetting, saveTarget, saveTaskStatus, type Loaded } from './data/remote';
+import { addSiteRemote, loadApiKeys, createApiKeyRemote, revokeApiKeyRemote, loadSnapshot, retireSiteRemote, savePlantNodes, saveShutdown, sendRound, saveProcessDelays, saveRunSignals, type PlantData, saveRcmModes, saveJobPlanVersion, saveCmResponse, saveOilSamples, saveComponentRecord, saveViewRecord, saveAnalysisRecord, loadPhoto, saveForms, sendInspection, sendPhoto, SendError, saveAlertAnswer, saveDecision, saveRequests, saveFlags, saveRecords, saveSetting, saveTarget, saveTaskStatus, type Loaded } from './data/remote';
 import { demoProjects } from './data/demo-projects';
 import { demoForms, demoInspections } from './data/demo-inspections';
-import { backoffMs, forgetPhoto, localPhoto, readDrafts, readOutbox, writeDrafts, writeOutbox, type OutboxItem } from './inspect/device';
+import { DEMO_SITES, demoFleet, type SiteChoice } from './data/sites';
+import { backoffMs, forgetPhoto, localPhoto, readDrafts, readOutbox, readRoundDrafts, writeDrafts, writeOutbox, writeRoundDrafts, type OutboxItem } from './inspect/device';
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 
 /** One file load, as a sync run (plan 6.3: every run is logged with counts and errors). */
@@ -142,6 +146,23 @@ export interface AppState {
   runClassify: (area: string, cmd: (ctxFor: (assetId: string) => FlagContext, dctx: DelayContext, delays: ProcessDelay[]) => ClassifyResult) => ClassifyResult;
   /** Keep historian signals loaded from a file. Stops in them are proposed with `run` and proposeStop. */
   addSignals: (fileName: string, signals: RunSignal[], stats: { rows: number; added: number; skipped: number }) => void;
+  /** Add, change or retire a plant structure node (admin). */
+  runNode: (cmd: (ctx: ConsoleContext) => ConsoleResult<PlantNode>) => ConsoleResult<PlantNode>;
+  /** Plan, change, cancel or change the scope of a shutdown. */
+  runShutdown: (cmd: (ctx: ConsoleContext) => ConsoleResult<Shutdown>) => ConsoleResult<Shutdown>;
+  /** Start or end a shutdown: its flags and the shutdown are saved together. */
+  runShutdownFlow: (cmd: (ctx: ConsoleContext, ctxFor: (a: Asset) => FlagContext) => RunOutcome) => RunOutcome;
+  /** Submitted and voided rounds, including ones still in this device's outbox. */
+  rounds: Round[];
+  /** Rounds this person started on this device and has not submitted. Their stops are in `drafts`. */
+  roundDrafts: Round[];
+  beginRound: (form: InspectionForm) => ReturnType<typeof startRound>;
+  /** Keep a round draft on the device (its skipped stops). */
+  saveRoundDraft: (r: Round) => boolean;
+  /** Drop a round draft and its stop drafts from the device. */
+  discardRound: (id: string) => void;
+  /** Submit, void or sign off a round. The round and its stops go to the outbox together. */
+  runRound: (cmd: (ctx: ConsoleContext) => RoundResult | { ok: false; errors: string[] }) => RoundResult | { ok: false; errors: string[] };
   /** Inspection forms, every version (docs/inspections.md). */
   forms: InspectionForm[];
   runForms: (cmd: (ctx: ConsoleContext) => ConsoleResult<InspectionForm>) => ConsoleResult<InspectionForm>;
@@ -187,6 +208,23 @@ export interface AppState {
   lastSync: string;
   theme: 'light' | 'dark';
   setTheme: (t: 'light' | 'dark') => void;
+  /** Which ERP this site's files come from, and the mapping they are read with (docs/field-mapping.md). */
+  importSource: ImportSource;
+  importMapping: ImportMapping;
+  runImportSource: (cmd: (ctx: ConsoleContext, current: ImportSource) => ConsoleResult<ImportSource>) => ConsoleResult<ImportSource>;
+  /** Sites this person belongs to (docs/multi-site.md). The current one is ds.site. */
+  sites: SiteChoice[];
+  switchSite: (id: string) => void;
+  /** Units, flags, SMU and rules of a site for the Sites page. */
+  snapshot: (site: SiteChoice) => Promise<SiteSnapshot>;
+  addSite: (input: SiteInput) => Promise<ConsoleResult<SiteRecord>>;
+  retireSite: (site: SiteChoice, reason: string) => Promise<ConsoleResult<SiteRecord>>;
+  /** Public API keys of this site (docs/public-api.md). null until loaded. */
+  apiKeys: ApiKeyRecord[] | null;
+  loadApiKeys: () => Promise<void>;
+  /** Makes a key; `key` is the full key, to show once. */
+  createApiKey: (input: ApiKeyInput) => Promise<{ ok: true; key: string } | { ok: false; errors: string[] }>;
+  revokeApiKey: (id: string, reason: string) => Promise<ConsoleResult<ApiKeyRecord>>;
 }
 
 const Ctx = createContext<AppState | null>(null);
@@ -205,8 +243,12 @@ function readTheme(): 'light' | 'dark' {
   return window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
 }
 
-export function AppProvider({ children, live, onReload, onSignOut }: { children: ReactNode; live?: Loaded; onReload?: () => void; onSignOut?: () => void }) {
-  const [ds, setDs] = useState<Dataset>(() => live?.ds ?? generateFleet({ seed: 42, units: 40, days: 120 }));
+export function AppProvider({ children, live, onReload, onSignOut, sites = DEMO_SITES, siteId: chosenSite, onSwitchSite, onSitesChanged }: {
+  children: ReactNode; live?: Loaded; onReload?: () => void; onSignOut?: () => void;
+  /** Multi-site: the person's sites, the demo site to show, and what to do on a switch or after adding or retiring one. */
+  sites?: SiteChoice[]; siteId?: string; onSwitchSite?: (id: string) => void; onSitesChanged?: (sites: SiteChoice[], switchTo?: string) => void;
+}) {
+  const [ds, setDs] = useState<Dataset>(() => live?.ds ?? demoFleet(sites.find((x) => x.id === chosenSite) ?? sites[0] ?? DEMO_SITES[0]!));
   const [syncError, setSyncError] = useState<string | null>(null);
   const [importRuns, setImportRuns] = useState<ImportRun[]>([]);
   const [targetList, setTargetList] = useState<Target[]>(() => live?.targets ?? []);
@@ -217,8 +259,12 @@ export function AppProvider({ children, live, onReload, onSignOut }: { children:
     ['reliability_engineer', 'Rae Reliability'], ['superintendent', 'Sol Superintendent'], ['admin', 'Ada Admin'],
   ].map(([role, name]) => ({ id: `demo-${role}`, name: name!, email: `${role}@example.com`, role: role as Role, scope: ['*'], addedAt: '2026-01-01T00:00:00.000Z' })));
   const [flags, setFlags] = useState<DownFlag[]>(ds.flags);
-  const [plant, setPlant] = useState<PlantData>(() => live?.plant ?? generatePlant({ seed: 42, days: 120, end: Date.parse(ds.generatedAt), timeZone: ds.site.timeZone, tenantId: ds.tenantId, siteId: ds.site.id }));
+  // The demo plant, made once: its structure, flags and shutdowns, and its route forms, rounds and stop inspections.
+  const [demoPlant] = useState(() => (live ? null : generatePlant({ seed: 42, days: 120, end: Date.parse(ds.generatedAt), timeZone: ds.site.timeZone, tenantId: ds.tenantId, siteId: ds.site.id, people: { technician: 'demo-technician', supervisor: 'demo-supervisor' } })));
+  const [plant, setPlant] = useState<PlantData>(() => live?.plant ?? demoPlant!);
   const [plantSettings, setPlantSettings] = useState<PlantSettings>(() => live?.plantSettings ?? DEFAULT_PLANT_SETTINGS);
+  const [importSource, setImportSourceState] = useState<ImportSource>(() => live?.importSource ?? DEFAULT_IMPORT_SOURCE);
+  const importMapping = useMemo(() => mappingFor(importSource), [importSource]);
   const [improve, setImprove] = useState(() => (live ? { actions: live.actions, rcas: live.rcas, projects: live.projects } : { ...demoImprovements(ds), projects: demoProjects(ds) }));
   const [audit, setAudit] = useState<AuditEntry[]>([]);
   const [now, setNow] = useState(() => new Date().toISOString());
@@ -355,6 +401,67 @@ export function AppProvider({ children, live, onReload, onSignOut }: { children:
     [actor, live, failed],
   );
 
+  const runNode = useCallback(
+    (cmd: (ctx: ConsoleContext) => ConsoleResult<PlantNode>): ConsoleResult<PlantNode> => {
+      const nowIso = new Date().toISOString();
+      const r = cmd({ actor, now: nowIso, newId, timeZone: ds.site.timeZone, calendar: ds.calendar });
+      if (r.ok) {
+        setPlant((p) => {
+          const next = [...p.nodes];
+          for (const n of r.records) {
+            const i = next.findIndex((x) => x.id === n.id);
+            if (i >= 0) next[i] = n;
+            else next.push(n);
+          }
+          return { ...p, nodes: next };
+        });
+        setAudit((prev) => [...r.audit, ...prev]);
+        setNow(nowIso);
+        if (live) savePlantNodes(siteId, r.records, r.audit).catch(failed);
+      }
+      return r;
+    },
+    [actor, ds, live, failed],
+  );
+  const keepShutdown = useCallback((s: Shutdown) => setPlant((p) => ({ ...p, shutdowns: p.shutdowns.some((x) => x.id === s.id) ? p.shutdowns.map((x) => (x.id === s.id ? s : x)) : [...p.shutdowns, s] })), []);
+  const runShutdown = useCallback(
+    (cmd: (ctx: ConsoleContext) => ConsoleResult<Shutdown>): ConsoleResult<Shutdown> => {
+      const nowIso = new Date().toISOString();
+      const r = cmd({ actor, now: nowIso, newId, timeZone: ds.site.timeZone, calendar: ds.calendar });
+      if (r.ok) {
+        const s = r.records[0]!;
+        const before = plant.shutdowns.find((x) => x.id === s.id);
+        // Scope rows that are new, or newly taken out.
+        const rows: ScopeItem[] = s.scope.filter((x) => { const b = before?.scope.find((y) => y.id === x.id); return !b || (!!x.removedAt && !b.removedAt); });
+        keepShutdown(s);
+        setAudit((prev) => [...r.audit, ...prev]);
+        setNow(nowIso);
+        if (live) saveShutdown(siteId, s, rows, r.audit).catch(failed);
+      }
+      return r;
+    },
+    [actor, ds, plant.shutdowns, keepShutdown, live, failed],
+  );
+  const runShutdownFlow = useCallback(
+    (cmd: (ctx: ConsoleContext, ctxFor: (a: Asset) => FlagContext) => RunOutcome): RunOutcome => {
+      const nowIso = new Date().toISOString();
+      const r = cmd({ actor, now: nowIso, newId, timeZone: ds.site.timeZone, calendar: ds.calendar }, (a) => flagCtx(a, nowIso));
+      if (r.ok) {
+        keepFlags(r.flags, true);
+        keepShutdown(r.shutdown);
+        setAudit((prev) => [...r.audit, ...prev]);
+        setNow(nowIso);
+        if (live) {
+          const sdAudit = r.audit.filter((a) => a.entity === 'shutdown');
+          const flagAudit = r.audit.filter((a) => a.entity !== 'shutdown');
+          saveFlags(siteId, r.flags, flagAudit).then(() => saveShutdown(siteId, r.shutdown, [], sdAudit)).catch(failed);
+        }
+      }
+      return r;
+    },
+    [actor, ds, flagCtx, keepFlags, keepShutdown, live, failed],
+  );
+
   const applyImport = useCallback(
     (fileName: string, r: ImportResult<unknown>) => {
       const at = new Date().toISOString();
@@ -369,7 +476,9 @@ export function AppProvider({ children, live, onReload, onSignOut }: { children:
       setAudit((prev) => [entry, ...prev]);
       if (live) {
         const changed = [...r.inserted, ...r.updated.map((u) => u.after)];
-        saveRecords(siteId, r.kind, changed, [entry]).catch(failed);
+        // New assets record the ERP they came from (docs/field-mapping.md).
+        const src = r.raw[0]?.sourceSystem;
+        saveRecords(siteId, r.kind, r.kind === 'assets' && src ? changed.map((x) => ({ ...(x as object), sourceSystem: src })) : changed, [entry]).catch(failed);
       }
     },
     [actor, live, failed],
@@ -632,6 +741,18 @@ export function AppProvider({ children, live, onReload, onSignOut }: { children:
     [actor, ds, live, failed],
   );
   // Learned in the browser from this site's own records; nothing leaves the platform (docs/ai-assist.md guardrail 6).
+  const runImportSource = useCallback(
+    (cmd: (ctx: ConsoleContext, current: ImportSource) => ConsoleResult<ImportSource>): ConsoleResult<ImportSource> => {
+      const r = cmd({ actor, now: new Date().toISOString(), newId, timeZone: ds.site.timeZone, calendar: ds.calendar }, importSource);
+      if (r.ok) {
+        setImportSourceState(r.records[0]!);
+        setAudit((prev) => [...r.audit, ...prev]);
+        if (live) saveSetting(siteId, 'imports', r.records[0]!, r.audit[0]?.reason ?? '', r.audit).catch(failed);
+      }
+      return r;
+    },
+    [actor, ds, importSource, live, failed],
+  );
   const runPlantSettings = useCallback(
     (cmd: (ctx: ConsoleContext, current: PlantSettings) => ConsoleResult<PlantSettings>): ConsoleResult<PlantSettings> => {
       const r = cmd({ actor, now: new Date().toISOString(), newId, timeZone: ds.site.timeZone, calendar: ds.calendar }, plantSettings);
@@ -715,20 +836,30 @@ export function AppProvider({ children, live, onReload, onSignOut }: { children:
   );
 
   // ---------- inspections (docs/inspections.md) ----------
-  const [forms, setForms] = useState<InspectionForm[]>(() => live?.forms ?? demoForms(ds));
-  const [serverInspections, setServerInspections] = useState<Inspection[]>(() => live?.inspections ?? demoInspections(ds, demoForms(ds)));
+  const [forms, setForms] = useState<InspectionForm[]>(() => live?.forms ?? [...demoForms(ds), ...demoPlant!.forms]);
+  const [serverInspections, setServerInspections] = useState<Inspection[]>(() => live?.inspections ?? [...demoInspections(ds, demoForms(ds)), ...demoPlant!.inspections]);
+  const [serverRounds, setServerRounds] = useState<Round[]>(() => live?.rounds ?? demoPlant!.rounds);
   const me = actor.userId;
   const [drafts, setDrafts] = useState<Inspection[]>(() => readDrafts(siteId, me));
+  const [roundDrafts, setRoundDrafts] = useState<Round[]>(() => readRoundDrafts(siteId, me));
   const [outbox, setOutboxState] = useState<OutboxItem[]>(() => readOutbox(siteId, me));
   const outboxRef = useRef(outbox);
-  useEffect(() => { setDrafts(readDrafts(siteId, me)); const o = readOutbox(siteId, me); outboxRef.current = o; setOutboxState(o); }, [siteId, me]);
+  useEffect(() => { setDrafts(readDrafts(siteId, me)); setRoundDrafts(readRoundDrafts(siteId, me)); const o = readOutbox(siteId, me); outboxRef.current = o; setOutboxState(o); }, [siteId, me]);
   const setOutbox = useCallback((o: OutboxItem[]) => { outboxRef.current = o; setOutboxState(o); writeOutbox(siteId, me, o); }, [siteId, me]);
   // What the screen shows: the database's list, with this device's unsent changes on top.
   const inspections = useMemo(() => {
     const m = new Map(serverInspections.map((i) => [i.id, i]));
-    for (const o of outbox) if (o.inspection) m.set(o.inspection.id, o.inspection);
+    for (const o of outbox) {
+      if (o.inspection) m.set(o.inspection.id, o.inspection);
+      for (const i of o.inspections ?? []) m.set(i.id, i);
+    }
     return [...m.values()];
   }, [serverInspections, outbox]);
+  const rounds = useMemo(() => {
+    const m = new Map(serverRounds.map((r) => [r.id, r]));
+    for (const o of outbox) if (o.round) m.set(o.round.id, o.round);
+    return [...m.values()];
+  }, [serverRounds, outbox]);
   const runForms = useCallback(
     (cmd: (ctx: ConsoleContext) => ConsoleResult<InspectionForm>): ConsoleResult<InspectionForm> => {
       const r = cmd({ actor, now: new Date().toISOString(), newId, timeZone: ds.site.timeZone, calendar: ds.calendar });
@@ -767,20 +898,25 @@ export function AppProvider({ children, live, onReload, onSignOut }: { children:
         if (item) tried.add(item.id);
         if (!item) break;
         // Keep the order for one inspection: a later step waits for the earlier one.
-        const earlier = outboxRef.current.find((o) => o.inspectionId === item.inspectionId && o !== item && !o.refused && outboxRef.current.indexOf(o) < outboxRef.current.indexOf(item));
-        if (earlier) break;
+        // A photo of a round stop waits for its round.
+        const earlier = outboxRef.current.find((o) => o !== item && ((o.inspectionId === item.inspectionId && !o.refused && outboxRef.current.indexOf(o) < outboxRef.current.indexOf(item)) || o.id === item.after));
+        if (earlier) continue;
         try {
           if (typeof navigator !== 'undefined' && navigator.onLine === false) throw new SendError('No connection', false);
           const audit = item.audit.map((a) => (item.offline ? { ...a, offline: true, effectiveAt: a.at } : a));
           if (item.kind === 'inspection') {
             if (live) await sendInspection(siteId, item.inspection!, audit);
+          } else if (item.kind === 'round') {
+            if (live) await sendRound(siteId, item.round!, item.inspections ?? [], audit);
           } else {
             const data = localPhoto(item.photo!.id);
             if (!data) throw new SendError('The photo is no longer on this device.', true);
             if (live) await sendPhoto(siteId, { id: item.photo!.id, inspectionId: item.inspectionId, itemId: item.photo!.itemId, data });
             if (live) forgetPhoto(item.photo!.id);
           }
-          if (item.inspection) setServerInspections((prev) => [...prev.filter((x) => x.id !== item.inspection!.id), item.inspection!]);
+          const sentInsp = [...(item.inspection ? [item.inspection] : []), ...(item.inspections ?? [])];
+          if (sentInsp.length) setServerInspections((prev) => { const ids = new Set(sentInsp.map((x) => x.id)); return [...prev.filter((x) => !ids.has(x.id)), ...sentInsp]; });
+          if (item.round) setServerRounds((prev) => [...prev.filter((x) => x.id !== item.round!.id), item.round!]);
           setOutbox(outboxRef.current.filter((o) => o.id !== item.id));
         } catch (e) {
           const refused = e instanceof SendError && e.refused;
@@ -829,6 +965,65 @@ export function AppProvider({ children, live, onReload, onSignOut }: { children:
     },
     [actor, ds, drafts, siteId, me, setOutbox, sendOutbox],
   );
+  const beginRound = useCallback((form: InspectionForm) => {
+    const r = startRound({ actor, now: new Date().toISOString(), newId, timeZone: ds.site.timeZone, calendar: ds.calendar }, form);
+    if (r.ok) {
+      const rd = [...readRoundDrafts(siteId, me), r.round];
+      setRoundDrafts(rd);
+      writeRoundDrafts(siteId, me, rd);
+      const next = [...readDrafts(siteId, me), ...r.drafts];
+      setDrafts(next);
+      writeDrafts(siteId, me, next);
+    }
+    return r;
+  }, [actor, ds, siteId, me]);
+  const saveRoundDraft = useCallback((r: Round) => {
+    const rd = [...readRoundDrafts(siteId, me).filter((x) => x.id !== r.id), r];
+    setRoundDrafts(rd);
+    return writeRoundDrafts(siteId, me, rd);
+  }, [siteId, me]);
+  const forgetRound = useCallback((id: string, keepPhotos: boolean) => {
+    const rd = readRoundDrafts(siteId, me).filter((x) => x.id !== id);
+    setRoundDrafts(rd);
+    writeRoundDrafts(siteId, me, rd);
+    const all = readDrafts(siteId, me);
+    if (!keepPhotos) for (const d of all.filter((x) => x.roundId === id)) for (const a of Object.values(d.answers)) for (const p of a.photos ?? []) forgetPhoto(p);
+    const next = all.filter((x) => x.roundId !== id);
+    setDrafts(next);
+    writeDrafts(siteId, me, next);
+  }, [siteId, me]);
+  const discardRound = useCallback((id: string) => forgetRound(id, false), [forgetRound]);
+  const runRound = useCallback(
+    (cmd: (ctx: ConsoleContext) => RoundResult | { ok: false; errors: string[] }) => {
+      const nowIso = new Date().toISOString();
+      const r = cmd({ actor, now: nowIso, newId, timeZone: ds.site.timeZone, calendar: ds.calendar });
+      if (r.ok) {
+        setAudit((prev) => [...r.audit, ...prev]);
+        const offline = typeof navigator !== 'undefined' && navigator.onLine === false;
+        const items: OutboxItem[] = [];
+        const wasDraft = readRoundDrafts(siteId, me).some((x) => x.id === r.round.id);
+        if (wasDraft || r.round.status === 'voided') {
+          // A new round, or a void: the round and its stops in one item.
+          const roundItem: OutboxItem = { id: newId(), kind: 'round', inspectionId: r.round.id, round: r.round, inspections: r.inspections, audit: r.audit, queuedAt: nowIso, offline, tries: 0, nextAt: nowIso };
+          items.push(roundItem);
+          if (wasDraft) {
+            for (const i of r.inspections) for (const [itemId, a] of Object.entries(i.answers)) for (const p of a.photos ?? []) {
+              items.push({ id: newId(), kind: 'photo', inspectionId: i.id, photo: { id: p, itemId }, after: roundItem.id, audit: [], queuedAt: nowIso, offline, tries: 0, nextAt: nowIso });
+            }
+            forgetRound(r.round.id, true);
+          }
+        } else {
+          // Sign-off changes the stop inspections only.
+          for (const i of r.inspections) items.push({ id: newId(), kind: 'inspection', inspectionId: i.id, inspection: i, audit: r.audit.filter((a) => a.entityId === i.id), queuedAt: nowIso, offline, tries: 0, nextAt: nowIso });
+        }
+        setOutbox([...outboxRef.current, ...items]);
+        setNow(nowIso);
+        setTimeout(() => void sendOutbox(), 0);
+      }
+      return r;
+    },
+    [actor, ds, siteId, me, setOutbox, sendOutbox, forgetRound],
+  );
   const dropOutboxItem = useCallback((id: string) => setOutbox(outboxRef.current.filter((o) => o.id !== id)), [setOutbox]);
   const photoCache = useRef(new Map<string, string>());
   const photo = useCallback(async (id: string) => {
@@ -841,7 +1036,82 @@ export function AppProvider({ children, live, onReload, onSignOut }: { children:
   }, [live, siteId]);
   const people = useMemo(() => users.filter((u) => !u.retiredAt && !u.invited), [users]);
   const userName = useCallback((id: string) => users.find((u) => u.id === id)?.name ?? 'Unknown user', [users]);
-  const value: AppState = { ds, forms, runForms, inspections, drafts, saveDraft, discardDraft, runInspection, outbox, sendOutbox: () => void sendOutbox(true), dropOutboxItem, photo, workSettings, runWorkSettings, alertSettings, runAlertSettings, alertAnswers, runAlertAnswer, analyses, runAnalysis, views, runView, components, componentEvents, lifeTargets, runComponents, oilSamples, cmResponses, conditionSettings, runSamples, runResponse, runConditionSettings, rcmModes, jobPlanVersions, rcmSettings, runRcm, runJobPlan, runRcmSettings, sparesSettings, runSparesSettings, assistSettings, runAssistSettings, suggester, plant, plantSettings, runPlantSettings, runDelay, runClassify, addSignals, ruleAlerts: ruleAlertList, requests, runRequest, decide, actions: improve.actions, rcas: improve.rcas, projects: improve.projects, runImprove, people, userName, targets, targetOf, targetList, users, codes, runConsole, mode: live ? 'live' : 'demo', syncError, clearSyncError: () => setSyncError(null), signOut: onSignOut, importRuns, applyImport, newId, flags, audit, rules, now, actor, setRole, run, lastSync: ds.generatedAt, theme, setTheme };
+  const snapshot = useCallback(async (site: SiteChoice): Promise<SiteSnapshot> => {
+    if (live) return loadSnapshot(site.id, new Date(Date.now() - 36 * 864e5).toISOString());
+    const d = site.id === ds.site.id ? { ...ds, flags } : demoFleet(site);
+    return { site: { ...d.site, tenantId: d.tenantId }, assets: d.assets, flags: d.flags, smu: d.smu, lifecycle: d.lifecycle, rules };
+  }, [live, ds, flags, rules]);
+  const siteRecords = useMemo<SiteRecord[]>(() => sites.map((x) => ({ id: x.id, tenantId: x.tenantId, name: x.name, timeZone: x.timeZone })), [sites]);
+  const addSiteCmd = useCallback(async (input: SiteInput): Promise<ConsoleResult<SiteRecord>> => {
+    const r = addSite({ actor, now: new Date().toISOString(), newId, timeZone: ds.site.timeZone, calendar: ds.calendar }, siteRecords, ds.tenantId, input);
+    if (!r.ok) return r;
+    const s = r.records[0]!;
+    try {
+      if (live) await addSiteRemote(siteId, s);
+    } catch (e) {
+      return { ok: false, errors: [e instanceof Error ? e.message : String(e)] };
+    }
+    setAudit((prev) => [...r.audit, ...prev]);
+    onSitesChanged?.([...sites, { id: s.id, name: s.name, timeZone: s.timeZone, tenantId: s.tenantId, role: 'admin' }]);
+    return r;
+  }, [actor, ds, siteRecords, live, siteId, sites, onSitesChanged]);
+  const retireSiteCmd = useCallback(async (site: SiteChoice, reason: string): Promise<ConsoleResult<SiteRecord>> => {
+    // The role that counts is the person's role at the site being retired.
+    const who = live ? { ...actor, role: site.role } : actor;
+    const r = retireSite({ actor: who, now: new Date().toISOString(), newId, timeZone: site.timeZone, calendar: _cal(site.timeZone) }, siteRecords, site.id, reason);
+    if (!r.ok) return r;
+    try {
+      if (live) await retireSiteRemote(site.id, reason.trim());
+    } catch (e) {
+      return { ok: false, errors: [e instanceof Error ? e.message : String(e)] };
+    }
+    const rest = sites.filter((x) => x.id !== site.id);
+    onSitesChanged?.(rest, site.id === ds.site.id ? rest[0]?.id : undefined);
+    return r;
+  }, [actor, live, siteRecords, sites, ds.site.id, onSitesChanged]);
+  const [apiKeys, setApiKeys] = useState<ApiKeyRecord[] | null>(live ? null : []);
+  const loadApiKeysCmd = useCallback(async () => {
+    if (live) setApiKeys(await loadApiKeys(siteId));
+  }, [live, siteId]);
+  const apiCtx = () => ({ actor, now: new Date().toISOString(), newId, timeZone: ds.site.timeZone, calendar: ds.calendar });
+  const createApiKeyCmd = useCallback(async (input: ApiKeyInput) => {
+    // In the demo the browser makes the key; live, the database makes it and keeps only its hash.
+    const bytes = crypto.getRandomValues(new Uint8Array(32));
+    const demoKey = apiKeyFromHex(Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join(''));
+    const r = createApiKey(apiCtx(), ds.site.id, input, demoKey);
+    if (!r.ok) return r;
+    try {
+      if (live) {
+        const key = await createApiKeyRemote(siteId, input);
+        await loadApiKeysCmd();
+        return { ok: true as const, key };
+      }
+    } catch (e) {
+      return { ok: false as const, errors: [e instanceof Error ? e.message : String(e)] };
+    }
+    setApiKeys((prev) => [r.records[0]!, ...(prev ?? [])]);
+    setAudit((prev) => [...r.audit, ...prev]);
+    return { ok: true as const, key: demoKey };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [actor, ds, live, siteId, loadApiKeysCmd]);
+  const revokeApiKeyCmd = useCallback(async (id: string, reason: string): Promise<ConsoleResult<ApiKeyRecord>> => {
+    const r = revokeApiKey(apiCtx(), apiKeys ?? [], id, reason);
+    if (!r.ok) return r;
+    try {
+      if (live) {
+        await revokeApiKeyRemote(id, reason.trim());
+        await loadApiKeysCmd();
+        return r;
+      }
+    } catch (e) {
+      return { ok: false, errors: [e instanceof Error ? e.message : String(e)] };
+    }
+    setApiKeys((prev) => (prev ?? []).map((k) => (k.id === id ? r.records[0]! : k)));
+    setAudit((prev) => [...r.audit, ...prev]);
+    return r;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [actor, ds, live, apiKeys, loadApiKeysCmd]);
+  const value: AppState = { apiKeys, loadApiKeys: loadApiKeysCmd, createApiKey: createApiKeyCmd, revokeApiKey: revokeApiKeyCmd, importSource, importMapping, runImportSource, sites, switchSite: (id: string) => onSwitchSite?.(id), snapshot, addSite: addSiteCmd, retireSite: retireSiteCmd, ds, forms, runForms, inspections, drafts, saveDraft, discardDraft, runInspection, outbox, sendOutbox: () => void sendOutbox(true), dropOutboxItem, photo, workSettings, runWorkSettings, alertSettings, runAlertSettings, alertAnswers, runAlertAnswer, analyses, runAnalysis, views, runView, components, componentEvents, lifeTargets, runComponents, oilSamples, cmResponses, conditionSettings, runSamples, runResponse, runConditionSettings, rcmModes, jobPlanVersions, rcmSettings, runRcm, runJobPlan, runRcmSettings, sparesSettings, runSparesSettings, assistSettings, runAssistSettings, suggester, plant, plantSettings, runPlantSettings, runDelay, runClassify, addSignals, runNode, runShutdown, runShutdownFlow, rounds, roundDrafts, beginRound, saveRoundDraft, discardRound, runRound, ruleAlerts: ruleAlertList, requests, runRequest, decide, actions: improve.actions, rcas: improve.rcas, projects: improve.projects, runImprove, people, userName, targets, targetOf, targetList, users, codes, runConsole, mode: live ? 'live' : 'demo', syncError, clearSyncError: () => setSyncError(null), signOut: onSignOut, importRuns, applyImport, newId, flags, audit, rules, now, actor, setRole, run, lastSync: ds.generatedAt, theme, setTheme };
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
 

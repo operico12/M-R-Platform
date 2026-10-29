@@ -48,8 +48,9 @@ import { useMemo, useState } from 'react';
 import { FlagSheet } from '../components/FlagSheet';
 import { fmtHours, fmtNum, fmtPct, fromLocalInput, hoursSince, siteTime, stageLabel, toLocalInput } from '../format';
 import { useApp } from '../store';
+import { RoundsTab, ShutdownsTab, StructureTab } from './PlantWork';
 
-const TABS = [['overview', 'Overview'], ['delays', 'Process delays'], ['kpis', 'Plant KPIs'], ['historian', 'Historian file'], ['settings', 'Settings']] as const;
+const TABS = [['overview', 'Overview'], ['shutdowns', 'Shutdowns'], ['rounds', 'Rounds'], ['delays', 'Process delays'], ['kpis', 'Plant KPIs'], ['historian', 'Historian file'], ['structure', 'Structure'], ['settings', 'Settings']] as const;
 type Tab = (typeof TABS)[number][0];
 const W = wordsFor('fixed_plant');
 const ICON: Record<PlantState, string> = { run: '●', idle: '○', delay: '◆', down: '■' };
@@ -61,12 +62,16 @@ export function Plant({ query }: { query: string }) {
   const tab = (TABS.find(([k]) => k === q.get('tab'))?.[0] ?? 'overview') as Tab;
   const p = app.plant;
   const tree = useMemo(() => plantTree(p.nodes, p.equipment), [p.nodes, p.equipment]);
-  const [open, setOpen] = useState<Asset | null>(null);
-  if (!p.nodes.length) {
+  const [picked, setOpen] = useState<Asset | null>(null);
+  // A link such as #/plant?eq=<id> (from an inspection) opens that equipment's flag sheet.
+  const eq = q.get('eq');
+  const open = picked ?? (eq ? p.equipment.find((a) => a.id === eq) ?? null : null);
+  const close = () => { setOpen(null); if (eq) window.location.hash = '#/plant'; };
+  if (!p.nodes.filter((n) => !n.retiredAt).length && tab !== 'structure') {
     return (
       <div className="stack">
         <div className="page-head"><h2>Plant overview</h2></div>
-        <p className="card">No plant structure at this site yet. Plant structure (plants, circuits and redundancy groups) is set up by an admin; the editor comes with the next part of fixed plant. The demo shows a synthetic concentrator.</p>
+        <p className="card">No plant structure at this site yet. An admin sets up plants, areas, circuits and redundancy groups on the <a href="#/plant?tab=structure">Structure</a> tab. The demo shows a synthetic concentrator.</p>
       </div>
     );
   }
@@ -80,11 +85,14 @@ export function Plant({ query }: { query: string }) {
         {TABS.map(([k, l]) => <a key={k} role="tab" className="chip" aria-pressed={tab === k} aria-selected={tab === k} href={`#/plant?tab=${k}`} style={{ minHeight: 40, display: 'inline-flex', alignItems: 'center', textDecoration: 'none' }}>{l}</a>)}
       </div>
       {tab === 'overview' && <Overview tree={tree} onOpen={setOpen} />}
+      {tab === 'shutdowns' && <ShutdownsTab tree={tree} />}
+      {tab === 'rounds' && <RoundsTab key={`${q.get('route') ?? ''}${q.get('round') ?? ''}`} tree={tree} routeId={q.get('route') ?? undefined} roundId={q.get('round') ?? undefined} />}
+      {tab === 'structure' && <StructureTab tree={tree} />}
       {tab === 'delays' && <DelaysTab tree={tree} />}
       {tab === 'kpis' && <KpisTab tree={tree} />}
       {tab === 'historian' && <HistorianTab tree={tree} />}
       {tab === 'settings' && <SettingsTab />}
-      {open && <FlagSheet asset={open} onClose={() => setOpen(null)} />}
+      {open && <FlagSheet asset={open} onClose={close} />}
     </div>
   );
 }
@@ -574,6 +582,7 @@ function SettingsTab() {
       <div className="row" style={{ gap: 12, flexWrap: 'wrap' }}>
         <label className="field"><span>Shortest stop (minutes)</span><input type="number" min={0} max={60} value={s.minStopMinutes} disabled={!ok} onChange={(e) => setS({ ...s, minStopMinutes: Number(e.target.value) })} /></label>
         <label className="field"><span>Duty change gap (minutes)</span><input type="number" min={0} max={60} value={s.changeoverMinutes} disabled={!ok} onChange={(e) => setS({ ...s, changeoverMinutes: Number(e.target.value) })} /></label>
+        <label className="field"><span>Shutdown scope freeze (days before start)</span><input type="number" min={0} max={90} value={s.scopeFreezeDays} disabled={!ok} onChange={(e) => setS({ ...s, scopeFreezeDays: Number(e.target.value) })} /></label>
         <label className="field"><span>Stops the standby covered</span>
           <select value={s.coveredStops} disabled={!ok} onChange={(e) => setS({ ...s, coveredStops: e.target.value as PlantSettings['coveredStops'] })}>
             <option value="propose">Propose them (a duty trip is never missed)</option>
@@ -608,7 +617,7 @@ function SettingsTab() {
         </div>
       )}
       {msg.length > 0 && <div className={msg[0] === 'Saved.' ? 'small' : 'errors'} role="status">{msg.map((m) => <div key={m}>{m}</div>)}</div>}
-      <p className="small muted">Codes are retired, never removed, so old delays keep their code. Plant structure (plants, circuits, groups and the units needed) is set by an admin; its editor comes with the next part.</p>
+      <p className="small muted">Codes are retired, never removed, so old delays keep their code. Plant structure is on the Structure tab (admin).</p>
     </section>
   );
 }

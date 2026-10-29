@@ -86,8 +86,11 @@ do $$ declare d jsonb := app_load_improve('10000000-0000-0000-0000-000000000002'
   if d->'rcas'->0->'whys'->>1 <> 'Rubbed on frame' or d->'rcas'->0->'fishbone'->'method'->>0 <> 'No clamp check' then raise exception 'rca wrong: %', d->'rcas'; end if;
 end $$;
 
--- Nothing is deleted: no delete policy for app users, and a trigger for everyone else.
-delete from improvement_actions;
+-- Nothing is deleted: app users have no delete right, and a trigger stops everyone else.
+do $$ begin
+  delete from improvement_actions;
+  if found then raise exception 'an app user deleted an action'; end if;
+exception when insufficient_privilege then null; end $$;
 reset role;
 do $$ begin
   delete from improvement_actions;

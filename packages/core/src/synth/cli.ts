@@ -1,8 +1,9 @@
 // pnpm synth [out.json] [--units 40] [--days 120] [--seed 42] [--csv folder]
-// --csv also writes assets.csv, workorders.csv and meterreadings.csv in Maximo layout.
+// --csv also writes assets.csv, workorders.csv and meterreadings.csv in Maximo layout; add --sap for SAP PM
+// layout (docs/field-mapping.md).
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { toSourceCsv } from '../imports.js';
+import { SAP_PM_DEFAULT_MAPPING, toSourceCsv } from '../imports.js';
 import { generateFleet } from './generate.js';
 
 const args = process.argv.slice(2);
@@ -18,9 +19,10 @@ const csvAt = args.indexOf('--csv');
 if (csvAt >= 0) {
   const dir = args[csvAt + 1] ?? 'synthetic-csv';
   mkdirSync(dir, { recursive: true });
-  const f = toSourceCsv(ds, ds.site.timeZone);
+  const sap = args.includes('--sap');
+  const f = toSourceCsv(ds, ds.site.timeZone, sap ? SAP_PM_DEFAULT_MAPPING : undefined);
   writeFileSync(join(dir, 'assets.csv'), f.assets);
   writeFileSync(join(dir, 'workorders.csv'), f.workOrders);
   writeFileSync(join(dir, 'meterreadings.csv'), f.smu);
-  console.log(`Wrote Maximo-style CSV files to ${dir}`);
+  console.log(`Wrote ${sap ? 'SAP PM' : 'Maximo'}-style CSV files to ${dir}`);
 }

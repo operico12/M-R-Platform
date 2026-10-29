@@ -11,8 +11,11 @@ import Anthropic from 'npm:@anthropic-ai/sdk@0.136.0';
 import { createClient } from 'npm:@supabase/supabase-js@2.45.4';
 import { ANSWER_SCHEMA, MODEL, SYSTEM, allowedRecords, badRequest, checkLines, parseAnswer, userTurn, type AskRequest } from './logic.ts';
 
+// Set the Supabase secret ALLOWED_ORIGIN to the app's address (for example https://m-r-platform.vercel.app)
+// so other web pages cannot call this from a signed-in browser. Without it any origin is allowed.
 const CORS = {
-  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Origin': Deno.env.get('ALLOWED_ORIGIN') || '*',
+  'Vary': 'Origin',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
 };

@@ -79,6 +79,8 @@ a { color: var(--brand); }
 .nav label { font-size: 12px; opacity: 0.85; display: grid; gap: 4px; margin-top: var(--s2); }
 .nav select { background: rgba(255, 255, 255, 0.12); border: 1px solid rgba(255, 255, 255, 0.3); border-radius: 6px; padding: 6px; color: inherit; }
 .nav select option { color: #000; }
+.nav .site-switch { margin: 0 0 var(--s3); opacity: 1; }
+.nav .site-switch select { font-weight: 600; font-size: 13px; min-height: 36px; }
 main { padding: var(--s4); min-width: 0; }
 .page-head { display: flex; align-items: baseline; gap: var(--s3); flex-wrap: wrap; margin-bottom: var(--s3); }
 .page-head h2 { margin: 0; font-size: 22px; }

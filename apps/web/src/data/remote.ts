@@ -3,7 +3,7 @@
 // The anon key is public by design: row-level security decides what each
 // signed-in person can read and write. Never put the service_role key here.
 
-import { DEFAULT_FLAG_RULES, DEFAULT_WORK_SETTINGS, withAlertDefaults, type ApprovalRequest, type AuditRecord, type AlertAnswer, type AlertSettings, emptyFishbone, type WorkSettings, type ImprovementAction, type Project, type Rca, type AuditEntry, type Dataset, type DownFlag, type FlagRulesConfig, type ReasonCode, type Role, type ShiftCalendar, type SiteUser, type SmuReading, type Target, type WorkOrder, type Asset, type Inspection, type InspectionForm, type SavedAnalysis, type SavedView, type Component, type ComponentEvent, type LifeTarget, type OilSample, type CmResponse, type ConditionSettings, withConditionDefaults, type RcmMode, type JobPlanVersion, type RcmSettings, withRcmDefaults, type SparesSettings, withSparesDefaults, type AssistSettings, withAssistDefaults, type PlantNode, type ProcessDelay, type RunSignal, type PlantSettings, withPlantDefaults } from '@mr/core';
+import { DEFAULT_FLAG_RULES, DEFAULT_WORK_SETTINGS, withAlertDefaults, type ApprovalRequest, type AuditRecord, type AlertAnswer, type AlertSettings, emptyFishbone, type WorkSettings, type ImprovementAction, type Project, type Rca, type AuditEntry, type Dataset, type DownFlag, type FlagRulesConfig, type ReasonCode, type Role, type ShiftCalendar, type SiteUser, type SmuReading, type Target, type WorkOrder, type Asset, type Inspection, type InspectionForm, type SavedAnalysis, type SavedView, type Component, type ComponentEvent, type LifeTarget, type OilSample, type CmResponse, type ConditionSettings, withConditionDefaults, type RcmMode, type JobPlanVersion, type RcmSettings, withRcmDefaults, type SparesSettings, withSparesDefaults, type AssistSettings, withAssistDefaults, type PlantNode, type ProcessDelay, type RunSignal, type PlantSettings, withPlantDefaults, type Shutdown, type ScopeItem, type Round, type SiteSnapshot, type SiteRecord, twelveHourCalendar, type ImportSource, withImportDefaults, type ApiKeyRecord, type ApiKeyInput, type ApiScope } from '@mr/core';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 
 const url = import.meta.env.VITE_SUPABASE_URL as string | undefined;
@@ -16,6 +16,8 @@ export interface RemoteSite {
   site_name: string;
   time_zone: string;
   role: Role;
+  /** From the multi-site migration; older databases leave it out. */
+  tenant_id?: string;
 }
 
 export interface Loaded {
@@ -35,6 +37,8 @@ export interface Loaded {
   requests: ApprovalRequest[];
   forms: InspectionForm[];
   inspections: Inspection[];
+  /** Plant rounds (docs/fixed-plant.md): one inspection per stop done. */
+  rounds: Round[];
   analyses: SavedAnalysis[];
   views: SavedView[];
   conditionSettings: ConditionSettings;
@@ -44,6 +48,8 @@ export interface Loaded {
   /** Fixed plant (docs/fixed-plant.md): equipment and their flags are split out of ds by asset class. */
   plant: PlantData;
   plantSettings: PlantSettings;
+  /** Which ERP the site's files come from (docs/field-mapping.md). */
+  importSource: ImportSource;
 }
 
 export interface PlantData {
@@ -52,6 +58,10 @@ export interface PlantData {
   flags: DownFlag[];
   delays: ProcessDelay[];
   signals: RunSignal[];
+  /** Part 2. */
+  shutdowns: Shutdown[];
+  /** Extra work orders for the plant demo; live work orders are all in ds.workOrders. */
+  workOrders: WorkOrder[];
 }
 
 /** Postgres returns "+00:00" offsets; the app compares ISO strings, so make them all "Z". */
@@ -87,9 +97,62 @@ export async function mySites(): Promise<RemoteSite[]> {
   return must(await remote.rpc('app_my_sites')) as RemoteSite[];
 }
 
+/** A new site of the tenant of `fromSite` (docs/multi-site.md). The adder becomes its Admin. */
+export async function addSiteRemote(fromSite: string, s: SiteRecord): Promise<void> {
+  const cal = twelveHourCalendar(s.timeZone);
+  must(await remote!.rpc('app_add_site', { p_from: fromSite, s, p_calendar: { shifts: cal.shifts, rotation: cal.rotation }, p_rules: DEFAULT_FLAG_RULES }));
+}
+
+export async function retireSiteRemote(siteId: string, reason: string): Promise<void> {
+  must(await remote!.rpc('app_retire_site', { p_site: siteId, p_reason: reason }));
+}
+
+// ---------- public API keys (docs/public-api.md) ----------
+
+/** The site's keys with their use. Row-level security shows them to the site's Admin only. */
+export async function loadApiKeys(siteId: string): Promise<ApiKeyRecord[]> {
+  const rows = must(await remote!.rpc('app_api_keys', { p_site: siteId })) as Array<{
+    id: string; name: string; prefix: string; scopes: ApiScope[]; expires_at: string; created_at: string; created_by: string | null;
+    revoked_at: string | null; revoked_by: string | null; revoke_reason: string | null; last_used_at: string | null; calls_24h: number;
+  }>;
+  const t = (x: string | null) => (x ? new Date(x).toISOString() : undefined);
+  return rows.map((r) => ({
+    id: r.id, siteId, name: r.name, prefix: r.prefix, scopes: r.scopes, expiresAt: t(r.expires_at)!, createdAt: t(r.created_at)!, createdBy: r.created_by ?? '',
+    revokedAt: t(r.revoked_at), revokedBy: r.revoked_by ?? undefined, revokeReason: r.revoke_reason ?? undefined, lastUsedAt: t(r.last_used_at), calls24h: Number(r.calls_24h),
+  }));
+}
+
+/** The database makes the key and returns it this once. */
+export async function createApiKeyRemote(siteId: string, input: ApiKeyInput): Promise<string> {
+  const r = must(await remote!.rpc('app_create_api_key', { p_site: siteId, p_name: input.name.trim(), p_scopes: input.scopes, p_days: input.days ?? 365 })) as { key: string };
+  return r.key;
+}
+
+export async function revokeApiKeyRemote(id: string, reason: string): Promise<void> {
+  must(await remote!.rpc('app_revoke_api_key', { p_id: id, p_reason: reason }));
+}
+
+/** The REST address other systems call (docs/public-api.md). The anon key is public; never the service key. */
+export const apiEndpoint = (url || 'https://<project>.supabase.co').replace(/\/$/, '') + '/rest/v1/rpc/api_v1';
+
+/** What the Sites page needs from one site: units, flags, SMU and rules for the last few weeks. */
+export async function loadSnapshot(siteId: string, since: string): Promise<SiteSnapshot> {
+  const d = iso(must(await remote!.rpc('app_load', { p_site: siteId, p_since: since }))) as {
+    site: { id: string; tenantId: string; name: string; timeZone: string };
+    rules: Partial<FlagRulesConfig> | null; assets: Asset[]; lifecycle: Dataset['lifecycle']; flags: DownFlag[]; smu: SmuReading[];
+  };
+  return {
+    site: d.site,
+    assets: d.assets, lifecycle: d.lifecycle,
+    flags: d.flags.map((f) => ({ ...f, stages: f.stages ?? [], locations: f.locations ?? [], etas: f.etas ?? [], workOrders: f.workOrders ?? [], source: f.source ?? 'app', setBy: f.setBy ?? '', enteredAt: f.enteredAt ?? f.start })),
+    smu: d.smu.map((r) => ({ ...r, hours: Number(r.hours) })),
+    rules: { ...DEFAULT_FLAG_RULES, ...(d.rules ?? {}) },
+  };
+}
+
 export async function loadSite(siteId: string): Promise<Loaded> {
   const since = new Date(Date.now() - 730 * 864e5).toISOString();
-  const [main, imp, proj, wk, ans, appr, anl, vw, cmp, cond, rcmr, plnt] = await Promise.all([
+  const [main, imp, proj, wk, ans, appr, anl, vw, cmp, cond, rcmr, plnt, sds] = await Promise.all([
     remote!.rpc('app_load', { p_site: siteId }), remote!.rpc('app_load_improve', { p_site: siteId }), remote!.rpc('app_load_projects', { p_site: siteId }),
     remote!.rpc('app_load_work', { p_site: siteId }),
     remote!.rpc('app_load_alert_answers', { p_site: siteId }),
@@ -100,9 +163,10 @@ export async function loadSite(siteId: string): Promise<Loaded> {
     remote!.rpc('app_load_condition', { p_site: siteId, p_since: since }),
     remote!.rpc('app_load_rcm', { p_site: siteId }),
     remote!.rpc('app_load_plant', { p_site: siteId, p_since: new Date(Date.now() - 400 * 864e5).toISOString() }),
+    remote!.rpc('app_load_shutdowns', { p_site: siteId }),
   ]);
   const insp = await loadInspections(siteId);
-  const work = iso(must(wk)) as { plans: Array<Partial<WorkOrder> & { id: string }>; settings: { work?: Partial<WorkSettings>; alerts?: Partial<AlertSettings>; condition?: Partial<ConditionSettings>; rcm?: Partial<RcmSettings>; spares?: Partial<SparesSettings>; assist?: Partial<AssistSettings>; plant?: Partial<PlantSettings> } };
+  const work = iso(must(wk)) as { plans: Array<Partial<WorkOrder> & { id: string }>; settings: { work?: Partial<WorkSettings>; alerts?: Partial<AlertSettings>; condition?: Partial<ConditionSettings>; rcm?: Partial<RcmSettings>; spares?: Partial<SparesSettings>; assist?: Partial<AssistSettings>; plant?: Partial<PlantSettings>; imports?: Partial<ImportSource> } };
   const plans = new Map(work.plans.map((x) => [x.id, x]));
   const num = (v: unknown) => (v === undefined || v === null ? undefined : Number(v));
   const projects = (iso(must(proj)) as Project[]).map((p) => ({
@@ -172,12 +236,16 @@ export async function loadSite(siteId: string): Promise<Loaded> {
       flags: allFlags.filter((f) => plantIds.has(f.unitId)),
       delays: pl.delays,
       signals: pl.signals,
+      shutdowns: (iso(optional(sds, [], 'Shutdowns')) as Shutdown[]).map((x) => ({ ...x, equipmentIds: x.equipmentIds ?? [], flagIds: x.flagIds ?? [], scope: x.scope ?? [] })),
+      workOrders: [],
     },
     plantSettings: withPlantDefaults(work.settings.plant),
+    importSource: withImportDefaults(work.settings.imports),
     alertAnswers: iso(must(ans)) as AlertAnswer[],
     requests: approvals.requests,
     forms: insp.forms,
     inspections: insp.inspections,
+    rounds: insp.rounds,
     analyses: iso(optional(anl, [], 'Saved analyses')) as SavedAnalysis[],
     views: iso(optional(vw, [], 'Saved views')) as SavedView[],
     rcas: improve.rcas.map((r) => ({ ...r, fishbone: { ...emptyFishbone(), ...(r.fishbone as Partial<Rca['fishbone']>) } })),
@@ -208,7 +276,7 @@ export async function saveTaskStatus(siteId: string, projectId: string, taskId: 
   must(await remote!.rpc('app_set_task_status', { p_site: siteId, p_project: projectId, p_task: taskId, p_status: status, p_note: note ?? null }));
 }
 
-export async function saveSetting(siteId: string, key: 'work' | 'alerts' | 'condition' | 'rcm' | 'spares' | 'assist' | 'plant', value: object, reason: string, audit: AuditEntry[]): Promise<void> {
+export async function saveSetting(siteId: string, key: 'work' | 'alerts' | 'condition' | 'rcm' | 'spares' | 'assist' | 'plant' | 'imports', value: object, reason: string, audit: AuditEntry[]): Promise<void> {
   must(await remote!.rpc('app_save_setting', { p_site: siteId, p_key: key, p_value: value, p_reason: reason }));
   if (audit.length) must(await remote!.rpc('app_log', { p_site: siteId, p_entries: audit }));
 }
@@ -268,6 +336,19 @@ export async function saveProcessDelays(siteId: string, delays: ProcessDelay[], 
   if (audit.length) must(await remote!.rpc('app_log', { p_site: siteId, p_entries: audit }));
 }
 
+/** Plant structure nodes: new, changed or retired. The admin only (row-level security). */
+export async function savePlantNodes(siteId: string, nodes: PlantNode[], audit: AuditEntry[]): Promise<void> {
+  for (const n of nodes) must(await remote!.rpc('app_save_plant_node', { p_site: siteId, n }));
+  if (audit.length) must(await remote!.rpc('app_log', { p_site: siteId, p_entries: audit }));
+}
+
+/** A shutdown step, and the scope rows it added or took out. The guard allows only the steps in order. */
+export async function saveShutdown(siteId: string, s: Shutdown, scope: ScopeItem[], audit: AuditEntry[]): Promise<void> {
+  must(await remote!.rpc('app_save_shutdown', { p_site: siteId, s }));
+  if (scope.length) must(await remote!.rpc('app_save_shutdown_scope', { p_site: siteId, p_shutdown: s.id, rows: scope }));
+  if (audit.length) must(await remote!.rpc('app_log', { p_site: siteId, p_entries: audit }));
+}
+
 /** Historian run and stop signals from a file. A signal already loaded is skipped. */
 export async function saveRunSignals(siteId: string, rows: RunSignal[], audit: AuditEntry[]): Promise<void> {
   for (let i = 0; i < rows.length; i += 1000) must(await remote!.rpc('app_save_run_signals', { p_site: siteId, rows: rows.slice(i, i + 1000) }));
@@ -292,10 +373,11 @@ export async function saveDecision(siteId: string, id: string, decision: 'approv
 }
 
 /** Forms, and inspections from the last 180 days plus older ones with open defects. */
-async function loadInspections(siteId: string): Promise<{ forms: InspectionForm[]; inspections: Inspection[] }> {
+async function loadInspections(siteId: string): Promise<{ forms: InspectionForm[]; inspections: Inspection[]; rounds: Round[] }> {
   const since = new Date(Date.now() - 180 * 864e5).toISOString();
-  const d = iso(must(await remote!.rpc('app_load_inspections', { p_site: siteId, p_since: since }))) as { forms: InspectionForm[]; inspections: Inspection[] };
+  const d = iso(must(await remote!.rpc('app_load_inspections', { p_site: siteId, p_since: since }))) as { forms: InspectionForm[]; inspections: Inspection[]; rounds?: Round[] };
   return {
+    rounds: (d.rounds ?? []).map((r) => ({ ...r, skipped: r.skipped ?? [] })),
     forms: d.forms.map((f) => ({ ...f, models: f.models ?? [] })),
     inspections: d.inspections.map((i) => ({ ...i, smu: i.smu === undefined ? undefined : Number(i.smu), score: i.score === undefined || i.score === null ? null : Number(i.score), defects: i.defects ?? [] })),
   };
@@ -320,6 +402,12 @@ function sent(r: { error: { message: string; code?: string } | null }): void {
 /** A submitted inspection, or a later step on it. The database sets who and when. */
 export async function sendInspection(siteId: string, i: Inspection, audit: AuditEntry[]): Promise<void> {
   sent(await remote!.rpc('app_save_inspection', { p_site: siteId, i }));
+  if (audit.length) sent(await remote!.rpc('app_log', { p_site: siteId, p_entries: audit }));
+}
+
+/** A submitted round with its stop inspections, or the void of a round. The database sets who and when. */
+export async function sendRound(siteId: string, r: Round, inspections: Inspection[], audit: AuditEntry[]): Promise<void> {
+  sent(await remote!.rpc('app_save_round', { p_site: siteId, r, p_inspections: inspections }));
   if (audit.length) sent(await remote!.rpc('app_log', { p_site: siteId, p_entries: audit }));
 }
 

@@ -19,6 +19,13 @@ const TABS: Array<[string, string]> = [['due', 'Due'], ['done', 'Inspections'], 
 const DUE_LABELS: Record<DueRow['state'], string> = { overdue: 'Overdue', due_soon: 'Due soon', never: 'Never done', ok: 'Up to date' };
 const STATUS_LABELS: Record<Inspection['status'], string> = { draft: 'Draft', submitted: 'Waiting for sign-off', signed_off: 'Signed off', voided: 'Voided' };
 const go = (h: string) => { window.location.hash = h; };
+/** Trucks and plant equipment (plant equipment lives apart from the fleet, docs/fixed-plant.md). */
+function useAsset() {
+  const app = useApp();
+  return (id: string) => app.ds.assets.find((a) => a.id === id) ?? app.plant.equipment.find((a) => a.id === id);
+}
+/** Where to open a unit or a piece of plant equipment. */
+export const assetHref = (a: { id: string; assetClass: string }) => (a.assetClass === 'fixed_plant' ? `#/plant?eq=${a.id}` : `#/unit/${a.id}`);
 
 function Tag({ tone, children }: { tone?: 'bad' | 'warn' | 'good'; children: React.ReactNode }) {
   const bg = tone === 'bad' ? 'var(--down)' : tone === 'warn' ? 'var(--warn-bg)' : 'var(--surface-2)';
@@ -81,6 +88,7 @@ function OutboxBox() {
 // ---------- due ----------
 
 function DueTab() {
+  const asset = useAsset();
   const app = useApp();
   const tz = app.ds.site.timeZone;
   const rows = useMemo(() => dueList(app.forms, app.ds.assets, app.inspections, app.ds.smu, app.now, tz), [app.forms, app.ds, app.inspections, app.now, tz]);
@@ -103,7 +111,7 @@ function DueTab() {
           <h3 style={{ marginTop: 0 }}>Your drafts on this device ({app.drafts.length})</h3>
           <ul style={{ margin: 0, paddingLeft: 18 }}>
             {app.drafts.map((d) => (
-              <li key={d.id}><a href={`#/inspections/do/${d.id}`}>{formVersion(app.forms, d.formId, d.formVersion)?.name ?? 'Form'}, {app.ds.assets.find((a) => a.id === d.unitId)?.unitNumber}</a>
+              <li key={d.id}><a href={d.roundId ? '#/plant?tab=rounds' : `#/inspections/do/${d.id}`}>{formVersion(app.forms, d.formId, d.formVersion)?.name ?? 'Form'}, {asset(d.unitId)?.unitNumber}</a>
                 <span className="small muted"> started {siteTime(d.startedAt, tz, true)}, {Object.keys(d.answers).length} answered</span></li>
             ))}
           </ul>
@@ -145,7 +153,7 @@ function DueTab() {
 function AdHoc({ onStart }: { onStart: (f: InspectionForm, unitId: string) => void }) {
   const app = useApp();
   const [open, setOpen] = useState(false);
-  const active = latestForms(app.forms).filter((f) => !f.retiredAt);
+  const active = latestForms(app.forms).filter((f) => !f.retiredAt && !f.route);
   const [formId, setFormId] = useState('');
   const [unitId, setUnitId] = useState('');
   const form = active.find((f) => f.id === formId);
@@ -170,6 +178,7 @@ function AdHoc({ onStart }: { onStart: (f: InspectionForm, unitId: string) => vo
 // ---------- filling one in ----------
 
 function FillIn({ id }: { id: string }) {
+  const asset = useAsset();
   const app = useApp();
   const tz = app.ds.site.timeZone;
   const stored = app.drafts.find((d) => d.id === id);
@@ -183,7 +192,7 @@ function FillIn({ id }: { id: string }) {
     return <p className="muted">This draft is not on this device. Drafts stay on the device they were started on. <a href="#/inspections">Back to inspections</a></p>;
   }
   const form = formVersion(app.forms, draft.formId, draft.formVersion);
-  const unit = app.ds.assets.find((a) => a.id === draft.unitId);
+  const unit = asset(draft.unitId);
   if (!form || !unit) return <p className="muted">The form or unit for this draft is missing.</p>;
   const update = (next: Inspection) => { setDraft(next); setSaved(app.saveDraft(next) ? 'yes' : 'no'); setErrors(null); };
   const answer = (itemId: string, a: Partial<Answer>) => update({ ...draft, answers: { ...draft.answers, [itemId]: { value: null, ...draft.answers[itemId], ...a } } });
@@ -224,7 +233,7 @@ function FillIn({ id }: { id: string }) {
   );
 }
 
-function ItemInput({ it, n, a, onChange }: { it: FormItem; n: number; a?: Answer; onChange: (a: Partial<Answer>) => void }) {
+export function ItemInput({ it, n, a, onChange }: { it: FormItem; n: number; a?: Answer; onChange: (a: Partial<Answer>) => void }) {
   const failed = itemFailed(it, a);
   const [photoErr, setPhotoErr] = useState<string | null>(null);
   const choice = (value: Answer['value'], label: string) => (
@@ -246,6 +255,7 @@ function ItemInput({ it, n, a, onChange }: { it: FormItem; n: number; a?: Answer
     <div style={{ padding: '10px 0', borderTop: '1px solid var(--border)' }} aria-label={it.text}>
       <div style={{ fontWeight: 600, marginBottom: 6 }}>{n}. {it.text} {it.critical && <Tag tone="bad">Critical</Tag>} {failed && <Tag tone="warn">Fail</Tag>}</div>
       {it.kind === 'pass_fail' && <div className="chips">{choice('pass', 'Pass')}{choice('fail', 'Fail')}{!it.critical && choice(null, 'N/A')}</div>}
+      {it.kind === 'task' && <div className="chips">{choice('done', 'Done')}{choice('missed', 'Missed')}{!it.critical && choice(null, 'N/A')}</div>}
       {it.kind === 'rating' && <div className="chips">{[1, 2, 3, 4, 5].map((r) => <span key={r}>{choice(r, String(r))}</span>)}{!it.critical && choice(null, 'N/A')}<span className="small muted" style={{ alignSelf: 'center' }}>1 bad, 5 good</span></div>}
       {it.kind === 'reading' && (
         <div className="row">
@@ -308,13 +318,14 @@ function ExtraDefects({ draft, onChange }: { draft: Inspection; onChange: (i: In
 // ---------- one inspection ----------
 
 function View({ id }: { id: string }) {
+  const asset = useAsset();
   const app = useApp();
   const tz = app.ds.site.timeZone;
   const i = app.inspections.find((x) => x.id === id);
   const [errors, setErrors] = useState<string[] | null>(null);
   if (!i) return <p className="muted">Inspection not found. <a href="#/inspections/done">All inspections</a></p>;
   const form = formVersion(app.forms, i.formId, i.formVersion);
-  const unit = app.ds.assets.find((a) => a.id === i.unitId);
+  const unit = asset(i.unitId);
   const waiting = app.outbox.filter((o) => o.inspectionId === i.id && !o.refused).length;
   const warn = window.location.hash.includes('warn=1') && i.result === 'fail';
   const canSign = permission(app.actor.role, 'sign_off_inspections') === 'yes';
@@ -332,7 +343,7 @@ function View({ id }: { id: string }) {
         {waiting > 0 ? ' Waiting to send from this device.' : ''}
       </p>
       {warn && unit && <Warnings list={['A critical item failed. Check whether the unit should be flagged down.']} />}
-      {warn && unit && <p><a className="btn primary" style={{ display: 'inline-flex', alignItems: 'center', textDecoration: 'none' }} href={`#/unit/${unit.id}`}>Open {unit.unitNumber} to flag it down</a></p>}
+      {warn && unit && <p><a className="btn primary" style={{ display: 'inline-flex', alignItems: 'center', textDecoration: 'none' }} href={assetHref(unit)}>Open {unit.unitNumber} to flag it down</a></p>}
       {i.status === 'signed_off' && <p>Signed off by {app.userName(i.signedOffBy!)} {siteTime(i.signedOffAt!, tz, true)}{i.signOffNote ? `: ${i.signOffNote}` : ''}.</p>}
       {i.status === 'voided' && <div className="warns">Voided by {app.userName(i.voidedBy!)} {siteTime(i.voidedAt!, tz, true)}: {i.voidReason}</div>}
 
@@ -373,19 +384,20 @@ function View({ id }: { id: string }) {
 }
 
 function DefectRow({ i, d, showUnit }: { i: Inspection; d: Defect; showUnit?: boolean }) {
+  const asset = useAsset();
   const app = useApp();
   const tz = app.ds.site.timeZone;
   const [mode, setMode] = useState<DefectStatus | null>(null);
   const [value, setValue] = useState('');
   const [errors, setErrors] = useState<string[] | null>(null);
   const canFollow = can(app.actor, 'add_notes') && (i.status === 'submitted' || i.status === 'signed_off');
-  const unit = app.ds.assets.find((a) => a.id === i.unitId);
+  const unit = asset(i.unitId);
   const openActions = app.actions.filter((x) => x.status === 'open' || x.status === 'in_progress');
   const save = (status: DefectStatus) => {
     const r = app.runInspection((ctx) => updateDefect(ctx, app.inspections, i.id, d.id, { status, actionId: status === 'action' ? value : undefined, workOrder: status === 'work_order' ? value : undefined, closeNote: status === 'closed' ? value : undefined }));
     if (!r.ok) return setErrors(r.errors);
     setMode(null); setValue(''); setErrors(null);
-    if (status === 'flagged_down' && unit) go(`#/unit/${unit.id}`);
+    if (status === 'flagged_down' && unit) go(assetHref(unit));
   };
   return (
     <div style={{ borderTop: '1px solid var(--border)', paddingTop: 8 }}>
@@ -428,6 +440,7 @@ function DefectRow({ i, d, showUnit }: { i: Inspection; d: Defect; showUnit?: bo
 // ---------- lists ----------
 
 function DoneTab() {
+  const asset = useAsset();
   const app = useApp();
   const tz = app.ds.site.timeZone;
   const [filter, setFilter] = useState<'all' | 'sign' | 'fail'>('all');
@@ -447,7 +460,7 @@ function DoneTab() {
           <tbody>{shown.map((i) => (
             <tr key={i.id}>
               <td><a href={`#/inspections/view/${i.id}`}>{siteTime(i.submittedAt!, tz, true)}</a></td>
-              <td>{app.ds.assets.find((a) => a.id === i.unitId)?.unitNumber}</td>
+              <td>{asset(i.unitId)?.unitNumber}</td>
               <td>{formVersion(app.forms, i.formId, i.formVersion)?.name}</td>
               <td>{i.result && <Tag tone={resultTone(i.result)}>{RESULT_LABELS[i.result]}</Tag>}</td>
               <td>{i.score === null || i.score === undefined ? '—' : fmtPct(i.score, 0)}</td>
@@ -496,13 +509,13 @@ function FormsTab() {
           <tbody>{latest.map((f) => (
             <tr key={f.id}>
               <td>{f.name}{f.retiredAt ? <div className="small muted">Retired {siteTime(f.retiredAt, tz, true)}: {f.retiredReason}</div> : null}</td>
-              <td className="small">{f.assetClass === 'mobile' ? 'Mobile' : 'Fixed plant'}{f.models.length ? `, ${f.models.join(', ')}` : ', all models'}</td>
-              <td>{f.every.n} {f.every.unit === 'days' ? (f.every.n === 1 ? 'day' : 'days') : 'SMU hours'}</td>
+              <td className="small">{f.route ? <>Plant route, {f.route.stops.length} stops</> : <>{f.assetClass === 'mobile' ? 'Mobile' : 'Fixed plant'}{f.models.length ? `, ${f.models.join(', ')}` : ', all models'}</>}</td>
+              <td>{f.every.n} {f.every.unit === 'days' ? (f.every.n === 1 ? 'day' : 'days') : f.every.unit === 'shifts' ? (f.every.n === 1 ? 'shift' : 'shifts') : 'SMU hours'}</td>
               <td>{f.items.length}{f.items.some((i) => i.critical) ? `, ${f.items.filter((i) => i.critical).length} critical` : ''}</td>
               <td className="small">v{f.version} by {app.userName(f.createdBy)}, {siteTime(f.createdAt, tz, true)}: {f.reason}</td>
               <td>{canEdit && !f.retiredAt && (
                 <div className="row">
-                  <button className="btn" onClick={() => go(`#/inspections/form/${f.id}`)}>Change</button>
+                  <button className="btn" onClick={() => go(f.route ? `#/plant?tab=rounds&route=${f.id}` : `#/inspections/form/${f.id}`)}>Change</button>
                   <NoteButton label="Retire" danger prompt="Why retire this form?" onSubmit={(reason) => { const r = app.runForms((ctx) => retireForm(ctx, app.forms, f.id, reason)); setErrors(r.ok ? null : r.errors); return r.ok ? null : r.errors; }} />
                 </div>
               )}</td>
@@ -514,7 +527,7 @@ function FormsTab() {
   );
 }
 
-const KIND_LABELS: Record<ItemKind, string> = { pass_fail: 'Pass / fail', rating: 'Rating 1 to 5', reading: 'Reading', note: 'Note' };
+export const KIND_LABELS: Record<ItemKind, string> = { pass_fail: 'Pass / fail', rating: 'Rating 1 to 5', reading: 'Reading', note: 'Note', task: 'Task (done or missed)' };
 
 function FormEditor({ id }: { id: string }) {
   const app = useApp();
@@ -527,6 +540,7 @@ function FormEditor({ id }: { id: string }) {
   const [errors, setErrors] = useState<string[] | null>(null);
   if (!can(app.actor, 'edit_inspection_forms')) return <p className="muted">Your role cannot change inspection forms.</p>;
   if (id !== 'new' && !prev) return <p className="muted">Form not found.</p>;
+  if (prev?.route) return <p className="muted">This is a plant route. <a href={`#/plant?tab=rounds&route=${prev.id}`}>Change it on the Plant page.</a></p>;
   const setItem = (n: number, p: Partial<FormItem>) => setInput({ ...input, items: input.items.map((it, i) => (i === n ? { ...it, ...p } : it)) });
   const move = (n: number, d: -1 | 1) => { const items = [...input.items]; const [x] = items.splice(n, 1); items.splice(n + d, 0, x!); setInput({ ...input, items }); };
   const addItem = () => setInput({ ...input, items: [...input.items, { id: `i${Date.now().toString(36)}${input.items.length}`, section: input.items[input.items.length - 1]?.section ?? 'General', text: '', kind: 'pass_fail', critical: false, weight: 1, photoOnFail: false }] });

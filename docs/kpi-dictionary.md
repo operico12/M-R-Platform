@@ -76,11 +76,19 @@ in place of SMU. Process delays and idle installed spares never count as mainten
 | KPI-036 | Unplanned trips per week | unscheduled down events that start in the period ÷ (calendar h ÷ 168) | Per equipment, or summed over a node's equipment. Events as R7. Minor stops count; they are trips. |
 | KPI-037 | Throughput lost | Σ h the node is down or in process delay × the node's planned rate (t/h) | By cause: the system or reason of each flag, or the code of each delay, holding the node below k, shared equally at the same moment. Split into maintenance and process. Circuits are not summed into a plant total; the plant uses its own node. |
 | KPI-038 | Process delay hours | h the node is in process delay | Process delays do not reduce availability (A7 section 11). |
+| KPI-039 | Shutdown duration against plan | actual h ÷ planned h; overrun h = actual h − planned h | Planned h = planned end − planned start. Actual h = actual end − actual start (to now while it runs). Shown per shutdown; a shutdown counts in the period it ended. Late start (actual start − planned start) is shown beside it. |
+| KPI-040 | Shutdown scope completion | scope work orders closed in the ERP ÷ scope work orders | Scope = work orders in scope and not taken out, including work added. A number not in the import counts as not closed and is listed. |
+| KPI-041 | Work added after scope freeze | work orders added after the freeze ÷ work orders in scope at the freeze | Both counts leave out work orders taken out of scope. Empty when nothing was in scope at the freeze. |
+| KPI-042 | Route compliance | due periods with a round done ÷ due periods | Per route (operator round or lube route). A due period is N shifts or N site days, counted from the period start in the site shift calendar. A period counts as done when a submitted or signed-off round started in it. The period still running counts only once done. |
+| KPI-043 | Multi-site PA | Σ available h ÷ Σ calendar h over the sites shown | Sites page (docs/multi-site.md). Each site over its own last full reporting week (or four weeks) in its own time zone, with its own flag rules; mobile units only. Weights each site by its hours. |
 
 ## Worked examples encoded as tests
 
 - KPI-033 and KPI-034, duty and standby pumps (1 of 2), one week: duty pump down 6 h → duty 96.4%, circuit 100%, nothing lost; standby also down 2 h inside those 6 h → circuit 98.8%, 2 h × rate lost.
 - KPI-037 and KPI-038: conveyor stopped 3 h by a full stockpile at 1,000 t/h → availability 100%, process delay 3 h, 3,000 t lost against "Bins or stockpile full".
+- KPI-039 to KPI-041, a wet plant shutdown planned 06:00 to 18:00 (12 h), started 06:30 and ended 20:30 (14 h): 116.7% of plan, overrun 2 h, late start 30 min. Ten work orders in scope at the freeze, two added after it, one taken out: scope 11, work added 2 ÷ 9 = 22.2%; nine closed → completion 9 ÷ 11 = 81.8%.
+- KPI-042, a round every shift on 12-hour shifts over one week (14 shifts), done in 13 of them, one shift with two rounds: 13 ÷ 14 = 92.9%. A route every 2 shifts in the same week: 7 periods.
+- KPI-043, two sites over one week: site A 40 units, 6,720 calendar h, 5,712 available (PA 85.0%); site B 10 units, 1,680 calendar h, 1,512 available (PA 90.0%). Multi-site PA = 7,224 ÷ 8,400 = 86.0%, not the 87.5% average of the two.
 - KPI-032: four alerts ending in the week, two answered in time, one 10 h late, one not answered → 50%.
 - Plan 3.2, one 12-hour shift: PA 62.5%, utilisation 90.7%, standby 0.7 h, effective utilisation 56.7%.
 - Plan Appendix A: one truck, one week, 28 h down → PA 83.3%, unchanged by 10 h standby.

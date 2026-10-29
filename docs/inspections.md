@@ -12,12 +12,13 @@ retries"). Rules live in `packages/core/src/inspections.ts`; defaults below are 
   - **Rating 1 to 5**, where 1 is bad and 5 is good. A rating of 2 or less counts as a fail.
   - **Reading**: a number with lower and upper limits. Outside the limits counts as a fail.
   - **Note**: text only, not scored.
+  - **Task**: Done or Missed, for lube points and other routine jobs. Missed counts as a fail.
 - Any item can be marked **critical**, given a **weight** (default 1), and set to **need a photo when
   it fails**.
 - Every item allows N/A unless it is critical.
 - Forms are never edited in place. Saving a change makes a new version, so past inspections keep the
   questions they were answered against. Forms are retired, never deleted.
-- Recurrence is every N site days or every N SMU hours.
+- Recurrence is every N site days or every N SMU hours. Plant routes can also be due every N shifts.
 
 ## Score and result
 
@@ -27,6 +28,7 @@ retries"). Rules live in `packages/core/src/inspections.ts`; defaults below are 
   - Pass/fail: pass 1, fail 0.
   - Rating: (r − 1) ÷ 4.
   - Reading: within limits 1, outside 0.
+  - Task: done 1, missed 0.
 - **Result:**
   - **Fail**: any critical item failed.
   - **Defects found**: any other item failed.
@@ -79,3 +81,10 @@ The ERP stays the system of record (no write-back), so a defect is followed up i
 ## Who changes forms
 
 Reliability engineers, superintendents and the admin (data owner), with a reason.
+
+## Plant routes
+
+Operator rounds and lube routes for fixed plant are inspection forms with a route: a node, stops in
+walking order, and items that each belong to a stop. They are done from the Plant page, one round at a
+time, and make one inspection per stop done. Rules: `docs/fixed-plant.md`, "Operator rounds and lube
+routes". Route forms are not in the unit due list on this page.
