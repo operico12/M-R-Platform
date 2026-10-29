@@ -22,6 +22,7 @@ of design 3 (icon bar) and design 5 (pinned and search). Code: `packages/core/sr
   example "weibull" finds Calculators, "maximo" finds Data import). Ctrl + K still finds a
   calculator.
 - On a phone the icon bar is a row across the top and the pages are a row you swipe.
+- On a computer each group shows its icon on the left and its name on the right, so the bar fits a short laptop screen without a scroller.
 
 ## Groups
 

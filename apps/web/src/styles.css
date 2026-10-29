@@ -72,7 +72,7 @@ a { color: var(--brand); }
 /* Main menu (docs/menu.md): icon bar of groups + the chosen group's pages. */
 .menu { display: flex; background: var(--brand); color: var(--brand-ink); position: sticky; top: 0; height: 100vh; align-self: start; }
 :root[data-theme='dark'] .menu { background: #121a26; color: var(--text); }
-.menu-rail { width: 76px; flex-shrink: 0; display: flex; flex-direction: column; align-items: center; gap: 4px; padding: var(--s3) 0; background: rgba(0, 0, 0, 0.22); overflow-y: auto; }
+.menu-rail { width: var(--rail-w, 76px); flex-shrink: 0; display: flex; flex-direction: column; align-items: center; gap: 4px; padding: var(--s3) 0; background: rgba(0, 0, 0, 0.22); overflow-y: auto; overflow-x: hidden; }
 .menu-mark { width: 40px; height: 40px; border-radius: 10px; background: var(--brand-ink); color: var(--brand); font-weight: 700; font-size: 13px; display: flex; align-items: center; justify-content: center; margin-bottom: var(--s2); flex-shrink: 0; }
 :root[data-theme='dark'] .menu-mark { background: var(--brand); color: var(--brand-ink); }
 .menu-group { position: relative; width: 64px; min-height: 56px; flex-shrink: 0; border: 0; border-radius: 10px; background: transparent; color: inherit; opacity: 0.75; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; font: inherit; font-size: 11px; font-weight: 600; cursor: pointer; }
@@ -109,10 +109,23 @@ a { color: var(--brand); }
 .menu-fold:hover { opacity: 1; background: rgba(255, 255, 255, 0.1); }
 .menu-panel h1 { padding-right: 36px; }
 @media (min-width: 901px) {
+  /* Icon left, label right: each group is about half as tall, so the rail fits a laptop screen without a scroller. */
+  .menu { --rail-w: 128px; }
+  .menu-rail { align-items: stretch; padding: var(--s3) var(--s2); gap: 2px; }
+  .menu-mark { margin-left: 6px; }
+  .menu-group { width: auto; min-height: 40px; flex-direction: row; justify-content: flex-start; gap: 10px; padding: 0 10px; font-size: 13px; }
+  .menu-group svg { flex-shrink: 0; }
+  .menu-dot { top: 6px; left: 25px; right: auto; }
+}
+@media (min-width: 901px) and (max-height: 560px) {
+  .menu-group { min-height: 34px; }
+  .menu-mark { width: 32px; height: 32px; margin-bottom: 4px; }
+}
+@media (min-width: 901px) {
   .menu--folded:not(.menu--pop) .menu-panel { display: none; }
-  .menu--folded.menu--pop .menu-panel { position: absolute; left: 76px; top: 0; height: 100vh; z-index: 21; background: inherit; box-shadow: 8px 0 24px rgba(0, 0, 0, 0.35); }
+  .menu--folded.menu--pop .menu-panel { position: absolute; left: var(--rail-w); top: 0; height: 100vh; z-index: 21; background: inherit; box-shadow: 8px 0 24px rgba(0, 0, 0, 0.35); }
   .menu--pop { background-clip: padding-box; }
-  .menu-scrim { position: fixed; inset: 0 0 0 76px; z-index: 20; background: rgba(0, 0, 0, 0.12); }
+  .menu-scrim { position: fixed; inset: 0 0 0 var(--rail-w); z-index: 20; background: rgba(0, 0, 0, 0.12); }
 }
 .menu-rail-gap { flex: 1; min-height: var(--s2); }
 .menu-foot-link { display: block; margin-top: var(--s3); color: inherit; font-size: 13px; opacity: 0.85; }
