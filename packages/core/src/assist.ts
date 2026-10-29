@@ -346,7 +346,7 @@ export function duplicateWorkOrders(wos: WorkOrder[], settings: AssistSettings):
 
 // ---------- citations ----------
 
-const CITE = /\[((?:KPI-\d{3})|(?:[a-z]+:[^\]\s]+))\]/g;
+const CITE = /\[((?:KPI-\d{3})|(?:[a-z]+:[^\][\n]+))\]/g;
 
 export interface CitationCheck { ok: boolean; cited: string[]; unknown: string[]; uncited: number[] }
 
@@ -495,3 +495,59 @@ export function rcaTimeline(i: TimelineInput): Draft & { rows: Array<{ at: Iso; 
 }
 
 const fmt = (at: Iso, tz: string) => DateTime.fromISO(at, { zone: tz }).toFormat('ccc d LLL HH:mm');
+
+// ---------- AI-5 questions (Claude, through the assist-ask Edge Function) ----------
+
+/** What a question may draw on: the KPI dictionary and the pack numbers the person already sees (docs/ai-assist.md AI-5). */
+export interface AskContext {
+  week: string;
+  partial: boolean;
+  timeZone: string;
+  targets: { pa: number; utilisation: number };
+  kpis: AskKpis;
+  prior: AskKpis;
+  trend: Array<{ week: string; pa: number | null; utilisation: number | null; mtbf: number | null; failures: number }>;
+  pareto: Array<{ system: string; hours: number; events: number }>;
+  badActors: Array<{ unit: string; model: string; unscheduledDownHours: number; failures: number; pa: number | null; topSystem: string }>;
+  downNow: Array<{ unit: string; hours: number; reason: string; stage: string | null }>;
+  shopRelease: { due: number; onTime: number; rate: number | null };
+  dictionary: string;
+}
+
+export interface AskKpis {
+  pa: number | null; utilisation: number | null; mtbf: number | null; mttr: number | null; meanDowntime: number | null;
+  failures: number; minorStops: number; downHours: number; scheduledDownHours: number; unscheduledDownHours: number; operatingHours: number;
+}
+
+const r3 = (x: number | null) => (x === null ? null : Math.round(x * 1000) / 1000);
+const askKpis = (k: WeeklyPack['kpis']): AskKpis => ({
+  pa: r3(k.pa), utilisation: r3(k.utilisation), mtbf: r3(k.mtbf), mttr: r3(k.mttr), meanDowntime: r3(k.meanDowntime),
+  failures: k.failures, minorStops: k.minorStops, downHours: r3(k.downHours)!, scheduledDownHours: r3(k.scheduledDownHours)!,
+  unscheduledDownHours: r3(k.unscheduledDownHours)!, operatingHours: r3(k.operatingHours)!,
+});
+
+/** The context sent with a question: numbers only, no people's names, no costs, no free text from flags. */
+export function askContext(p: WeeklyPack, dictionary: string, trendWeeks = 8): AskContext {
+  return {
+    week: p.week.label, partial: p.partial, timeZone: p.timeZone, targets: p.targets,
+    kpis: askKpis(p.kpis), prior: askKpis(p.prior),
+    trend: p.trend.slice(-trendWeeks).map((t) => ({ week: t.label, pa: r3(t.pa), utilisation: r3(t.utilisation), mtbf: r3(t.mtbf), failures: t.failures })),
+    pareto: p.pareto.slice(0, 10).map((x) => ({ system: x.system, hours: r3(x.hours)!, events: x.events })),
+    badActors: p.badActors.slice(0, 10).map((b) => ({ ...b, unscheduledDownHours: r3(b.unscheduledDownHours)!, pa: r3(b.pa) })),
+    downNow: p.downNow.map((d) => ({ unit: d.unit, hours: r3(d.hours)!, reason: d.reason, stage: d.stage ?? null })),
+    shopRelease: p.shop.releaseVsPlan,
+    dictionary,
+  };
+}
+
+/** Records an answer may cite (mirrored in supabase/functions/assist-ask/logic.ts; a test keeps them the same). */
+export function askRecords(c: AskContext): Set<string> {
+  const s = new Set<string>();
+  for (const m of c.dictionary.matchAll(/KPI-\d{3}/g)) s.add(m[0]);
+  for (const t of c.trend) s.add(`week:${t.week}`);
+  s.add(`week:${c.week}`);
+  for (const b of c.badActors) s.add(`unit:${b.unit}`);
+  for (const d of c.downNow) s.add(`unit:${d.unit}`);
+  for (const x of c.pareto) s.add(`system:${x.system}`);
+  return s;
+}

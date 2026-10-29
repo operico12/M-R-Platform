@@ -2,11 +2,14 @@
 
 import { describe, expect, it } from 'vitest';
 import {
-  CODE_FIELDS, DEFAULT_ASSIST_SETTINGS, STARTER_CODES, buildSuggester, checkCitations, codedRows, duplicateWorkOrders, flagText, holdoutCheck,
+  CODE_FIELDS, DEFAULT_ASSIST_SETTINGS, askContext, askRecords, STARTER_CODES, buildSuggester, checkCitations, codedRows, duplicateWorkOrders, flagText, holdoutCheck,
   jaccard, liveSuggestion, packSummary, passes, rcaTimeline, setAssistSettings, suggestCodes, trainCodes, withAssistDefaults, words,
   type CodeList, type CodedRow, type HoldoutCheck,
 } from '../src/assist.js';
 import type { ConsoleContext } from '../src/console.js';
+import { DEFAULT_FLAG_RULES } from '../src/config.js';
+import { weeklyPack } from '../src/pack.js';
+import { MAX_CONTEXT_BYTES, MAX_QUESTION, SYSTEM, allowedRecords, badRequest, checkLines, parseAnswer, userTurn } from '../../../supabase/functions/assist-ask/logic.js';
 import type { Rca } from '../src/improve.js';
 import { emptyFishbone } from '../src/improve.js';
 import type { WeeklyPack } from '../src/pack.js';
@@ -294,5 +297,62 @@ describe('AI-4 RCA timeline', () => {
     ]);
     expect(t.lines[0]).toBe('Sun 20 Sep 10:00  HT1: Engine SN1 installed [component:E1]');
     expect(t.check.ok).toBe(true);
+  });
+});
+
+describe('citations with spaces', () => {
+  it('reads a system or week name with spaces as one record', () => {
+    const c = checkCitations(['Frame lost 9 h [system:Frame and body] [week:12 Oct].'], new Set(['system:Frame and body', 'week:12 Oct']));
+    expect(c).toMatchObject({ ok: true, cited: ['system:Frame and body', 'week:12 Oct'] });
+  });
+});
+
+describe('AI-5 questions', () => {
+  const ds = generateFleet({ seed: 7, units: 12, days: 60, end: '2026-10-27T14:00:00.000Z' });
+  const pack = weeklyPack({
+    assets: ds.assets, flags: ds.flags, smu: ds.smu, lifecycle: ds.lifecycle, rules: DEFAULT_FLAG_RULES, now: '2026-10-27T14:00:00.000Z',
+    timeZone: ds.site.timeZone, siteName: 'Demo', fleetName: 'Haul trucks', shopLines: ds.shopLines, closures: ds.closures,
+    targets: { pa: 0.9, utilisation: 0.85 }, weekOf: '2026-10-19T12:00:00.000Z',
+  });
+  const dict = '| KPI-001 | PA | ... |\n| KPI-005 | MTBF | ... |';
+  const c = askContext(pack, dict);
+  it('sends numbers only, rounded, with 8 trend weeks', () => {
+    expect(c.trend).toHaveLength(8);
+    expect(c.week).toBe(pack.week.label);
+    expect(JSON.stringify(c)).not.toMatch(/setBy|notes|findings|repairSummary|cost/);
+    expect(c.kpis.pa).toBe(Math.round(pack.kpis.pa! * 1000) / 1000);
+  });
+  it('allows the same records in the app and in the Edge Function', () => {
+    const core = [...askRecords(c)].sort();
+    expect([...allowedRecords(c as never)].sort()).toEqual(core);
+    expect(core).toContain('KPI-001');
+    expect(core).toContain(`week:${c.trend[0]!.week}`);
+    const lines = ['PA was 90% [KPI-001].', `Worst was ${c.badActors[0]?.unit} [unit:${c.badActors[0]?.unit}].`, 'Made up [unit:HT999].', 'No source.'];
+    const a = checkCitations(lines, askRecords(c));
+    const b = checkLines(lines, allowedRecords(c as never));
+    expect(b).toEqual(a);
+    expect(b).toMatchObject({ ok: false, unknown: ['unit:HT999'], uncited: [3] });
+  });
+  it('checks the request before anything is spent', () => {
+    const ok = { siteId: '10000000-0000-0000-0000-000000000002', question: 'Why was PA low?', context: c };
+    expect(badRequest(ok, 1000)).toBeNull();
+    expect(badRequest(ok, MAX_CONTEXT_BYTES + 1)).toMatch(/too large/);
+    expect(badRequest({ ...ok, siteId: 'x' }, 10)).toMatch(/site/);
+    expect(badRequest({ ...ok, question: ' ' }, 10)).toMatch(/question/);
+    expect(badRequest({ ...ok, question: 'x'.repeat(MAX_QUESTION + 1) }, 10)).toMatch(/500/);
+    expect(badRequest({ ...ok, context: { ...c, trend: 'x' } }, 10)).toMatch(/missing/);
+  });
+  it('puts the dictionary, the numbers and the question in the user turn, not the system prompt', () => {
+    const u = userTurn(' Why? ', c as never);
+    expect(u).toContain('<kpi_dictionary>\n| KPI-001');
+    expect(u).toContain('<question>\nWhy?\n</question>');
+    expect(u).not.toContain('"dictionary"');
+    expect(SYSTEM).not.toContain(c.week);
+  });
+  it('reads only the agreed answer shape', () => {
+    expect(parseAnswer('{"answerable": true, "lines": [" a [KPI-001] ", ""]}')).toEqual({ answerable: true, lines: ['a [KPI-001]'] });
+    expect(parseAnswer('{"lines": []}')).toBeNull();
+    expect(parseAnswer('not json')).toBeNull();
+    expect(parseAnswer('{"answerable": true, "lines": [1]}')).toBeNull();
   });
 });
