@@ -6,17 +6,18 @@ Code: `packages/core/src/board.ts` (pure, tested in `test/board.test.ts`) and `a
 ## Layout: exceptions first
 
 1. The fleet bar shows the share of units in each status.
-2. The status counts are Up, Scheduled down, Down, No update and Parked, plus the Downline queue and Alerts.
+2. The status counts are Up, Scheduled down, Down and Parked, plus the Downline queue and Alerts.
+   A unit is up unless a flag is open (Ope, 29 Oct 2026). Being up does not mean the unit is in use;
+   a missing hour meter reading leaves those hours out of utilisation but does not change its status.
 3. The filters are model chips and a search box. They are hidden in TV mode.
 4. **Needs attention** lists the down and scheduled down units, longest down first. Each row shows:
    - the reason and where the unit is;
    - the stage;
    - how long it has been down;
    - the ETA. An ETA that has passed is shown in red, and NO ETA is shown once the ETA rule applies.
-5. **No update** lists units with no open flag and no hour meter reading for over 14 h. Each shows the age of its last reading.
-6. **Running** lists each unit with how long it has been up.
-7. **Parked** lists units whose lifecycle status is not active.
-8. The downline queue table follows.
+5. **Up** lists each unit with how long it has been up. A note says how many have no hour meter reading for over 14 h.
+6. **Parked** lists units whose lifecycle status is not active.
+7. The downline queue table follows.
 
 ## Times (rule 4: always calculated, never typed)
 

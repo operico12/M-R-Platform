@@ -1,6 +1,7 @@
 // Status board (plan 4.2, docs/status-board.md): how long each unit has been down or up,
 // and the board's filters. Pure functions; durations are always calculated (rule 4).
 
+import type { StandbyFlag } from './standby.js';
 import type { DownFlag, Iso } from './types.js';
 
 /** Start of the downtime event an open flag belongs to: a type switch or a linked reopen keeps the first start. */
@@ -17,19 +18,26 @@ export function downSince(flag: DownFlag, flags: DownFlag[]): Iso {
   return start;
 }
 
-/** When the unit last came back up: the latest release before now. Undefined when no stop is on record. */
-export function upSince(unitId: string, flags: DownFlag[], now: Iso): Iso | undefined {
+/**
+ * When the unit last came back into use: the latest release, or end of a standby flag
+ * (docs/standby.md), at or before now. Undefined when no stop is on record.
+ */
+export function upSince(unitId: string, flags: DownFlag[], now: Iso, standby: Array<Pick<StandbyFlag, 'unitId' | 'state' | 'end'>> = []): Iso | undefined {
   const t = Date.parse(now);
   let best: number | undefined;
-  for (const f of flags) {
-    if (f.unitId !== unitId || f.state !== 'released' || !f.end) continue;
-    const e = Date.parse(f.end);
+  const ends = [
+    ...flags.filter((f) => f.unitId === unitId && f.state === 'released').map((f) => f.end),
+    ...standby.filter((s) => s.unitId === unitId && s.state === 'ended').map((s) => s.end),
+  ];
+  for (const end of ends) {
+    if (!end) continue;
+    const e = Date.parse(end);
     if (e <= t && (best === undefined || e > best)) best = e;
   }
   return best === undefined ? undefined : new Date(best).toISOString();
 }
 
-export type BoardStatus = 'run' | 'sched' | 'down' | 'stale' | 'parked';
+export type BoardStatus = 'run' | 'standby' | 'sched' | 'down' | 'stale' | 'parked';
 
 export interface StatusRow { unitId: string; unitNumber: string; model: string; status: BoardStatus; text?: string }
 
@@ -53,14 +61,14 @@ export function filterBoard<T extends StatusRow>(rows: T[], f: BoardFilter): T[]
 
 /** Counts per status for the units the model filter and search leave, so a count matches what a click shows. */
 export function boardCounts(rows: StatusRow[], f: BoardFilter): Record<BoardStatus, number> {
-  const out: Record<BoardStatus, number> = { run: 0, sched: 0, down: 0, stale: 0, parked: 0 };
+  const out: Record<BoardStatus, number> = { run: 0, standby: 0, sched: 0, down: 0, stale: 0, parked: 0 };
   for (const r of filterBoard(rows, { ...f, statuses: [] })) out[r.status]++;
   return out;
 }
 
 export const toggleIn = <T>(list: T[], v: T): T[] => (list.includes(v) ? list.filter((x) => x !== v) : [...list, v]);
 
-const STATUSES: BoardStatus[] = ['run', 'sched', 'down', 'stale', 'parked'];
+const STATUSES: BoardStatus[] = ['run', 'standby', 'sched', 'down', 'stale', 'parked'];
 
 /** The filter as a query string (?status=down,sched&model=793F&q=brake), so a filtered board can be shared. */
 export function boardFilterToQuery(f: BoardFilter): string {

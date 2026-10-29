@@ -215,7 +215,7 @@ export interface AuditEntry {
   at: Iso;
   userId: string;
   action: string;
-  entity: 'down_flag' | 'import_run' | 'target' | 'user' | 'code' | 'action' | 'rca' | 'project' | 'settings' | 'alert' | 'approval' | 'inspection' | 'inspection_form' | 'analysis' | 'view' | 'component' | 'life_target' | 'oil_sample' | 'rcm_mode' | 'job_plan' | 'process_delay' | 'plant_node' | 'shutdown' | 'round' | 'site' | 'api_key';
+  entity: 'down_flag' | 'standby_flag' | 'import_run' | 'target' | 'user' | 'code' | 'action' | 'rca' | 'project' | 'settings' | 'alert' | 'approval' | 'inspection' | 'inspection_form' | 'analysis' | 'view' | 'component' | 'life_target' | 'oil_sample' | 'rcm_mode' | 'job_plan' | 'process_delay' | 'plant_node' | 'shutdown' | 'round' | 'site' | 'api_key';
   entityId: string;
   before: unknown;
   after: unknown;

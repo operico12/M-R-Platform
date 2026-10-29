@@ -38,6 +38,9 @@ describe('status board times', () => {
     ];
     expect(upSince('T1', flags, NOW)).toBe('2026-10-26T06:00:00.000Z');
     expect(upSince('T3', flags, NOW)).toBeUndefined();
+    // The end of a standby counts as coming back into use; a voided one does not.
+    const sb = [{ unitId: 'T1', state: 'ended' as const, end: '2026-10-28T09:00:00.000Z' }, { unitId: 'T1', state: 'voided' as const, end: '2026-10-29T09:00:00.000Z' }];
+    expect(upSince('T1', flags, NOW, sb)).toBe('2026-10-28T09:00:00.000Z');
   });
 });
 
@@ -59,7 +62,7 @@ describe('status board filters', () => {
   });
 
   it('counts what a click on a status would show', () => {
-    expect(boardCounts(rows, { statuses: ['down'], models: ['797F'], q: '' })).toEqual({ run: 1, sched: 1, down: 0, stale: 0, parked: 1 });
+    expect(boardCounts(rows, { statuses: ['down'], models: ['797F'], q: '' })).toEqual({ run: 1, standby: 0, sched: 1, down: 0, stale: 0, parked: 1 });
   });
 
   it('round-trips the filter through the address', () => {

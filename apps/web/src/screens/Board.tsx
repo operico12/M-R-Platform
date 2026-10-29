@@ -3,24 +3,27 @@
 
 import {
   STAGE_LABELS, activeAlerts, boardCounts, boardFilterFromQuery, boardFilterToQuery, downSince, downlineQueue,
-  filterBoard, toggleIn, upSince, type Asset, type BoardFilter, type BoardStatus, type DownFlag,
+  currentStandby, filterBoard, toggleIn, upSince, type Asset, type StandbyFlag, type BoardFilter, type BoardStatus, type DownFlag,
 } from '@mr/core';
 import { useMemo, useState } from 'react';
 import { FlagSheet } from '../components/FlagSheet';
 import { fmtHours, hoursSince, locationLabel, siteTime, stageLabel, unitStatus } from '../format';
 import { useApp } from '../store';
 
+// A unit is up unless a flag says otherwise (Ope, 29 Oct 2026). A missing hour meter
+// reading does not make it "no update"; it only leaves those hours out of utilisation.
 const CARDS: { status: BoardStatus; word: string }[] = [
   { status: 'run', word: 'Up' },
+  { status: 'standby', word: 'Standby' },
   { status: 'sched', word: 'Scheduled down' },
   { status: 'down', word: 'Down' },
-  { status: 'stale', word: 'No update' },
   { status: 'parked', word: 'Parked' },
 ];
+const NO_READING_HOURS = 14;
 
 interface Row {
   unitId: string; unitNumber: string; model: string; status: BoardStatus; text?: string;
-  a: Asset; flag?: DownFlag; since?: string; lastReading?: string;
+  a: Asset; flag?: DownFlag; standby?: StandbyFlag; since?: string; lastReading?: string; noReading: boolean;
 }
 
 export function Board({ tv, query = '' }: { tv: boolean; query?: string }) {
@@ -36,12 +39,18 @@ export function Board({ tv, query = '' }: { tv: boolean; query?: string }) {
   };
 
   const rows = useMemo<Row[]>(() => app.ds.assets.map((a) => {
-    const { status, flag } = unitStatus(a.id, app.flags, app.ds, app.now);
+    const u = unitStatus(a.id, app.flags, app.ds, app.now);
+    const flag = u.flag;
+    // Down wins over standby; standby wins over up (docs/standby.md).
+    const sb = !flag && u.status !== 'parked' ? currentStandby(a.id, app.standby) : undefined;
+    const status: BoardStatus = sb ? 'standby' : u.status === 'stale' ? 'run' : u.status;
     const lastReading = app.ds.smu.filter((r) => r.unitId === a.id).at(-1)?.at;
-    const since = flag ? downSince(flag, app.flags) : status === 'run' || status === 'stale' ? upSince(a.id, app.flags, app.now) : undefined;
-    const text = flag ? `${flag.reasonCode} ${locationLabel(flag, app.ds)} ${stageLabel(flag)}` : undefined;
-    return { unitId: a.id, unitNumber: a.unitNumber, model: a.model, status, text, a, flag, since, lastReading };
-  }), [app.ds, app.flags, app.now]);
+    const noReading = status === 'run' && (!lastReading || hoursSince(lastReading, app.now) > NO_READING_HOURS);
+    const since = flag ? downSince(flag, app.flags) : sb ? sb.start : status === 'run' ? upSince(a.id, app.flags, app.now, app.standby) : undefined;
+    const reason = sb ? app.standbyReasons.find((x) => x.code === sb.reasonCode)?.label ?? sb.reasonCode : '';
+    const text = flag ? `${flag.reasonCode} ${locationLabel(flag, app.ds)} ${stageLabel(flag)}` : sb ? `standby ${reason}` : undefined;
+    return { unitId: a.id, unitNumber: a.unitNumber, model: a.model, status, text, a, flag, standby: sb, since, lastReading, noReading };
+  }), [app.ds, app.flags, app.now, app.standby, app.standbyReasons]);
 
   const counts = boardCounts(rows, filter);
   const total = Object.values(counts).reduce((s, n) => s + n, 0);
@@ -65,8 +74,10 @@ export function Board({ tv, query = '' }: { tv: boolean; query?: string }) {
   const byNumber = (x: Row, y: Row) => x.unitNumber.localeCompare(y.unitNumber, undefined, { numeric: true });
   const attention = shown.filter((r) => r.status === 'down' || r.status === 'sched')
     .sort((x, y) => Date.parse(x.since ?? x.flag!.start) - Date.parse(y.since ?? y.flag!.start));
-  const stale = shown.filter((r) => r.status === 'stale').sort(byNumber);
+  const noReading = shown.filter((r) => r.noReading).length;
   const running = shown.filter((r) => r.status === 'run').sort(byNumber);
+  const onStandby = shown.filter((r) => r.status === 'standby').sort((x, y) => Date.parse(x.since!) - Date.parse(y.since!));
+  const sbLabel = (code: string) => app.standbyReasons.find((x) => x.code === code)?.label ?? code;
   const parked = shown.filter((r) => r.status === 'parked').sort(byNumber);
   const pick = (a: Asset) => { if (!tv) setOpen(a); };
   const hrs = (iso?: string) => (iso ? fmtHours(hoursSince(iso, app.now)) : '');
@@ -173,15 +184,15 @@ export function Board({ tv, query = '' }: { tv: boolean; query?: string }) {
         </section>
       )}
 
-      {stale.length > 0 && (
+      {onStandby.length > 0 && (
         <section>
-          <h3 className="bhead">No update · {stale.length}</h3>
-          <p className="small muted bnote">No open flag, but no hour meter reading for over 14 h. Check the unit is running.</p>
+          <h3 className="bhead">Standby · {onStandby.length}, longest first</h3>
+          <p className="small muted bnote">Available but not in use. Standby does not change PA; it counts against utilisation (time).</p>
           <div className="bchips">
-            {stale.map((r) => (
-              <button key={r.unitId} type="button" className="bunit bu-stale" onClick={() => pick(r.a)}>
+            {onStandby.map((r) => (
+              <button key={r.unitId} type="button" className="bunit bu-standby" onClick={() => pick(r.a)} title={`Standby since ${siteTime(r.since!, tz, true)}`}>
                 <strong>{r.unitNumber}</strong>
-                <span>{r.lastReading ? `last reading ${hrs(r.lastReading)} ago` : 'no reading on record'}</span>
+                <span>{sbLabel(r.standby!.reasonCode)} · {hrs(r.since)}</span>
               </button>
             ))}
           </div>
@@ -190,7 +201,8 @@ export function Board({ tv, query = '' }: { tv: boolean; query?: string }) {
 
       {running.length > 0 && (
         <section>
-          <h3 className="bhead">Running · {running.length}</h3>
+          <h3 className="bhead">Up · {running.length}</h3>
+          {noReading > 0 && <p className="small muted bnote">{noReading} of these {noReading === 1 ? 'has' : 'have'} no hour meter reading for over {NO_READING_HOURS} h. They count as up; those hours are left out of utilisation until readings arrive.</p>}
           <div className="bchips">
             {running.map((r) => (
               <button key={r.unitId} type="button" className="bunit bu-run" onClick={() => pick(r.a)} title={r.since ? `Up since ${siteTime(r.since, tz, true)}` : undefined}>
@@ -239,7 +251,7 @@ export function Board({ tv, query = '' }: { tv: boolean; query?: string }) {
       {!tv && (
         <p className="small muted" style={{ marginTop: 8 }}>
           Press a count to show only those units, and again to undo. Tap a unit to {tech ? 'propose a down flag or update its stage' : 'flag it down, move its stage or release it'}.
-          Down time counts from the first flag of the stop; up time from the last release. Standby needs the fleet system (phase 1b).
+          A unit is up unless a flag is open. Down time counts from the first flag of the stop; up time from the last release.
         </p>
       )}
 

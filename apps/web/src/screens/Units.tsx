@@ -18,10 +18,10 @@ export function UnitList() {
   const rows = useMemo(
     () =>
       app.ds.assets.map((a) => {
-        const k = computeKpis({ assets: [a], flags: app.flags, smu: app.ds.smu, lifecycle: app.ds.lifecycle, rules: app.rules, now: app.now }, p);
+        const k = computeKpis({ assets: [a], flags: app.flags, smu: app.ds.smu, lifecycle: app.ds.lifecycle, rules: app.rules, now: app.now, standby: app.standby }, p);
         return { a, k, s: unitStatus(a.id, app.flags, app.ds, app.now) };
       }),
-    [app.flags, app.now],
+    [app.flags, app.now, app.standby],
   );
   const shown = rows.filter((r) => r.a.unitNumber.toLowerCase().includes(q.toLowerCase())).sort((x, y) => (x.k.pa ?? 1) - (y.k.pa ?? 1));
   return (
@@ -58,7 +58,7 @@ export function UnitPage({ id }: { id: string }) {
   const [sheet, setSheet] = useState<Asset | null>(null);
   if (!a) return <p>Unit not found.</p>;
   const p = { from: new Date(Date.parse(app.now) - 28 * DAY).toISOString(), to: app.now };
-  const input = { flags: app.flags, smu: app.ds.smu, lifecycle: app.ds.lifecycle, rules: app.rules, now: app.now };
+  const input = { flags: app.flags, smu: app.ds.smu, lifecycle: app.ds.lifecycle, rules: app.rules, now: app.now, standby: app.standby };
   const k = computeKpis({ ...input, assets: [a] }, p);
   const fleet = computeKpis({ ...input, assets: app.ds.assets }, p);
   const s = unitStatus(a.id, app.flags, app.ds, app.now);

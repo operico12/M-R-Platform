@@ -5,6 +5,12 @@
 
 import {
   DEFAULT_FLAG_RULES,
+  DEFAULT_STANDBY_REASONS,
+  endStandbyForDown,
+  type StandbyContext,
+  type StandbyFlag,
+  type StandbyReason,
+  type StandbyResult,
   generateFleet,
   type Actor,
   type Asset,
@@ -54,7 +60,8 @@ import {
   DEFAULT_PLANT_SETTINGS, generatePlant, type ClassifyResult, type DelayContext, type PlantSettings, type ProcessDelay, type RunSignal,
 } from '@mr/core';
 import { demoImprovements } from './data/demo-improve';
-import { addSiteRemote, loadAccessRequests, decideAccessRemote, loadApiKeys, createApiKeyRemote, revokeApiKeyRemote, loadSnapshot, retireSiteRemote, savePlantNodes, saveShutdown, sendRound, saveProcessDelays, saveRunSignals, type PlantData, saveRcmModes, saveJobPlanVersion, saveCmResponse, saveOilSamples, saveComponentRecord, saveViewRecord, saveAnalysisRecord, loadPhoto, saveForms, sendInspection, sendPhoto, SendError, saveAlertAnswer, saveDecision, saveRequests, saveFlags, saveRecords, saveSetting, saveTarget, saveTaskStatus, type Loaded } from './data/remote';
+import { demoStandby } from './data/demo-standby';
+import { addSiteRemote, loadAccessRequests, decideAccessRemote, loadApiKeys, createApiKeyRemote, revokeApiKeyRemote, loadSnapshot, retireSiteRemote, savePlantNodes, saveShutdown, sendRound, saveProcessDelays, saveRunSignals, type PlantData, saveRcmModes, saveJobPlanVersion, saveCmResponse, saveOilSamples, saveComponentRecord, saveViewRecord, saveAnalysisRecord, loadPhoto, saveForms, sendInspection, sendPhoto, SendError, saveAlertAnswer, saveDecision, saveRequests, saveFlags, saveStandby, saveRecords, saveSetting, saveTarget, saveTaskStatus, type Loaded } from './data/remote';
 import { demoProjects } from './data/demo-projects';
 import { demoForms, demoInspections } from './data/demo-inspections';
 import { DEMO_SITES, demoFleet, type SiteChoice } from './data/sites';
@@ -205,6 +212,10 @@ export interface AppState {
   actor: Actor;
   setRole: (r: Role) => void;
   run: (asset: Asset, cmd: (ctx: FlagContext) => CommandResult) => CommandResult;
+  /** Standby flags (docs/standby.md): available but not in use. */
+  standby: StandbyFlag[];
+  standbyReasons: StandbyReason[];
+  runStandby: (asset: Asset, cmd: (ctx: StandbyContext) => StandbyResult) => StandbyResult;
   lastSync: string;
   theme: 'light' | 'dark';
   setTheme: (t: 'light' | 'dark') => void;
@@ -266,6 +277,10 @@ export function AppProvider({ children, live, onReload, onSignOut, sites = DEMO_
     ['reliability_engineer', 'Rae Reliability', 'reliability_engineer', 'days'], ['superintendent', 'Sol Superintendent', 'superintendent', 'days'], ['admin', 'Ada Admin', 'data_owner', undefined],
   ].map(([role, name, jobTitle, crew]) => ({ id: `demo-${role}`, name: name!, email: `${role}@example.com`, role: role as Role, scope: ['*'], addedAt: '2026-01-01T00:00:00.000Z', jobTitle, ...(crew ? { crew } : {}) })));
   const [flags, setFlags] = useState<DownFlag[]>(ds.flags);
+  const [standby, setStandbyState] = useState<StandbyFlag[]>(() => live?.standby ?? demoStandby(ds));
+  // A ref as well, so a down flag can end the open standby in the same step.
+  const standbyRef = useRef(standby);
+  const setStandby = useCallback((next: StandbyFlag[]) => { standbyRef.current = next; setStandbyState(next); }, []);
   // The demo plant, made once: its structure, flags and shutdowns, and its route forms, rounds and stop inspections.
   const [demoPlant] = useState(() => (live ? null : generatePlant({ seed: 42, days: 120, end: Date.parse(ds.generatedAt), timeZone: ds.site.timeZone, tenantId: ds.tenantId, siteId: ds.site.id, people: { technician: 'demo-technician', supervisor: 'demo-supervisor' } })));
   const [plant, setPlant] = useState<PlantData>(() => live?.plant ?? demoPlant!);
@@ -345,11 +360,43 @@ export function AppProvider({ children, live, onReload, onSignOut, sites = DEMO_
         keepFlags(r.flags, asset.assetClass === 'fixed_plant');
         setAudit((prev) => [...r.audit, ...prev]);
         setNow(nowIso);
-        if (live) saveFlags(siteId, r.flags, r.audit).catch(failed);
+        const saved = live ? saveFlags(siteId, r.flags, r.audit) : null;
+        saved?.catch(failed);
+        // Flagging a unit down ends its open standby at the down start (docs/standby.md).
+        const down = r.flags.find((f) => f.unitId === asset.id && (f.state === 'open' || f.state === 'proposed'));
+        if (down) {
+          const e = endStandbyForDown(standbyRef.current, down, { now: nowIso, actor });
+          if (e.audit.length) {
+            const changed = e.standby.filter((x, i) => x !== standbyRef.current[i]);
+            setStandby(e.standby);
+            setAudit((prev) => [...e.audit, ...prev]);
+            // After the flag is saved: the standby row points at it.
+            if (saved) saved.then(() => saveStandby(siteId, changed, e.audit)).catch(failed);
+          }
+        }
       }
       return r;
     },
-    [flagCtx, keepFlags, live, failed],
+    [flagCtx, keepFlags, live, failed, actor, setStandby],
+  );
+
+  const runStandby = useCallback(
+    (asset: Asset, cmd: (ctx: StandbyContext) => StandbyResult): StandbyResult => {
+      const nowIso = new Date().toISOString();
+      const all = standbyRef.current;
+      const mine = all.filter((x) => x.unitId === asset.id);
+      const lc = ds.lifecycle.find((l) => l.assetId === asset.id && Date.parse(l.start) <= Date.parse(nowIso) && (!l.end || Date.parse(nowIso) < Date.parse(l.end)));
+      const r = cmd({ now: nowIso, actor, asset, lifecycle: lc?.status, unitStandby: mine, unitFlags: flags.filter((f) => f.unitId === asset.id), reasons: DEFAULT_STANDBY_REASONS, newId });
+      if (r.ok) {
+        const changed = r.standby.filter((x) => !mine.includes(x));
+        setStandby([...all.filter((x) => x.unitId !== asset.id), ...r.standby]);
+        setAudit((prev) => [...r.audit, ...prev]);
+        setNow(nowIso);
+        if (live) saveStandby(siteId, changed, r.audit).catch(failed);
+      }
+      return r;
+    },
+    [actor, ds.lifecycle, flags, live, failed, setStandby],
   );
 
   const runDelay = useCallback(
@@ -1155,7 +1202,7 @@ export function AppProvider({ children, live, onReload, onSignOut, sites = DEMO_
     return r;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [actor, ds, live, apiKeys, loadApiKeysCmd]);
-  const value: AppState = { accessSettings, runAccessSettings, accessRequests, loadAccessRequests: loadAccessRequestsCmd, decideAccess: decideAccessCmd, apiKeys, loadApiKeys: loadApiKeysCmd, createApiKey: createApiKeyCmd, revokeApiKey: revokeApiKeyCmd, importSource, importMapping, runImportSource, sites, switchSite: (id: string) => onSwitchSite?.(id), snapshot, addSite: addSiteCmd, retireSite: retireSiteCmd, ds, forms, runForms, inspections, drafts, saveDraft, discardDraft, runInspection, outbox, sendOutbox: () => void sendOutbox(true), dropOutboxItem, photo, workSettings, runWorkSettings, alertSettings, runAlertSettings, alertAnswers, runAlertAnswer, analyses, runAnalysis, views, runView, components, componentEvents, lifeTargets, runComponents, oilSamples, cmResponses, conditionSettings, runSamples, runResponse, runConditionSettings, rcmModes, jobPlanVersions, rcmSettings, runRcm, runJobPlan, runRcmSettings, sparesSettings, runSparesSettings, assistSettings, runAssistSettings, suggester, plant, plantSettings, runPlantSettings, runDelay, runClassify, addSignals, runNode, runShutdown, runShutdownFlow, rounds, roundDrafts, beginRound, saveRoundDraft, discardRound, runRound, ruleAlerts: ruleAlertList, requests, runRequest, decide, actions: improve.actions, rcas: improve.rcas, projects: improve.projects, runImprove, people, userName, targets, targetOf, targetList, users, codes, runConsole, mode: live ? 'live' : 'demo', syncError, clearSyncError: () => setSyncError(null), signOut: onSignOut, importRuns, applyImport, newId, flags, audit, rules, now, actor, setRole, run, lastSync: ds.generatedAt, theme, setTheme };
+  const value: AppState = { accessSettings, runAccessSettings, accessRequests, loadAccessRequests: loadAccessRequestsCmd, decideAccess: decideAccessCmd, apiKeys, loadApiKeys: loadApiKeysCmd, createApiKey: createApiKeyCmd, revokeApiKey: revokeApiKeyCmd, importSource, importMapping, runImportSource, sites, switchSite: (id: string) => onSwitchSite?.(id), snapshot, addSite: addSiteCmd, retireSite: retireSiteCmd, ds, forms, runForms, inspections, drafts, saveDraft, discardDraft, runInspection, outbox, sendOutbox: () => void sendOutbox(true), dropOutboxItem, photo, workSettings, runWorkSettings, alertSettings, runAlertSettings, alertAnswers, runAlertAnswer, analyses, runAnalysis, views, runView, components, componentEvents, lifeTargets, runComponents, oilSamples, cmResponses, conditionSettings, runSamples, runResponse, runConditionSettings, rcmModes, jobPlanVersions, rcmSettings, runRcm, runJobPlan, runRcmSettings, sparesSettings, runSparesSettings, assistSettings, runAssistSettings, suggester, plant, plantSettings, runPlantSettings, runDelay, runClassify, addSignals, runNode, runShutdown, runShutdownFlow, rounds, roundDrafts, beginRound, saveRoundDraft, discardRound, runRound, ruleAlerts: ruleAlertList, requests, runRequest, decide, actions: improve.actions, rcas: improve.rcas, projects: improve.projects, runImprove, people, userName, targets, targetOf, targetList, users, codes, runConsole, mode: live ? 'live' : 'demo', syncError, clearSyncError: () => setSyncError(null), signOut: onSignOut, importRuns, applyImport, newId, flags, standby, standbyReasons: DEFAULT_STANDBY_REASONS, runStandby, audit, rules, now, actor, setRole, run, lastSync: ds.generatedAt, theme, setTheme };
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
 
