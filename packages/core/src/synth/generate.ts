@@ -16,6 +16,7 @@ import type { CmResponse, OilSample } from '../condition.js';
 import { generateOil } from './oil.js';
 import type { JobPlanVersion, RcmMode } from '../rcm.js';
 import { generateRcm } from './rcm.js';
+import { failureText } from './text.js';
 import type { Asset, AssetLifecycleInterval, DownFlag, WorkOrder, LocationInterval, ShopLine, ShopLineClosure, SmuReading, Stage, StageInterval } from '../types.js';
 
 export interface SynthOptions {
@@ -395,9 +396,18 @@ export function generateFleet(opts: SynthOptions = {}): Dataset {
   // Own random stream, so durations, stages and KPIs stay the same for a seed.
   const cq = rng(seed + 104729);
   const sysNames = Object.keys(SYSTEMS);
+  // Free text from the true codes, before the coding noise (docs/ai-assist.md). Own stream too.
+  const tx = rng(seed + 49979687);
+  const complaintOf = new Map<string, string>();
   for (const f of flags) {
     const rel = f.release;
     if (!rel?.system || !SYSTEMS[rel.system]) continue;
+    if (f.type === 'unscheduled' && rel.component && rel.failureModes?.[0]) {
+      const t = failureText(tx, rel.system, rel.component, rel.failureModes[0]);
+      rel.findings = t.findings;
+      rel.repairSummary = t.repairSummary;
+      complaintOf.set(f.id, t.complaint);
+    }
     const x = cq();
     if (x < 0.07) rel.component = 'Other';
     else if (x < 0.1) rel.failureModes = ['Unknown'];
@@ -434,7 +444,7 @@ export function generateFleet(opts: SynthOptions = {}): Dataset {
       const sched = pm ? (q() < 0.8 ? s0 : s0 - 2 * DAY) : !em ? s0 : undefined;
       woFor(a, n, {
         woType: pm ? 'PM' : em ? 'EM' : 'CM', workClass: pm ? 'pm' : 'corrective', status: done ? 'COMP' : 'INPRG', open: !done,
-        priority: pm ? '3' : em ? '1' : '2', description: pm ? `${f.reasonCode} service` : `${f.system ?? f.reasonCode}: ${f.release?.failureModes?.[0] ?? 'repair'}`,
+        priority: pm ? '3' : em ? '1' : '2', description: pm ? `${f.reasonCode} service` : complaintOf.get(f.id) ?? `${f.system ?? f.reasonCode}: repair`,
         reportedAt: f.start, completedAt: f.end ?? undefined, sourceModifiedAt: f.end ?? f.start,
         targetStart: due !== undefined ? toIso(due) : undefined, targetFinish: due !== undefined ? toIso(due + DAY - 60_000) : undefined,
         scheduledStart: sched !== undefined ? toIso(round5(sched)) : undefined,

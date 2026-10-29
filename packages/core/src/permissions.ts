@@ -38,6 +38,7 @@ export type Action =
   | 'edit_rcm'
   | 'issue_job_plans'
   | 'edit_spares'
+  | 'edit_assist'
   | 'manage_imports'
   | 'manage_users';
 
@@ -84,6 +85,8 @@ const MATRIX: Record<Action, Partial<Record<Role, Permission>>> = {
   issue_job_plans: { reliability_engineer: 'yes', superintendent: 'yes' },
   // docs/spares.md: plan 11.2 has no spares row; settings follow the RCM settings.
   edit_spares: { reliability_engineer: 'yes', superintendent: 'yes' },
+  // docs/ai-assist.md: plan 11.2 has no assist row; settings follow the RCM and spares settings.
+  edit_assist: { reliability_engineer: 'yes', superintendent: 'yes' },
   // Field mapping, imports, data-quality rules: data owner only. In phase 1a the Admin role is the data owner (11.7).
   manage_imports: { admin: 'yes' },
   manage_users: { superintendent: 'approve', admin: 'yes' },
@@ -123,6 +126,7 @@ export const ACTION_LABELS: Record<Action, string> = {
   edit_rcm: 'Edit the RCM failure mode library',
   issue_job_plans: 'Issue PM job plan revisions',
   edit_spares: 'Change spares sizing settings',
+  edit_assist: 'Change assist settings and switch code suggestions on',
   manage_imports: 'Field mapping, imports and data-quality rules',
   manage_users: 'Manage users and roles',
 };
