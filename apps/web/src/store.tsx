@@ -49,6 +49,7 @@ import {
   DEFAULT_RCM_SETTINGS, type JobPlanVersion, type RcmMode, type RcmSettings, DEFAULT_SPARES_SETTINGS, type SparesSettings,
   DEFAULT_ASSIST_SETTINGS, STARTER_CODES, buildSuggester, type AssistSettings, type Suggester,
   type PlantNode, type Shutdown, type ScopeItem, type RunOutcome, type Round, type RoundResult, startRound,
+  DEFAULT_IMPORT_SOURCE, mappingFor, setImportSource, type ImportMapping, type ImportSource,
   addSite, retireSite, twelveHourCalendar as _cal, type SiteInput, type SiteRecord, type SiteSnapshot,
   DEFAULT_PLANT_SETTINGS, generatePlant, type ClassifyResult, type DelayContext, type PlantSettings, type ProcessDelay, type RunSignal,
 } from '@mr/core';
@@ -207,6 +208,10 @@ export interface AppState {
   lastSync: string;
   theme: 'light' | 'dark';
   setTheme: (t: 'light' | 'dark') => void;
+  /** Which ERP this site's files come from, and the mapping they are read with (docs/field-mapping.md). */
+  importSource: ImportSource;
+  importMapping: ImportMapping;
+  runImportSource: (cmd: (ctx: ConsoleContext, current: ImportSource) => ConsoleResult<ImportSource>) => ConsoleResult<ImportSource>;
   /** Sites this person belongs to (docs/multi-site.md). The current one is ds.site. */
   sites: SiteChoice[];
   switchSite: (id: string) => void;
@@ -252,6 +257,8 @@ export function AppProvider({ children, live, onReload, onSignOut, sites = DEMO_
   const [demoPlant] = useState(() => (live ? null : generatePlant({ seed: 42, days: 120, end: Date.parse(ds.generatedAt), timeZone: ds.site.timeZone, tenantId: ds.tenantId, siteId: ds.site.id, people: { technician: 'demo-technician', supervisor: 'demo-supervisor' } })));
   const [plant, setPlant] = useState<PlantData>(() => live?.plant ?? demoPlant!);
   const [plantSettings, setPlantSettings] = useState<PlantSettings>(() => live?.plantSettings ?? DEFAULT_PLANT_SETTINGS);
+  const [importSource, setImportSourceState] = useState<ImportSource>(() => live?.importSource ?? DEFAULT_IMPORT_SOURCE);
+  const importMapping = useMemo(() => mappingFor(importSource), [importSource]);
   const [improve, setImprove] = useState(() => (live ? { actions: live.actions, rcas: live.rcas, projects: live.projects } : { ...demoImprovements(ds), projects: demoProjects(ds) }));
   const [audit, setAudit] = useState<AuditEntry[]>([]);
   const [now, setNow] = useState(() => new Date().toISOString());
@@ -728,6 +735,18 @@ export function AppProvider({ children, live, onReload, onSignOut, sites = DEMO_
     [actor, ds, live, failed],
   );
   // Learned in the browser from this site's own records; nothing leaves the platform (docs/ai-assist.md guardrail 6).
+  const runImportSource = useCallback(
+    (cmd: (ctx: ConsoleContext, current: ImportSource) => ConsoleResult<ImportSource>): ConsoleResult<ImportSource> => {
+      const r = cmd({ actor, now: new Date().toISOString(), newId, timeZone: ds.site.timeZone, calendar: ds.calendar }, importSource);
+      if (r.ok) {
+        setImportSourceState(r.records[0]!);
+        setAudit((prev) => [...r.audit, ...prev]);
+        if (live) saveSetting(siteId, 'imports', r.records[0]!, r.audit[0]?.reason ?? '', r.audit).catch(failed);
+      }
+      return r;
+    },
+    [actor, ds, importSource, live, failed],
+  );
   const runPlantSettings = useCallback(
     (cmd: (ctx: ConsoleContext, current: PlantSettings) => ConsoleResult<PlantSettings>): ConsoleResult<PlantSettings> => {
       const r = cmd({ actor, now: new Date().toISOString(), newId, timeZone: ds.site.timeZone, calendar: ds.calendar }, plantSettings);
@@ -1044,7 +1063,7 @@ export function AppProvider({ children, live, onReload, onSignOut, sites = DEMO_
     onSitesChanged?.(rest, site.id === ds.site.id ? rest[0]?.id : undefined);
     return r;
   }, [actor, live, siteRecords, sites, ds.site.id, onSitesChanged]);
-  const value: AppState = { sites, switchSite: (id: string) => onSwitchSite?.(id), snapshot, addSite: addSiteCmd, retireSite: retireSiteCmd, ds, forms, runForms, inspections, drafts, saveDraft, discardDraft, runInspection, outbox, sendOutbox: () => void sendOutbox(true), dropOutboxItem, photo, workSettings, runWorkSettings, alertSettings, runAlertSettings, alertAnswers, runAlertAnswer, analyses, runAnalysis, views, runView, components, componentEvents, lifeTargets, runComponents, oilSamples, cmResponses, conditionSettings, runSamples, runResponse, runConditionSettings, rcmModes, jobPlanVersions, rcmSettings, runRcm, runJobPlan, runRcmSettings, sparesSettings, runSparesSettings, assistSettings, runAssistSettings, suggester, plant, plantSettings, runPlantSettings, runDelay, runClassify, addSignals, runNode, runShutdown, runShutdownFlow, rounds, roundDrafts, beginRound, saveRoundDraft, discardRound, runRound, ruleAlerts: ruleAlertList, requests, runRequest, decide, actions: improve.actions, rcas: improve.rcas, projects: improve.projects, runImprove, people, userName, targets, targetOf, targetList, users, codes, runConsole, mode: live ? 'live' : 'demo', syncError, clearSyncError: () => setSyncError(null), signOut: onSignOut, importRuns, applyImport, newId, flags, audit, rules, now, actor, setRole, run, lastSync: ds.generatedAt, theme, setTheme };
+  const value: AppState = { importSource, importMapping, runImportSource, sites, switchSite: (id: string) => onSwitchSite?.(id), snapshot, addSite: addSiteCmd, retireSite: retireSiteCmd, ds, forms, runForms, inspections, drafts, saveDraft, discardDraft, runInspection, outbox, sendOutbox: () => void sendOutbox(true), dropOutboxItem, photo, workSettings, runWorkSettings, alertSettings, runAlertSettings, alertAnswers, runAlertAnswer, analyses, runAnalysis, views, runView, components, componentEvents, lifeTargets, runComponents, oilSamples, cmResponses, conditionSettings, runSamples, runResponse, runConditionSettings, rcmModes, jobPlanVersions, rcmSettings, runRcm, runJobPlan, runRcmSettings, sparesSettings, runSparesSettings, assistSettings, runAssistSettings, suggester, plant, plantSettings, runPlantSettings, runDelay, runClassify, addSignals, runNode, runShutdown, runShutdownFlow, rounds, roundDrafts, beginRound, saveRoundDraft, discardRound, runRound, ruleAlerts: ruleAlertList, requests, runRequest, decide, actions: improve.actions, rcas: improve.rcas, projects: improve.projects, runImprove, people, userName, targets, targetOf, targetList, users, codes, runConsole, mode: live ? 'live' : 'demo', syncError, clearSyncError: () => setSyncError(null), signOut: onSignOut, importRuns, applyImport, newId, flags, audit, rules, now, actor, setRole, run, lastSync: ds.generatedAt, theme, setTheme };
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
 

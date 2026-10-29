@@ -4,7 +4,7 @@
 import { describe, expect, it } from 'vitest';
 import type { ConsoleContext } from '../src/console.js';
 import {
-  MAXIMO_DEFAULT_MAPPING, SAP_PM_DEFAULT_MAPPING, importAssets, importSmu, importWorkOrders, isClosedStatus, mappingFor, parseCsv, parseSourceNumber,
+  MAXIMO_DEFAULT_MAPPING, SAP_PM_DEFAULT_MAPPING, detectKind, importAssets, importSmu, importWorkOrders, isClosedStatus, mappingFor, parseCsv, parseSourceNumber,
   setImportSource, toSourceCsv, withImportDefaults, type ImportContext,
 } from '../src/imports.js';
 import { generateFleet } from '../src/synth/generate.js';
@@ -86,6 +86,14 @@ describe('SAP sample files round trip', () => {
     const done = ds.workOrders.find((x) => x.completedAt)!;
     const back = w.records.find((x) => x.numberNormalised === done.numberNormalised)!;
     expect(back.completedAt).toBe(new Date(Math.floor(Date.parse(done.completedAt!) / 1000) * 1000).toISOString());
+    // Work types and statuses come out in SAP words and read back to the same class, open state and readiness.
+    expect(parseCsv(f.workOrders).rows.every((r) => !/^(CM|PM|COMP|WAPPR|APPR|WSCH)$/.test(r[2] ?? '') && !/^(COMP|CLOSE)$/.test(r[3] ?? ''))).toBe(true);
+    for (const x of ds.workOrders) {
+      const y = w.records.find((r) => r.numberNormalised === x.numberNormalised)!;
+      expect([y.workClass, y.open, readiness(y, m.readiness)]).toEqual([x.workClass, x.open, readiness(x)]);
+    }
+    expect(detectKind(parseCsv(f.smu).header, m)).toBe('smu');
+    expect(detectKind(parseCsv(f.assets).header, m)).toBe('assets');
     const s = importSmu(parseCsv(f.smu), [], a.records, c);
     expect(s.stats.failed).toBe(0);
     expect(s.records.length).toBe(ds.smu.length);

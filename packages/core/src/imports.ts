@@ -190,7 +190,8 @@ export const DEFAULT_IMPORT_SETTINGS: ImportSettings = { smuClockToleranceHours:
 
 /** Guess what a file holds from its columns, so the user does not have to say. */
 export function detectKind(header: string[], m: ImportMapping = MAXIMO_DEFAULT_MAPPING): ImportKind | null {
-  const has = (c?: string) => !!c && header.some((h) => h.toUpperCase() === c.toUpperCase());
+  // A joined column "DATE+TIME" is there when its first column is.
+  const has = (c?: string) => { const f = c?.split('+')[0]?.trim(); return !!f && header.some((h) => h.toUpperCase() === f.toUpperCase()); };
   if (has(m.workOrders.number)) return 'work_orders';
   if (has(m.smu.hours) && has(m.smu.at)) return 'smu';
   if (has(m.assets.unitNumber)) return 'assets';
@@ -477,7 +478,7 @@ export function importWorkOrders(table: Table, existing: WorkOrder[], assets: As
       if (!v) return undefined;
       const d = parseSourceDate(v, m.dateFormats, ctx.timeZone);
       if (!d) {
-        issues.push({ row: line, severity: 'warning', rule: 'bad_date', sourceId: number, message: `${col} "${v}" is not a date the mapping understands. Left blank.` });
+        issues.push({ row: line, severity: 'warning', rule: 'bad_date', sourceId: number, message: `${col?.replace("+", " and ")} "${v}" is not a date the mapping understands. Left blank.` });
         return undefined;
       }
       if (ms(d) > futureLimit) {
@@ -490,7 +491,7 @@ export function importWorkOrders(table: Table, existing: WorkOrder[], assets: As
       const v = rd.get(row, col);
       if (!v) return undefined;
       const d = parseSourceDate(v, m.dateFormats, ctx.timeZone);
-      if (!d) issues.push({ row: line, severity: 'warning', rule: 'bad_date', sourceId: number, message: `${col} "${v}" is not a date the mapping understands. Left blank.` });
+      if (!d) issues.push({ row: line, severity: 'warning', rule: 'bad_date', sourceId: number, message: `${col?.replace("+", " and ")} "${v}" is not a date the mapping understands. Left blank.` });
       return d ?? undefined;
     };
     const ext = rd.get(row, m.workOrders.asset);
@@ -634,7 +635,7 @@ export function importSmu(table: Table, existing: SmuReading[], assets: Asset[],
     const asset = find(ext);
     if (!asset) { unknownUnits.set(ext, [...(unknownUnits.get(ext) ?? []), line]); stats.failed++; return; }
     const at = parseSourceDate(atText, m.dateFormats, ctx.timeZone);
-    if (!at) return fail(atText ? 'bad_date' : 'missing_field', atText ? `${m.smu.at} "${atText}" is not a date the mapping understands.` : `No ${m.smu.at}.`);
+    if (!at) return fail(atText ? 'bad_date' : 'missing_field', atText ? `${m.smu.at.replace("+", " and ")} "${atText}" is not a date the mapping understands.` : `No ${m.smu.at.replace("+", " and ")}.`);
     if (ms(at) > futureLimit) return fail('future_time', `${asset.unitNumber}: reading time ${atText} is in the future.`);
     const hText = rd.get(row, m.smu.hours);
     const hours = parseSourceNumber(hText);
@@ -713,6 +714,18 @@ export function toSourceCsv(
   const cols = <T>(pairs: Array<[string | undefined, (x: T) => string | number | undefined]>) => pairs.filter((p): p is [string, (x: T) => string | number | undefined] => !!p[0]);
   const withSite = <T>(pairs: Array<[string, (x: T) => string | number | undefined]>) => (site ? [...pairs, [site.column, () => site.value] as [string, (x: T) => string]] : pairs);
   const fd = (iso: Iso | undefined | null) => formatSourceDate(iso, timeZone, m.writeDateFormat);
+  // Work types and statuses are written in the target system's words. A word the mapping
+  // already knows is kept; otherwise the type follows the work class and the status follows
+  // open or closed and the readiness the word has in the Maximo mapping.
+  const keyFor = (map: Record<string, string>, v: string | undefined) => (v ? Object.keys(map).find((k) => map[k] === v) : undefined);
+  const typeWord = (w: WorkOrder) => (w.woType && m.workClasses[w.woType.toUpperCase()] ? w.woType : keyFor(m.workClasses, w.workClass) ?? w.woType);
+  const statusWord = (w: WorkOrder) => {
+    const words = statusWords(w.status);
+    if (words.some((x) => m.closedStatuses.includes(x) || m.readiness[x])) return w.status;
+    if (!w.open) return m.closedStatuses[0] ?? w.status;
+    const r = words.map((x) => MAXIMO_DEFAULT_MAPPING.readiness[x]).find(Boolean);
+    return keyFor(m.readiness, r) ?? w.status;
+  };
   // A joined column "DATE+TIME" is written as two columns: the date, then the time.
   const write = <T>(rows: T[], pairs: Array<[string, (x: T) => string | number | undefined]>) => {
     const out: Array<[string, (x: T) => string | number | undefined]> = pairs.flatMap(([c, f]): Array<[string, (x: T) => string | number | undefined]> => {
@@ -735,8 +748,8 @@ export function toSourceCsv(
   const woCols = withSite(cols<WorkOrder>([
     [m.workOrders.number, (w) => w.number],
     [m.workOrders.asset, (w) => w.externalAssetId ?? (w.assetId ? ext.get(w.assetId) : '')],
-    [m.workOrders.type, (w) => w.woType],
-    [m.workOrders.status, (w) => w.status],
+    [m.workOrders.type, typeWord],
+    [m.workOrders.status, statusWord],
     [m.workOrders.priority, (w) => w.priority],
     [m.workOrders.description, (w) => w.description],
     [m.workOrders.reportedAt, (w) => fd(w.reportedAt)],

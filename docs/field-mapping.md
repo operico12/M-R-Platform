@@ -92,7 +92,10 @@ documents (IK17), exported to a spreadsheet with technical column names.
 - SAP has no originating work order on the order list; inspection follow-ups (KPI-028) count only
   when the column is mapped.
 - Dates: `dd.MM.yyyy`, with or without `HH:mm:ss`, and the internal `yyyyMMdd` and `HHmmss`.
-- The sample files the app writes for SAP use the same columns and `dd.MM.yyyy HH:mm:ss`.
+- The sample files the app writes for SAP use the same columns and `dd.MM.yyyy HH:mm:ss`. Work types
+  and statuses are written in the chosen system's words: a word the mapping knows is kept; otherwise
+  the type follows the work class (corrective → PM01) and the status follows open or closed and the
+  readiness (closed → TECO, waiting for parts → MSPT).
 
 ## Later
 
