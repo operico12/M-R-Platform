@@ -3,7 +3,7 @@
 // The anon key is public by design: row-level security decides what each
 // signed-in person can read and write. Never put the service_role key here.
 
-import { DEFAULT_FLAG_RULES, DEFAULT_WORK_SETTINGS, withAlertDefaults, type ApprovalRequest, type AuditRecord, type AlertAnswer, type AlertSettings, emptyFishbone, type WorkSettings, type ImprovementAction, type Project, type Rca, type AuditEntry, type Dataset, type DownFlag, type FlagRulesConfig, type ReasonCode, type Role, type ShiftCalendar, type SiteUser, type SmuReading, type Target, type WorkOrder, type Asset, type Inspection, type InspectionForm, type SavedAnalysis, type SavedView, type Component, type ComponentEvent, type LifeTarget, type OilSample, type CmResponse, type ConditionSettings, withConditionDefaults, type RcmMode, type JobPlanVersion, type RcmSettings, withRcmDefaults, type SparesSettings, withSparesDefaults, type AssistSettings, withAssistDefaults, type PlantNode, type ProcessDelay, type RunSignal, type PlantSettings, withPlantDefaults, type Shutdown, type ScopeItem, type Round } from '@mr/core';
+import { DEFAULT_FLAG_RULES, DEFAULT_WORK_SETTINGS, withAlertDefaults, type ApprovalRequest, type AuditRecord, type AlertAnswer, type AlertSettings, emptyFishbone, type WorkSettings, type ImprovementAction, type Project, type Rca, type AuditEntry, type Dataset, type DownFlag, type FlagRulesConfig, type ReasonCode, type Role, type ShiftCalendar, type SiteUser, type SmuReading, type Target, type WorkOrder, type Asset, type Inspection, type InspectionForm, type SavedAnalysis, type SavedView, type Component, type ComponentEvent, type LifeTarget, type OilSample, type CmResponse, type ConditionSettings, withConditionDefaults, type RcmMode, type JobPlanVersion, type RcmSettings, withRcmDefaults, type SparesSettings, withSparesDefaults, type AssistSettings, withAssistDefaults, type PlantNode, type ProcessDelay, type RunSignal, type PlantSettings, withPlantDefaults, type Shutdown, type ScopeItem, type Round, type SiteSnapshot, type SiteRecord, twelveHourCalendar } from '@mr/core';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 
 const url = import.meta.env.VITE_SUPABASE_URL as string | undefined;
@@ -16,6 +16,8 @@ export interface RemoteSite {
   site_name: string;
   time_zone: string;
   role: Role;
+  /** From the multi-site migration; older databases leave it out. */
+  tenant_id?: string;
 }
 
 export interface Loaded {
@@ -91,6 +93,31 @@ export async function mySites(): Promise<RemoteSite[]> {
   if (!remote) return [];
   must(await remote.rpc('app_join'));
   return must(await remote.rpc('app_my_sites')) as RemoteSite[];
+}
+
+/** A new site of the tenant of `fromSite` (docs/multi-site.md). The adder becomes its Admin. */
+export async function addSiteRemote(fromSite: string, s: SiteRecord): Promise<void> {
+  const cal = twelveHourCalendar(s.timeZone);
+  must(await remote!.rpc('app_add_site', { p_from: fromSite, s, p_calendar: { shifts: cal.shifts, rotation: cal.rotation }, p_rules: DEFAULT_FLAG_RULES }));
+}
+
+export async function retireSiteRemote(siteId: string, reason: string): Promise<void> {
+  must(await remote!.rpc('app_retire_site', { p_site: siteId, p_reason: reason }));
+}
+
+/** What the Sites page needs from one site: units, flags, SMU and rules for the last few weeks. */
+export async function loadSnapshot(siteId: string, since: string): Promise<SiteSnapshot> {
+  const d = iso(must(await remote!.rpc('app_load', { p_site: siteId, p_since: since }))) as {
+    site: { id: string; tenantId: string; name: string; timeZone: string };
+    rules: Partial<FlagRulesConfig> | null; assets: Asset[]; lifecycle: Dataset['lifecycle']; flags: DownFlag[]; smu: SmuReading[];
+  };
+  return {
+    site: d.site,
+    assets: d.assets, lifecycle: d.lifecycle,
+    flags: d.flags.map((f) => ({ ...f, stages: f.stages ?? [], locations: f.locations ?? [], etas: f.etas ?? [], workOrders: f.workOrders ?? [], source: f.source ?? 'app', setBy: f.setBy ?? '', enteredAt: f.enteredAt ?? f.start })),
+    smu: d.smu.map((r) => ({ ...r, hours: Number(r.hours) })),
+    rules: { ...DEFAULT_FLAG_RULES, ...(d.rules ?? {}) },
+  };
 }
 
 export async function loadSite(siteId: string): Promise<Loaded> {

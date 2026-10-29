@@ -49,12 +49,14 @@ import {
   DEFAULT_RCM_SETTINGS, type JobPlanVersion, type RcmMode, type RcmSettings, DEFAULT_SPARES_SETTINGS, type SparesSettings,
   DEFAULT_ASSIST_SETTINGS, STARTER_CODES, buildSuggester, type AssistSettings, type Suggester,
   type PlantNode, type Shutdown, type ScopeItem, type RunOutcome, type Round, type RoundResult, startRound,
+  addSite, retireSite, twelveHourCalendar as _cal, type SiteInput, type SiteRecord, type SiteSnapshot,
   DEFAULT_PLANT_SETTINGS, generatePlant, type ClassifyResult, type DelayContext, type PlantSettings, type ProcessDelay, type RunSignal,
 } from '@mr/core';
 import { demoImprovements } from './data/demo-improve';
-import { savePlantNodes, saveShutdown, sendRound, saveProcessDelays, saveRunSignals, type PlantData, saveRcmModes, saveJobPlanVersion, saveCmResponse, saveOilSamples, saveComponentRecord, saveViewRecord, saveAnalysisRecord, loadPhoto, saveForms, sendInspection, sendPhoto, SendError, saveAlertAnswer, saveDecision, saveRequests, saveFlags, saveRecords, saveSetting, saveTarget, saveTaskStatus, type Loaded } from './data/remote';
+import { addSiteRemote, loadSnapshot, retireSiteRemote, savePlantNodes, saveShutdown, sendRound, saveProcessDelays, saveRunSignals, type PlantData, saveRcmModes, saveJobPlanVersion, saveCmResponse, saveOilSamples, saveComponentRecord, saveViewRecord, saveAnalysisRecord, loadPhoto, saveForms, sendInspection, sendPhoto, SendError, saveAlertAnswer, saveDecision, saveRequests, saveFlags, saveRecords, saveSetting, saveTarget, saveTaskStatus, type Loaded } from './data/remote';
 import { demoProjects } from './data/demo-projects';
 import { demoForms, demoInspections } from './data/demo-inspections';
+import { DEMO_SITES, demoFleet, type SiteChoice } from './data/sites';
 import { backoffMs, forgetPhoto, localPhoto, readDrafts, readOutbox, readRoundDrafts, writeDrafts, writeOutbox, writeRoundDrafts, type OutboxItem } from './inspect/device';
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 
@@ -205,6 +207,13 @@ export interface AppState {
   lastSync: string;
   theme: 'light' | 'dark';
   setTheme: (t: 'light' | 'dark') => void;
+  /** Sites this person belongs to (docs/multi-site.md). The current one is ds.site. */
+  sites: SiteChoice[];
+  switchSite: (id: string) => void;
+  /** Units, flags, SMU and rules of a site for the Sites page. */
+  snapshot: (site: SiteChoice) => Promise<SiteSnapshot>;
+  addSite: (input: SiteInput) => Promise<ConsoleResult<SiteRecord>>;
+  retireSite: (site: SiteChoice, reason: string) => Promise<ConsoleResult<SiteRecord>>;
 }
 
 const Ctx = createContext<AppState | null>(null);
@@ -223,8 +232,12 @@ function readTheme(): 'light' | 'dark' {
   return window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
 }
 
-export function AppProvider({ children, live, onReload, onSignOut }: { children: ReactNode; live?: Loaded; onReload?: () => void; onSignOut?: () => void }) {
-  const [ds, setDs] = useState<Dataset>(() => live?.ds ?? generateFleet({ seed: 42, units: 40, days: 120 }));
+export function AppProvider({ children, live, onReload, onSignOut, sites = DEMO_SITES, siteId: chosenSite, onSwitchSite, onSitesChanged }: {
+  children: ReactNode; live?: Loaded; onReload?: () => void; onSignOut?: () => void;
+  /** Multi-site: the person's sites, the demo site to show, and what to do on a switch or after adding or retiring one. */
+  sites?: SiteChoice[]; siteId?: string; onSwitchSite?: (id: string) => void; onSitesChanged?: (sites: SiteChoice[], switchTo?: string) => void;
+}) {
+  const [ds, setDs] = useState<Dataset>(() => live?.ds ?? demoFleet(sites.find((x) => x.id === chosenSite) ?? sites[0] ?? DEMO_SITES[0]!));
   const [syncError, setSyncError] = useState<string | null>(null);
   const [importRuns, setImportRuns] = useState<ImportRun[]>([]);
   const [targetList, setTargetList] = useState<Target[]>(() => live?.targets ?? []);
@@ -996,7 +1009,40 @@ export function AppProvider({ children, live, onReload, onSignOut }: { children:
   }, [live, siteId]);
   const people = useMemo(() => users.filter((u) => !u.retiredAt && !u.invited), [users]);
   const userName = useCallback((id: string) => users.find((u) => u.id === id)?.name ?? 'Unknown user', [users]);
-  const value: AppState = { ds, forms, runForms, inspections, drafts, saveDraft, discardDraft, runInspection, outbox, sendOutbox: () => void sendOutbox(true), dropOutboxItem, photo, workSettings, runWorkSettings, alertSettings, runAlertSettings, alertAnswers, runAlertAnswer, analyses, runAnalysis, views, runView, components, componentEvents, lifeTargets, runComponents, oilSamples, cmResponses, conditionSettings, runSamples, runResponse, runConditionSettings, rcmModes, jobPlanVersions, rcmSettings, runRcm, runJobPlan, runRcmSettings, sparesSettings, runSparesSettings, assistSettings, runAssistSettings, suggester, plant, plantSettings, runPlantSettings, runDelay, runClassify, addSignals, runNode, runShutdown, runShutdownFlow, rounds, roundDrafts, beginRound, saveRoundDraft, discardRound, runRound, ruleAlerts: ruleAlertList, requests, runRequest, decide, actions: improve.actions, rcas: improve.rcas, projects: improve.projects, runImprove, people, userName, targets, targetOf, targetList, users, codes, runConsole, mode: live ? 'live' : 'demo', syncError, clearSyncError: () => setSyncError(null), signOut: onSignOut, importRuns, applyImport, newId, flags, audit, rules, now, actor, setRole, run, lastSync: ds.generatedAt, theme, setTheme };
+  const snapshot = useCallback(async (site: SiteChoice): Promise<SiteSnapshot> => {
+    if (live) return loadSnapshot(site.id, new Date(Date.now() - 36 * 864e5).toISOString());
+    const d = site.id === ds.site.id ? { ...ds, flags } : demoFleet(site);
+    return { site: { ...d.site, tenantId: d.tenantId }, assets: d.assets, flags: d.flags, smu: d.smu, lifecycle: d.lifecycle, rules };
+  }, [live, ds, flags, rules]);
+  const siteRecords = useMemo<SiteRecord[]>(() => sites.map((x) => ({ id: x.id, tenantId: x.tenantId, name: x.name, timeZone: x.timeZone })), [sites]);
+  const addSiteCmd = useCallback(async (input: SiteInput): Promise<ConsoleResult<SiteRecord>> => {
+    const r = addSite({ actor, now: new Date().toISOString(), newId, timeZone: ds.site.timeZone, calendar: ds.calendar }, siteRecords, ds.tenantId, input);
+    if (!r.ok) return r;
+    const s = r.records[0]!;
+    try {
+      if (live) await addSiteRemote(siteId, s);
+    } catch (e) {
+      return { ok: false, errors: [e instanceof Error ? e.message : String(e)] };
+    }
+    setAudit((prev) => [...r.audit, ...prev]);
+    onSitesChanged?.([...sites, { id: s.id, name: s.name, timeZone: s.timeZone, tenantId: s.tenantId, role: 'admin' }]);
+    return r;
+  }, [actor, ds, siteRecords, live, siteId, sites, onSitesChanged]);
+  const retireSiteCmd = useCallback(async (site: SiteChoice, reason: string): Promise<ConsoleResult<SiteRecord>> => {
+    // The role that counts is the person's role at the site being retired.
+    const who = live ? { ...actor, role: site.role } : actor;
+    const r = retireSite({ actor: who, now: new Date().toISOString(), newId, timeZone: site.timeZone, calendar: _cal(site.timeZone) }, siteRecords, site.id, reason);
+    if (!r.ok) return r;
+    try {
+      if (live) await retireSiteRemote(site.id, reason.trim());
+    } catch (e) {
+      return { ok: false, errors: [e instanceof Error ? e.message : String(e)] };
+    }
+    const rest = sites.filter((x) => x.id !== site.id);
+    onSitesChanged?.(rest, site.id === ds.site.id ? rest[0]?.id : undefined);
+    return r;
+  }, [actor, live, siteRecords, sites, ds.site.id, onSitesChanged]);
+  const value: AppState = { sites, switchSite: (id: string) => onSwitchSite?.(id), snapshot, addSite: addSiteCmd, retireSite: retireSiteCmd, ds, forms, runForms, inspections, drafts, saveDraft, discardDraft, runInspection, outbox, sendOutbox: () => void sendOutbox(true), dropOutboxItem, photo, workSettings, runWorkSettings, alertSettings, runAlertSettings, alertAnswers, runAlertAnswer, analyses, runAnalysis, views, runView, components, componentEvents, lifeTargets, runComponents, oilSamples, cmResponses, conditionSettings, runSamples, runResponse, runConditionSettings, rcmModes, jobPlanVersions, rcmSettings, runRcm, runJobPlan, runRcmSettings, sparesSettings, runSparesSettings, assistSettings, runAssistSettings, suggester, plant, plantSettings, runPlantSettings, runDelay, runClassify, addSignals, runNode, runShutdown, runShutdownFlow, rounds, roundDrafts, beginRound, saveRoundDraft, discardRound, runRound, ruleAlerts: ruleAlertList, requests, runRequest, decide, actions: improve.actions, rcas: improve.rcas, projects: improve.projects, runImprove, people, userName, targets, targetOf, targetList, users, codes, runConsole, mode: live ? 'live' : 'demo', syncError, clearSyncError: () => setSyncError(null), signOut: onSignOut, importRuns, applyImport, newId, flags, audit, rules, now, actor, setRole, run, lastSync: ds.generatedAt, theme, setTheme };
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
 

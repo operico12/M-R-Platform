@@ -24,6 +24,9 @@ import { UnitList, UnitPage } from './screens/Units';
 import { Work } from './screens/Work';
 import { Assist } from './screens/Assist';
 import { Plant } from './screens/Plant';
+import { Sites } from './screens/Sites';
+import { DEMO_SITES, rememberSite, rememberedSite, type SiteChoice } from './data/sites';
+import { switcherOrder } from '@mr/core';
 import { AppProvider, useApp } from './store';
 
 function useHash(): string {
@@ -60,6 +63,7 @@ const NAV: Array<[string, string]> = [
   ['#/quality', 'Data quality'],
   ['#/import', 'Data import'],
   ['#/console', 'Console'],
+  ['#/sites', 'Sites'],
 ];
 
 const ROLES: Array<[Role, string]> = [
@@ -113,6 +117,7 @@ function Shell() {
     case 'import': page = <Imports />; break;
     case 'rules': page = <Console tab="codes" />; break;
     case 'console': page = <Console tab={arg ?? 'users'} />; break;
+    case 'sites': page = <Sites />; break;
     default: page = <Board tv={false} />;
   }
 
@@ -126,7 +131,14 @@ function Shell() {
   return (
     <div className="shell">
       <nav className="nav" aria-label="Main">
-        <h1>M&amp;R Platform<small>{app.ds.site.name}</small></h1>
+        <h1>M&amp;R Platform{app.sites.length > 1 ? null : <small>{app.ds.site.name}</small>}</h1>
+        {app.sites.length > 1 && (
+          <label className="site-switch">
+            <select value={app.ds.site.id} onChange={(e) => app.switchSite(e.target.value)} aria-label="Site">
+              {app.sites.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
+            </select>
+          </label>
+        )}
         {NAV.map(([href, label]) => (
           <a key={href} href={href} aria-current={hash.startsWith(href) || (href === '#/units' && path === 'unit') ? 'page' : undefined}>
             {label}{href === '#/alerts' && openCount > 0 && <span className="nav-count" aria-label={`${openCount} open`}>{openCount}</span>}
@@ -171,15 +183,23 @@ function Shell() {
 }
 
 export function App() {
-  if (!remote) {
-    return (
-      <AppProvider>
-        <Shell />
-      </AppProvider>
-    );
-  }
+  if (!remote) return <Demo />;
   return <Live />;
 }
+
+/** Demo mode: two synthetic mines in different time zones; switching remounts the app on the other one. */
+function Demo() {
+  const [sites, setSites] = useState<SiteChoice[]>(DEMO_SITES);
+  const [siteId, setSiteId] = useState(() => switcherOrder(DEMO_SITES, rememberedSite('demo'))[0]!.id);
+  const pick = (id: string) => { rememberSite('demo', id); setSiteId(id); };
+  return (
+    <AppProvider key={siteId} sites={sites} siteId={siteId} onSwitchSite={pick} onSitesChanged={(next, to) => { setSites(next); if (to) pick(to); }}>
+      <Shell />
+    </AppProvider>
+  );
+}
+
+const toChoice = (s: RemoteSite): SiteChoice => ({ id: s.site_id, name: s.site_name, timeZone: s.time_zone, role: s.role, tenantId: s.tenant_id ?? '' });
 
 // ---------- live mode: sign in, pick the site, load it ----------
 
@@ -194,6 +214,8 @@ type LiveState =
 function Live() {
   const [st, setSt] = useState<LiveState>({ step: 'checking' });
   const [site, setSite] = useState<RemoteSite | null>(null);
+  const [sites, setSites] = useState<RemoteSite[]>([]);
+  const wanted = useRef<string | null>(null);
   // Who the loaded site belongs to. Supabase reports "signed in" again each time the tab comes back
   // into view; that must not reload the site (and lose what is on screen) for the same person.
   const loadedFor = useRef<string | null>(null);
@@ -204,9 +226,14 @@ function Live() {
       if (!data.session) { loadedFor.current = null; return setSt({ step: 'signed_out' }); }
       loadedFor.current = data.session.user.id;
       setSt({ step: 'loading' });
-      const sites = await mySites();
-      const chosen = sites[0];
+      const list = await mySites();
+      setSites(list);
+      // The site asked for (a switch), else the one last chosen on this device, else the first by name.
+      const uid = data.session.user.id;
+      const order = switcherOrder(list.map((x) => ({ ...x, id: x.site_id, name: x.site_name })), wanted.current ?? rememberedSite(uid));
+      const chosen = order[0];
       if (!chosen) return setSt({ step: 'no_access', email: data.session.user.email ?? '' });
+      rememberSite(uid, chosen.site_id);
       setSite(chosen);
       const loaded = await loadSite(chosen.site_id);
       setSt((prev) => ({ step: 'ready', data: loaded, n: prev.step === 'ready' ? prev.n + 1 : 0 }));
@@ -227,7 +254,8 @@ function Live() {
 
   if (st.step === 'ready') {
     return (
-      <AppProvider key={st.n} live={st.data} onReload={() => void load()} onSignOut={signOut}>
+      <AppProvider key={st.n} live={st.data} onReload={() => void load()} onSignOut={signOut} sites={sites.map(toChoice)} siteId={site?.site_id}
+        onSwitchSite={(id) => { wanted.current = id; void load(); }} onSitesChanged={(_next, to) => { if (to) wanted.current = to; void load(); }}>
         <Shell />
       </AppProvider>
     );
