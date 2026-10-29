@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { DownFlag } from '../src/types.js';
-import { EMPTY_BOARD_FILTER, boardCounts, boardFilterFromQuery, boardFilterToQuery, downSince, filterBoard, toggleIn, upSince, type StatusRow } from '../src/board.js';
+import { ALERT_PLAIN, sortAlerts } from '../src/alerts.js';
+import { EMPTY_BOARD_FILTER, boardCounts, boardPlace, stageSince, boardFilterFromQuery, boardFilterToQuery, downSince, filterBoard, toggleIn, upSince, type StatusRow } from '../src/board.js';
 
 function flag(id: string, unitId: string, start: string, end: string | null, extra: Partial<DownFlag> = {}): DownFlag {
   return {
@@ -44,33 +45,73 @@ describe('status board times', () => {
   });
 });
 
+describe('three statuses', () => {
+  const stage = (st: 'waiting_parts' | 'in_repair', start: string) => ({ stage: st, start, end: null, setBy: 'u', enteredAt: start });
+  it('places a unit: down wins over standby, the sub-status is the current stage', () => {
+    const down = { type: 'unscheduled' as const, stages: [stage('in_repair', '2026-10-29T01:00:00Z'), stage('waiting_parts', '2026-10-29T05:00:00Z')] };
+    expect(boardPlace(down, { id: 'sb' }, false)).toEqual({ group: 'unsched', sub: 'waiting_parts' });
+    expect(boardPlace({ type: 'scheduled', stages: [] }, undefined, false)).toEqual({ group: 'sched', sub: 'no_stage' });
+    expect(boardPlace(undefined, { id: 'sb' }, false)).toEqual({ group: 'operational', sub: 'standby' });
+    expect(boardPlace(undefined, undefined, false)).toEqual({ group: 'operational', sub: 'in_use' });
+    expect(boardPlace(down, undefined, true)).toEqual({ group: 'parked', sub: 'parked' });
+  });
+  it('time in stage counts from the current stage start', () => {
+    expect(stageSince({ start: '2026-10-29T01:00:00Z', stages: [stage('in_repair', '2026-10-29T01:00:00Z'), stage('waiting_parts', '2026-10-29T05:00:00Z')] })).toBe('2026-10-29T05:00:00Z');
+    expect(stageSince({ start: '2026-10-29T01:00:00Z', stages: [] })).toBe('2026-10-29T01:00:00Z');
+  });
+});
+
 describe('status board filters', () => {
   const rows: StatusRow[] = [
-    { unitId: '1', unitNumber: 'HT101', model: '793F', status: 'run' },
-    { unitId: '2', unitNumber: 'HT102', model: '793F', status: 'down', text: 'Tyres Tyre bay' },
-    { unitId: '3', unitNumber: 'HT201', model: '797F', status: 'sched', text: 'PM 250 Line 3' },
-    { unitId: '4', unitNumber: 'HT202', model: '797F', status: 'run' },
-    { unitId: '5', unitNumber: 'HT212', model: '797F', status: 'parked' },
+    { unitId: '1', unitNumber: 'HT101', model: '793F', group: 'operational', sub: 'in_use' },
+    { unitId: '2', unitNumber: 'HT102', model: '793F', group: 'unsched', sub: 'waiting_parts', text: 'Tyres Tyre bay' },
+    { unitId: '3', unitNumber: 'HT201', model: '797F', group: 'sched', sub: 'in_repair', text: 'PM 250 Line 3' },
+    { unitId: '4', unitNumber: 'HT202', model: '797F', group: 'operational', sub: 'standby' },
+    { unitId: '5', unitNumber: 'HT212', model: '797F', group: 'parked', sub: 'parked' },
+    { unitId: '6', unitNumber: 'HT301', model: '797F', group: 'unsched', sub: 'in_repair' },
   ];
+  const n = (f: Partial<typeof EMPTY_BOARD_FILTER>) => filterBoard(rows, { ...EMPTY_BOARD_FILTER, ...f }).map((r) => r.unitNumber);
 
-  it('filters by status, model and search together', () => {
-    expect(filterBoard(rows, EMPTY_BOARD_FILTER)).toHaveLength(5);
-    expect(filterBoard(rows, { ...EMPTY_BOARD_FILTER, statuses: ['run'] }).map((r) => r.unitNumber)).toEqual(['HT101', 'HT202']);
-    expect(filterBoard(rows, { statuses: ['run'], models: ['797F'], q: '' }).map((r) => r.unitNumber)).toEqual(['HT202']);
-    expect(filterBoard(rows, { ...EMPTY_BOARD_FILTER, q: 'tyre' }).map((r) => r.unitNumber)).toEqual(['HT102']);
-    expect(filterBoard(rows, { ...EMPTY_BOARD_FILTER, statuses: ['down', 'sched'] })).toHaveLength(2);
+  it('filters by status, sub-status, model and search together', () => {
+    expect(n({})).toHaveLength(6);
+    expect(n({ groups: ['operational'] })).toEqual(['HT101', 'HT202']);
+    expect(n({ groups: ['operational'], models: ['797F'] })).toEqual(['HT202']);
+    expect(n({ q: 'tyre' })).toEqual(['HT102']);
+    expect(n({ q: 'waiting parts' })).toEqual(['HT102']);
+    expect(n({ groups: ['unsched', 'sched'] })).toHaveLength(3);
+    // The same stage under scheduled and unscheduled is two sub-statuses.
+    expect(n({ subs: ['unsched:in_repair'] })).toEqual(['HT301']);
+    // A status or a sub-status pressed: either shows.
+    expect(n({ groups: ['sched'], subs: ['operational:standby'] })).toEqual(['HT201', 'HT202']);
   });
 
-  it('counts what a click on a status would show', () => {
-    expect(boardCounts(rows, { statuses: ['down'], models: ['797F'], q: '' })).toEqual({ run: 1, standby: 0, sched: 1, down: 0, stale: 0, parked: 1 });
+  it('counts what a press on a status or sub-status would show', () => {
+    const c = boardCounts(rows, { ...EMPTY_BOARD_FILTER, groups: ['unsched'], subs: ['operational:standby'], models: ['797F'] });
+    expect(c.groups).toEqual({ operational: 1, sched: 1, unsched: 1, parked: 1 });
+    expect(c.subs).toEqual({ 'operational:standby': 1, 'sched:in_repair': 1, 'unsched:in_repair': 1, 'parked:parked': 1 });
   });
 
-  it('round-trips the filter through the address', () => {
-    const f = { statuses: ['down' as const, 'sched' as const], models: ['793F'], q: 'brake' };
+  it('round-trips the filter through the address, and old links still work', () => {
+    const f = { groups: ['unsched' as const, 'sched' as const], subs: ['unsched:waiting_parts'], models: ['793F'], q: 'brake' };
     expect(boardFilterFromQuery(boardFilterToQuery(f))).toEqual(f);
-    expect(boardFilterFromQuery('status=down,bogus&model=')).toEqual({ statuses: ['down'], models: [], q: '' });
+    expect(boardFilterFromQuery('status=down,bogus,run,standby&sub=unsched:nap,x&model=')).toEqual({ groups: ['unsched', 'operational'], subs: [], models: [], q: '' });
     expect(boardFilterToQuery(EMPTY_BOARD_FILTER)).toBe('');
     expect(toggleIn(['a'], 'a')).toEqual([]);
     expect(toggleIn(['a'], 'b')).toEqual(['a', 'b']);
+  });
+});
+
+describe('alerts in plain words', () => {
+  it('every kind has a title, a meaning and a next step', () => {
+    for (const v of Object.values(ALERT_PLAIN)) expect(v.title && v.what && v.next).toBeTruthy();
+  });
+  it('lists the most urgent kind first, then the longest on', () => {
+    const a = [
+      { kind: 'flag_open_long' as const, since: '2026-10-20T00:00:00Z' },
+      { kind: 'no_eta' as const, since: '2026-10-29T05:00:00Z' },
+      { kind: 'eta_passed' as const, since: '2026-10-29T08:00:00Z' },
+      { kind: 'no_eta' as const, since: '2026-10-29T01:00:00Z' },
+    ];
+    expect(sortAlerts(a).map((x) => `${x.kind} ${x.since.slice(11, 13)}`)).toEqual(['eta_passed 08', 'no_eta 01', 'no_eta 05', 'flag_open_long 00']);
   });
 });
