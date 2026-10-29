@@ -41,7 +41,7 @@ export interface AssetLifecycleInterval {
 export type FlagType = 'scheduled' | 'unscheduled';
 
 /** A7 section 3.1. */
-export type FlagState = 'proposed' | 'open' | 'released' | 'voided' | 'process_delay' | 'plant_node' | 'shutdown' | 'round';
+export type FlagState = 'proposed' | 'open' | 'released' | 'voided' | 'process_delay';
 
 /** A7 section 4. */
 export type Stage =
