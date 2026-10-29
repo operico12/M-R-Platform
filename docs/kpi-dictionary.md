@@ -63,8 +63,24 @@ Code: `packages/core/src/reliability.ts`. All use the downtime analysis filters,
 | KPI-031 | Cost per hour of component life (phase 3) | (Purchase or rebuild cost that started each life − warranty recovered) ÷ hours of that life, summed over ended lives | Cost roles only (plan 11.2). Same formula as calculator C-09. Code: `costPerLifeHour` in `components.ts`. |
 | KPI-032 | Condition monitoring response (phase 3, plan 3.3) | Oil alerts responded to within the target time ÷ oil alerts whose target time ended in the period | Lead. An alert is a sample at Action or Critical, not voided. Target time: Critical 24 h, Action 72 h from the lab report (settings). Alerts still inside their time are left out until it ends; late or missing answers count against. Code: `cmResponse` in `condition.ts`; docs/condition-monitoring.md. |
 
+## Fixed plant (phase 3b, plan 4.3)
+
+Code: `packages/core/src/plant.ts`; rules in docs/fixed-plant.md. Run hours come from the historian
+in place of SMU. Process delays and idle installed spares never count as maintenance downtime.
+
+| ID | KPI | Formula | Notes |
+| --- | --- | --- | --- |
+| KPI-033 | Equipment availability (plant) | KPI-001 for one fixed plant equipment | Scheduled flags are planned shutdown, unscheduled are unplanned maintenance. Process delays and standby time are available. |
+| KPI-034 | Circuit and plant availability | (calendar h − h the node is down) ÷ calendar h | A node is down when fewer than its needed children are available (k of n, recursive up the structure). When process delays are what take it below needed, it is in process delay (KPI-038), not down. Calendar h is the whole period. |
+| KPI-035 | Utilisation (plant) | run h ÷ available h | Run h from historian run and stop signals. A node runs when at least its needed children run. Empty when the equipment has no signals in the period. |
+| KPI-036 | Unplanned trips per week | unscheduled down events that start in the period ÷ (calendar h ÷ 168) | Per equipment, or summed over a node's equipment. Events as R7. Minor stops count; they are trips. |
+| KPI-037 | Throughput lost | Σ h the node is down or in process delay × the node's planned rate (t/h) | By cause: the system or reason of each flag, or the code of each delay, holding the node below k, shared equally at the same moment. Split into maintenance and process. Circuits are not summed into a plant total; the plant uses its own node. |
+| KPI-038 | Process delay hours | h the node is in process delay | Process delays do not reduce availability (A7 section 11). |
+
 ## Worked examples encoded as tests
 
+- KPI-033 and KPI-034, duty and standby pumps (1 of 2), one week: duty pump down 6 h → duty 96.4%, circuit 100%, nothing lost; standby also down 2 h inside those 6 h → circuit 98.8%, 2 h × rate lost.
+- KPI-037 and KPI-038: conveyor stopped 3 h by a full stockpile at 1,000 t/h → availability 100%, process delay 3 h, 3,000 t lost against "Bins or stockpile full".
 - KPI-032: four alerts ending in the week, two answered in time, one 10 h late, one not answered → 50%.
 - Plan 3.2, one 12-hour shift: PA 62.5%, utilisation 90.7%, standby 0.7 h, effective utilisation 56.7%.
 - Plan Appendix A: one truck, one week, 28 h down → PA 83.3%, unchanged by 10 h standby.
