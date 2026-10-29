@@ -61,6 +61,7 @@ export function locationLabel(f: DownFlag, ds: Dataset): string {
     return line ? lineName(line) : 'Shop line';
   }
   if (l.kind === 'field') return `Field: ${l.fieldLocation ?? '?'}`;
+  if (l.kind === 'in_place' && l.functionalLocation) return `In place: ${l.functionalLocation}`;
   return LOCATION_LABELS[l.kind];
 }
 

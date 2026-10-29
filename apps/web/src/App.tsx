@@ -23,6 +23,7 @@ import { ShopLines } from './screens/ShopLines';
 import { UnitList, UnitPage } from './screens/Units';
 import { Work } from './screens/Work';
 import { Assist } from './screens/Assist';
+import { Plant } from './screens/Plant';
 import { AppProvider, useApp } from './store';
 
 function useHash(): string {
@@ -38,6 +39,7 @@ function useHash(): string {
 const NAV: Array<[string, string]> = [
   ['#/board', 'Status board'],
   ['#/lines', 'Shop lines'],
+  ['#/plant', 'Plant overview'],
   ['#/units', 'Units'],
   ['#/performance', 'Performance'],
   ['#/analysis', 'Downtime analysis'],
@@ -88,6 +90,7 @@ function Shell() {
     case 'tv':
     case 'board': page = <Board tv={tv} />; break;
     case 'lines': page = <ShopLines />; break;
+    case 'plant': page = <Plant query={query} />; break;
     case 'units': page = <UnitList />; break;
     case 'unit': page = <UnitPage id={arg ?? ''} />; break;
     case 'performance': page = <Performance />; break;

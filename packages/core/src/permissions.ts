@@ -35,6 +35,7 @@ export type Action =
   | 'edit_life_targets'
   | 'record_condition'
   | 'edit_condition_settings'
+  | 'edit_plant_settings'
   | 'edit_rcm'
   | 'issue_job_plans'
   | 'edit_spares'
@@ -81,6 +82,8 @@ const MATRIX: Record<Action, Partial<Record<Role, Permission>>> = {
   // docs/condition-monitoring.md: recording mirrors component events; settings mirror alert rules.
   record_condition: { supervisor: 'yes', reliability_engineer: 'yes', superintendent: 'yes' },
   edit_condition_settings: { reliability_engineer: 'yes', superintendent: 'yes', admin: 'yes' },
+  // docs/fixed-plant.md: plan 11.2 has no plant settings row; these follow the alert and condition settings.
+  edit_plant_settings: { reliability_engineer: 'yes', superintendent: 'yes', admin: 'yes' },
   // docs/rcm.md: plan 11.2 has no RCM row; these follow "Lead root cause analyses".
   edit_rcm: { reliability_engineer: 'yes', superintendent: 'yes' },
   issue_job_plans: { reliability_engineer: 'yes', superintendent: 'yes' },
@@ -126,6 +129,7 @@ export const ACTION_LABELS: Record<Action, string> = {
   edit_life_targets: 'Set component target life',
   record_condition: 'Enter oil results and respond to them',
   edit_condition_settings: 'Change condition monitoring settings',
+  edit_plant_settings: 'Change plant stop detection settings and process delay codes',
   edit_rcm: 'Edit the RCM failure mode library',
   issue_job_plans: 'Issue PM job plan revisions',
   edit_spares: 'Change spares sizing settings',

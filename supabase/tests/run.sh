@@ -22,5 +22,6 @@ psql -v ON_ERROR_STOP=1 -q -d "$DB" -f tests/components_api.sql
 psql -v ON_ERROR_STOP=1 -q -d "$DB" -f tests/condition_api.sql
 psql -v ON_ERROR_STOP=1 -q -d "$DB" -f tests/rcm_api.sql
 psql -v ON_ERROR_STOP=1 -q -d "$DB" -f tests/spares_api.sql
+psql -v ON_ERROR_STOP=1 -q -d "$DB" -f tests/plant_api.sql
 psql -v ON_ERROR_STOP=1 -q -d "$DB" -f tests/assist_api.sql
 psql -v ON_ERROR_STOP=1 -q -d "$DB" -f tests/assist_questions_api.sql
