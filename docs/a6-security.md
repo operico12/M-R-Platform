@@ -77,7 +77,7 @@ The app writes no raw HTML. React escapes all text.
 | S-6 | The assist Edge Function allowed calls from any web origin. A sign-in is still needed. | Low | Fixed: set the secret `ALLOWED_ORIGIN` to the app's address |
 | S-7 | No security headers on the web app. | Low | Fixed: `apps/web/vercel.json` |
 | S-8 | `app_log` lets a member add audit entries for their own actions. They are always recorded as that person, and nothing can edit them. | Accepted | Needed for offline work; reviewed |
-| S-9 | Supabase Auth lets anyone sign up with an email link. A new account sees nothing until an Admin invites that email. | Accepted | Owner can turn off open sign-ups in Supabase (section 8) |
+| S-9 | Supabase Auth lets anyone sign up with an email link. A new account sees nothing until an Admin invites that email or approves its request. | Accepted | Requests only reach sites that list the person's email domain (docs/access.md) |
 | S-10 | The style policy allows inline styles (React style attributes). Scripts stay blocked. | Accepted | Low risk |
 
 ## 7. Incidents
@@ -93,12 +93,12 @@ The app writes no raw HTML. React escapes all text.
 1. Run `20-security-hardening.sql` in the Supabase SQL editor after 19.
 2. In Supabase, under Edge Functions, then Secrets, set `ALLOWED_ORIGIN` to
    `https://m-r-platform.vercel.app`.
-3. In Supabase, under Authentication, then Sign In / Providers, consider turning off
-   "Allow new users to sign up" once everyone is invited (S-9). Invited people still sign in.
+3. Keep "Allow new users to sign up" on in Supabase (Authentication, Sign In / Providers): account
+   requests need it. A new account reaches nothing until an Admin approves it (docs/access.md).
 4. Redeploy the Vercel project once this PR is merged, so the security headers apply.
 
 ## Later
 
 - A penetration test by an outside firm before the first paying company.
-- Multi-factor sign-in for Admins.
+- Company single sign-on (docs/access.md, Later).
 - A data processing agreement template for companies.

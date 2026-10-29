@@ -37,21 +37,24 @@ import { AlertRulesPage } from './AlertRules';
 import { ApprovalsPage } from './Approvals';
 import { AuditLogPage } from './AuditLog';
 import { WorkSettingsPage } from './WorkSettings';
+import { AccessPage } from './AccessSettings';
 
-type Tab = 'users' | 'targets' | 'approvals' | 'work' | 'alerts' | 'codes' | 'audit';
-const TABS: Array<[Tab, string]> = [['users', 'Users'], ['targets', 'Targets'], ['approvals', 'Approvals'], ['work', 'Work settings'], ['alerts', 'Alert rules'], ['codes', 'Flags and codes'], ['audit', 'Audit log']];
+type Tab = 'users' | 'access' | 'targets' | 'approvals' | 'work' | 'alerts' | 'codes' | 'audit';
+const TABS: Array<[Tab, string]> = [['users', 'Users'], ['access', 'Access'], ['targets', 'Targets'], ['approvals', 'Approvals'], ['work', 'Work settings'], ['alerts', 'Alert rules'], ['codes', 'Flags and codes'], ['audit', 'Audit log']];
 
 export function Console({ tab }: { tab: string }) {
   const t: Tab = TABS.some(([k]) => k === tab) ? (tab as Tab) : 'users';
   const app = useApp();
   const waiting = waitingOn(app.requests, app.actor.userId, app.actor.role).length;
+  const asks = can(app.actor, 'manage_access') ? (app.accessRequests ?? []).filter((r) => r.status === 'pending').length : 0;
   return (
     <div className="stack">
       <div className="page-head"><h2>Console</h2><span className="muted small">Every change is in the audit trail with who, when, before and after.</span></div>
       <div className="chips" role="tablist">
-        {TABS.map(([k, l]) => <a key={k} role="tab" aria-selected={t === k} className="chip" aria-pressed={t === k} style={{ display: 'inline-flex', alignItems: 'center', textDecoration: 'none', minHeight: 40 }} href={`#/console/${k}`}>{l}{k === 'approvals' && waiting > 0 && <span className="nav-count" aria-label={`${waiting} waiting for you`}>{waiting}</span>}</a>)}
+        {TABS.map(([k, l]) => <a key={k} role="tab" aria-selected={t === k} className="chip" aria-pressed={t === k} style={{ display: 'inline-flex', alignItems: 'center', textDecoration: 'none', minHeight: 40 }} href={`#/console/${k}`}>{l}{k === 'approvals' && waiting > 0 && <span className="nav-count" aria-label={`${waiting} waiting for you`}>{waiting}</span>}{k === 'access' && asks > 0 && <span className="nav-count" aria-label={`${asks} account requests waiting`}>{asks}</span>}</a>)}
       </div>
       {t === 'users' && <Users />}
+      {t === 'access' && <AccessPage />}
       {t === 'targets' && <Targets />}
       {t === 'approvals' && <ApprovalsPage />}
       {t === 'work' && <WorkSettingsPage />}

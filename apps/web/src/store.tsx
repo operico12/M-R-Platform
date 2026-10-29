@@ -50,11 +50,11 @@ import {
   DEFAULT_ASSIST_SETTINGS, STARTER_CODES, buildSuggester, type AssistSettings, type Suggester,
   type PlantNode, type Shutdown, type ScopeItem, type RunOutcome, type Round, type RoundResult, startRound,
   DEFAULT_IMPORT_SOURCE, mappingFor, setImportSource, type ImportMapping, type ImportSource,
-  addSite, retireSite, createApiKey, revokeApiKey, apiKeyFromHex, type ApiKeyInput, type ApiKeyRecord, twelveHourCalendar as _cal, type SiteInput, type SiteRecord, type SiteSnapshot,
+  addSite, retireSite, createApiKey, revokeApiKey, apiKeyFromHex, type ApiKeyInput, type ApiKeyRecord, DEFAULT_ACCESS, type AccessSettings, type AccessRequest, decideAccessRequest, type Role as AccessRole, twelveHourCalendar as _cal, type SiteInput, type SiteRecord, type SiteSnapshot,
   DEFAULT_PLANT_SETTINGS, generatePlant, type ClassifyResult, type DelayContext, type PlantSettings, type ProcessDelay, type RunSignal,
 } from '@mr/core';
 import { demoImprovements } from './data/demo-improve';
-import { addSiteRemote, loadApiKeys, createApiKeyRemote, revokeApiKeyRemote, loadSnapshot, retireSiteRemote, savePlantNodes, saveShutdown, sendRound, saveProcessDelays, saveRunSignals, type PlantData, saveRcmModes, saveJobPlanVersion, saveCmResponse, saveOilSamples, saveComponentRecord, saveViewRecord, saveAnalysisRecord, loadPhoto, saveForms, sendInspection, sendPhoto, SendError, saveAlertAnswer, saveDecision, saveRequests, saveFlags, saveRecords, saveSetting, saveTarget, saveTaskStatus, type Loaded } from './data/remote';
+import { addSiteRemote, loadAccessRequests, decideAccessRemote, loadApiKeys, createApiKeyRemote, revokeApiKeyRemote, loadSnapshot, retireSiteRemote, savePlantNodes, saveShutdown, sendRound, saveProcessDelays, saveRunSignals, type PlantData, saveRcmModes, saveJobPlanVersion, saveCmResponse, saveOilSamples, saveComponentRecord, saveViewRecord, saveAnalysisRecord, loadPhoto, saveForms, sendInspection, sendPhoto, SendError, saveAlertAnswer, saveDecision, saveRequests, saveFlags, saveRecords, saveSetting, saveTarget, saveTaskStatus, type Loaded } from './data/remote';
 import { demoProjects } from './data/demo-projects';
 import { demoForms, demoInspections } from './data/demo-inspections';
 import { DEMO_SITES, demoFleet, type SiteChoice } from './data/sites';
@@ -219,6 +219,13 @@ export interface AppState {
   snapshot: (site: SiteChoice) => Promise<SiteSnapshot>;
   addSite: (input: SiteInput) => Promise<ConsoleResult<SiteRecord>>;
   retireSite: (site: SiteChoice, reason: string) => Promise<ConsoleResult<SiteRecord>>;
+  /** Sign-in rules for this site (docs/access.md). */
+  accessSettings: AccessSettings;
+  runAccessSettings: (cmd: (ctx: ConsoleContext, current: AccessSettings) => ConsoleResult<AccessSettings>) => ConsoleResult<AccessSettings>;
+  /** Account requests to this site; the Admin's list. null until loaded. */
+  accessRequests: AccessRequest[] | null;
+  loadAccessRequests: () => Promise<void>;
+  decideAccess: (id: string, approve: boolean, role: AccessRole | undefined, reason: string) => Promise<ConsoleResult<AccessRequest>>;
   /** Public API keys of this site (docs/public-api.md). null until loaded. */
   apiKeys: ApiKeyRecord[] | null;
   loadApiKeys: () => Promise<void>;
@@ -1069,6 +1076,43 @@ export function AppProvider({ children, live, onReload, onSignOut, sites = DEMO_
     onSitesChanged?.(rest, site.id === ds.site.id ? rest[0]?.id : undefined);
     return r;
   }, [actor, live, siteRecords, sites, ds.site.id, onSitesChanged]);
+  const [accessSettings, setAccessSettingsState] = useState<AccessSettings>(live?.accessSettings ?? DEFAULT_ACCESS);
+  const runAccessSettings = useCallback(
+    (cmd: (ctx: ConsoleContext, current: AccessSettings) => ConsoleResult<AccessSettings>): ConsoleResult<AccessSettings> => {
+      const r = cmd({ actor, now: new Date().toISOString(), newId, timeZone: ds.site.timeZone, calendar: ds.calendar }, accessSettings);
+      if (r.ok) {
+        setAccessSettingsState(r.records[0]!);
+        setAudit((prev) => [...r.audit, ...prev]);
+        if (live) saveSetting(siteId, 'access', r.records[0]!, r.audit[0]?.reason ?? '', r.audit).catch(failed);
+      }
+      return r;
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [actor, ds, accessSettings, live, failed],
+  );
+  // The demo starts with two synthetic requests so the Admin's side can be tried.
+  const [accessRequests, setAccessRequests] = useState<AccessRequest[] | null>(live ? null : () => [
+    { id: 'demo-req-1', siteId: ds.site.id, userId: 'demo-newcomer-1', email: 'newcomer.one@example-mining.com', name: 'Newcomer One', note: 'Haul truck technician, B crew', status: 'pending', createdAt: new Date(Date.now() - 3_600_000).toISOString() },
+    { id: 'demo-req-2', siteId: ds.site.id, userId: 'demo-newcomer-2', email: 'newcomer.two@example-mining.com', name: 'Newcomer Two', status: 'pending', createdAt: new Date(Date.now() - 86_400_000).toISOString() },
+  ]);
+  const loadAccessRequestsCmd = useCallback(async () => {
+    if (live) setAccessRequests(await loadAccessRequests(siteId));
+  }, [live, siteId]);
+  const decideAccessCmd = useCallback(async (id: string, approve: boolean, role: AccessRole | undefined, reason: string): Promise<ConsoleResult<AccessRequest>> => {
+    const req = (accessRequests ?? []).find((x) => x.id === id);
+    if (!req) return { ok: false, errors: ['No such request.'] };
+    const r = decideAccessRequest({ actor, now: new Date().toISOString(), newId, timeZone: ds.site.timeZone, calendar: ds.calendar }, req, approve, role, reason);
+    if (!r.ok) return r;
+    try {
+      if (live) { await decideAccessRemote(id, approve, role, reason); await loadAccessRequestsCmd(); return r; }
+    } catch (e) {
+      return { ok: false, errors: [e instanceof Error ? e.message : String(e)] };
+    }
+    setAccessRequests((prev) => (prev ?? []).map((x) => (x.id === id ? r.records[0]! : x)));
+    setAudit((prev) => [...r.audit, ...prev]);
+    return r;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [actor, ds, live, accessRequests, loadAccessRequestsCmd]);
   const [apiKeys, setApiKeys] = useState<ApiKeyRecord[] | null>(live ? null : []);
   const loadApiKeysCmd = useCallback(async () => {
     if (live) setApiKeys(await loadApiKeys(siteId));
@@ -1111,7 +1155,7 @@ export function AppProvider({ children, live, onReload, onSignOut, sites = DEMO_
     return r;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [actor, ds, live, apiKeys, loadApiKeysCmd]);
-  const value: AppState = { apiKeys, loadApiKeys: loadApiKeysCmd, createApiKey: createApiKeyCmd, revokeApiKey: revokeApiKeyCmd, importSource, importMapping, runImportSource, sites, switchSite: (id: string) => onSwitchSite?.(id), snapshot, addSite: addSiteCmd, retireSite: retireSiteCmd, ds, forms, runForms, inspections, drafts, saveDraft, discardDraft, runInspection, outbox, sendOutbox: () => void sendOutbox(true), dropOutboxItem, photo, workSettings, runWorkSettings, alertSettings, runAlertSettings, alertAnswers, runAlertAnswer, analyses, runAnalysis, views, runView, components, componentEvents, lifeTargets, runComponents, oilSamples, cmResponses, conditionSettings, runSamples, runResponse, runConditionSettings, rcmModes, jobPlanVersions, rcmSettings, runRcm, runJobPlan, runRcmSettings, sparesSettings, runSparesSettings, assistSettings, runAssistSettings, suggester, plant, plantSettings, runPlantSettings, runDelay, runClassify, addSignals, runNode, runShutdown, runShutdownFlow, rounds, roundDrafts, beginRound, saveRoundDraft, discardRound, runRound, ruleAlerts: ruleAlertList, requests, runRequest, decide, actions: improve.actions, rcas: improve.rcas, projects: improve.projects, runImprove, people, userName, targets, targetOf, targetList, users, codes, runConsole, mode: live ? 'live' : 'demo', syncError, clearSyncError: () => setSyncError(null), signOut: onSignOut, importRuns, applyImport, newId, flags, audit, rules, now, actor, setRole, run, lastSync: ds.generatedAt, theme, setTheme };
+  const value: AppState = { accessSettings, runAccessSettings, accessRequests, loadAccessRequests: loadAccessRequestsCmd, decideAccess: decideAccessCmd, apiKeys, loadApiKeys: loadApiKeysCmd, createApiKey: createApiKeyCmd, revokeApiKey: revokeApiKeyCmd, importSource, importMapping, runImportSource, sites, switchSite: (id: string) => onSwitchSite?.(id), snapshot, addSite: addSiteCmd, retireSite: retireSiteCmd, ds, forms, runForms, inspections, drafts, saveDraft, discardDraft, runInspection, outbox, sendOutbox: () => void sendOutbox(true), dropOutboxItem, photo, workSettings, runWorkSettings, alertSettings, runAlertSettings, alertAnswers, runAlertAnswer, analyses, runAnalysis, views, runView, components, componentEvents, lifeTargets, runComponents, oilSamples, cmResponses, conditionSettings, runSamples, runResponse, runConditionSettings, rcmModes, jobPlanVersions, rcmSettings, runRcm, runJobPlan, runRcmSettings, sparesSettings, runSparesSettings, assistSettings, runAssistSettings, suggester, plant, plantSettings, runPlantSettings, runDelay, runClassify, addSignals, runNode, runShutdown, runShutdownFlow, rounds, roundDrafts, beginRound, saveRoundDraft, discardRound, runRound, ruleAlerts: ruleAlertList, requests, runRequest, decide, actions: improve.actions, rcas: improve.rcas, projects: improve.projects, runImprove, people, userName, targets, targetOf, targetList, users, codes, runConsole, mode: live ? 'live' : 'demo', syncError, clearSyncError: () => setSyncError(null), signOut: onSignOut, importRuns, applyImport, newId, flags, audit, rules, now, actor, setRole, run, lastSync: ds.generatedAt, theme, setTheme };
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
 
