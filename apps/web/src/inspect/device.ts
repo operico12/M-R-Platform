@@ -4,12 +4,18 @@
 // outbox until the database has it. Storage can be full or blocked, so every
 // read and write is guarded and the app still works without it.
 
-import type { AuditEntry, Inspection } from '@mr/core';
+import type { AuditEntry, Inspection, Round } from '@mr/core';
 
 export interface OutboxItem {
   id: string;
-  kind: 'inspection' | 'photo';
+  kind: 'inspection' | 'photo' | 'round';
+  /** For a round, the round id. */
   inspectionId: string;
+  /** For kind 'round': the round and its stop inspections (docs/fixed-plant.md). */
+  round?: Round;
+  inspections?: Inspection[];
+  /** Waits for this outbox item (a photo of a round stop waits for the round). */
+  after?: string;
   /** The inspection as it should be saved, for kind 'inspection'. */
   inspection?: Inspection;
   /** For kind 'photo'. The picture itself stays in the photo store until sent. */
@@ -25,7 +31,7 @@ export interface OutboxItem {
   refused?: boolean;
 }
 
-const key = (site: string, user: string, what: 'drafts' | 'outbox') => `mr.insp.${site}.${user}.${what}`;
+const key = (site: string, user: string, what: 'drafts' | 'outbox' | 'rounds') => `mr.insp.${site}.${user}.${what}`;
 const photoKey = (id: string) => `mr.insp.photo.${id}`;
 
 function read<T>(k: string, fallback: T): T {
@@ -49,6 +55,9 @@ function write(k: string, v: unknown): boolean {
 
 export const readDrafts = (site: string, user: string) => read<Inspection[]>(key(site, user, 'drafts'), []);
 export const writeDrafts = (site: string, user: string, d: Inspection[]) => write(key(site, user, 'drafts'), d);
+/** Rounds started on this device and not yet submitted. Their stop inspections are in the drafts. */
+export const readRoundDrafts = (site: string, user: string) => read<Round[]>(key(site, user, 'rounds'), []);
+export const writeRoundDrafts = (site: string, user: string, r: Round[]) => write(key(site, user, 'rounds'), r);
 export const readOutbox = (site: string, user: string) => read<OutboxItem[]>(key(site, user, 'outbox'), []);
 export const writeOutbox = (site: string, user: string, o: OutboxItem[]) => write(key(site, user, 'outbox'), o);
 
