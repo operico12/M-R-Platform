@@ -209,6 +209,9 @@ export async function loadSite(siteId: string): Promise<Loaded> {
     rpcRetry('app_load_plant', { p_site: siteId, p_since: new Date(Date.now() - 400 * 864e5).toISOString() }),
     rpcRetry('app_load_shutdowns', { p_site: siteId }),
   ]);
+  // Title, crew and end date (SQL 23). Before that file is run the function is missing; load without them.
+  const ppl = await rpcRetry('app_load_people', { p_site: siteId });
+  const people = new Map(((ppl.error ? [] : iso(ppl.data)) as Array<Pick<SiteUser, 'id' | 'jobTitle' | 'jobTitleOther' | 'crew' | 'accessUntil'>>).map((x) => [x.id, x]));
   const insp = await loadInspections(siteId);
   const sby = await rpcRetry('app_load_standby', { p_site: siteId, p_since: since });
   const work = iso(must(wk)) as { plans: Array<Partial<WorkOrder> & { id: string }>; settings: { work?: Partial<WorkSettings>; alerts?: Partial<AlertSettings>; condition?: Partial<ConditionSettings>; rcm?: Partial<RcmSettings>; spares?: Partial<SparesSettings>; assist?: Partial<AssistSettings>; plant?: Partial<PlantSettings>; imports?: Partial<ImportSource>; access?: Partial<AccessSettings> } };
@@ -295,7 +298,7 @@ export async function loadSite(siteId: string): Promise<Loaded> {
     analyses: iso(optional(anl, [], 'Saved analyses')) as SavedAnalysis[],
     views: iso(optional(vw, [], 'Saved views')) as SavedView[],
     rcas: improve.rcas.map((r) => ({ ...r, fishbone: { ...emptyFishbone(), ...(r.fishbone as Partial<Rca['fishbone']>) } })),
-    users: d.users.map((u) => { const a = acting.get(u.id); return a ? { ...u, actingRole: a.role, actingUntil: a.until } : u; }),
+    users: d.users.map((u) => { const a = acting.get(u.id); const p = people.get(u.id); return { ...u, ...(p ?? {}), ...(a ? { actingRole: a.role, actingUntil: a.until } : {}) }; }),
     codes: d.codes,
     standby: iso(optional(sby, [], 'Standby flags')) as StandbyFlag[],
     targets: d.targets.map((t) => ({ ...t, value: Number(t.value), amber: Number(t.amber), ...(approvedTargets.get(t.id) ?? {}) })),
