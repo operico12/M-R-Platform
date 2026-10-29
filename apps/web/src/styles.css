@@ -373,7 +373,6 @@ a.chip[aria-pressed='true'] { color: var(--brand-ink); }
 .bunit strong { font-size: 14px; }
 .bunit span { color: var(--text-2); }
 .bunit:hover { border-color: var(--brand); }
-.bu-stale { border-left-color: var(--stale); background-image: repeating-linear-gradient(45deg, transparent 0 8px, rgba(128, 128, 128, 0.08) 8px 16px); }
 .bu-parked { border-left-color: var(--stale); border-style: dashed; opacity: 0.8; }
 .bempty { display: flex; gap: var(--s2); align-items: center; }
 .tv .bc-n { font-size: 44px; }
