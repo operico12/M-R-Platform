@@ -40,6 +40,7 @@ export type Action =
   | 'issue_job_plans'
   | 'edit_spares'
   | 'edit_assist'
+  | 'ask_assist'
   | 'manage_imports'
   | 'manage_users';
 
@@ -90,6 +91,8 @@ const MATRIX: Record<Action, Partial<Record<Role, Permission>>> = {
   edit_spares: { reliability_engineer: 'yes', superintendent: 'yes' },
   // docs/ai-assist.md: plan 11.2 has no assist row; settings follow the RCM and spares settings.
   edit_assist: { reliability_engineer: 'yes', superintendent: 'yes' },
+  // Each question costs money (docs/ai-assist.md AI-5); follows "Run analyses".
+  ask_assist: { supervisor: 'yes', reliability_engineer: 'yes', superintendent: 'yes' },
   // Field mapping, imports, data-quality rules: data owner only. In phase 1a the Admin role is the data owner (11.7).
   manage_imports: { admin: 'yes' },
   manage_users: { superintendent: 'approve', admin: 'yes' },
@@ -131,6 +134,7 @@ export const ACTION_LABELS: Record<Action, string> = {
   issue_job_plans: 'Issue PM job plan revisions',
   edit_spares: 'Change spares sizing settings',
   edit_assist: 'Change assist settings and switch code suggestions on',
+  ask_assist: 'Ask Claude a question about the weekly numbers',
   manage_imports: 'Field mapping, imports and data-quality rules',
   manage_users: 'Manage users and roles',
 };

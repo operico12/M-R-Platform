@@ -23,6 +23,7 @@ const EXPECTED: Partial<Record<Action, Record<Role, string>>> = {
   issue_job_plans: { viewer: 'no', technician: 'no', supervisor: 'no', reliability_engineer: 'yes', superintendent: 'yes', admin: 'no' },
   edit_spares: { viewer: 'no', technician: 'no', supervisor: 'no', reliability_engineer: 'yes', superintendent: 'yes', admin: 'no' },
   edit_assist: { viewer: 'no', technician: 'no', supervisor: 'no', reliability_engineer: 'yes', superintendent: 'yes', admin: 'no' },
+  ask_assist: { viewer: 'no', technician: 'no', supervisor: 'yes', reliability_engineer: 'yes', superintendent: 'yes', admin: 'no' },
   manage_imports: { viewer: 'no', technician: 'no', supervisor: 'no', reliability_engineer: 'no', superintendent: 'no', admin: 'yes' },
 };
 

@@ -330,3 +330,23 @@ export async function sendPhoto(siteId: string, p: { id: string; inspectionId: s
 export async function loadPhoto(siteId: string, id: string): Promise<string | undefined> {
   return (must(await remote!.rpc('app_load_photo', { p_site: siteId, p_id: id })) as string | null) ?? undefined;
 }
+
+/** AI-5 (docs/ai-assist.md): ask Claude through the assist-ask Edge Function. The key stays on the server. */
+export type AskReply =
+  | { outcome: 'answered' | 'cannot_answer'; lines: string[]; cited: string[] }
+  | { outcome: 'failed_check' | 'refused' | 'no_answer'; message: string }
+  | { outcome: 'error'; message: string };
+
+export async function askAssist(siteId: string, question: string, context: unknown): Promise<AskReply> {
+  if (!remote) return { outcome: 'error', message: 'Questions need the live site.' };
+  const { data, error } = await remote.functions.invoke('assist-ask', { body: { siteId, question, context } });
+  if (error) {
+    let message = 'Could not reach the question service. Is the assist-ask function deployed?';
+    const res = (error as { context?: Response }).context;
+    if (res && typeof res.json === 'function') {
+      try { const b = await res.json(); if (b?.error) message = String(b.error); } catch { /* keep the default */ }
+    }
+    return { outcome: 'error', message };
+  }
+  return data as AskReply;
+}

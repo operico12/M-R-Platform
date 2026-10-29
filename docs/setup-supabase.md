@@ -52,6 +52,24 @@ For a hosted build, set the same two values as build environment variables. Neve
 
 The app uses `#/` page addresses, so no rewrite rules are needed.
 
+## 7. Questions with Claude (Assist, "Ask")
+
+The Ask tab (docs/ai-assist.md AI-5) calls the Edge Function `supabase/functions/assist-ask`. The
+Anthropic key lives only in Supabase as a secret, never in the app, Vercel or this repository.
+
+1. Run the migration `20261109000001_assist_questions.sql` (or the add-on file
+   `14-assist-questions.sql`) in the SQL editor.
+2. Create an API key at console.anthropic.com (Settings, API keys). Set a monthly spend limit there
+   too.
+3. In Supabase: Edge Functions, Secrets, add `ANTHROPIC_API_KEY` with that key.
+4. Deploy the function, either way:
+   - Dashboard: Edge Functions, Deploy a new function, "Via editor", name it `assist-ask`, and paste
+     `index.ts` and `logic.ts` from `supabase/functions/assist-ask` as two files.
+   - Command line: `supabase functions deploy assist-ask --project-ref <project ref>`.
+   Leave "Verify JWT" on: only signed-in people can call it.
+5. Sign in as a supervisor, reliability engineer or superintendent, open Assist, Ask, and ask a
+   question. Each person can ask 20 a day; the questions and answers are kept in `assist_questions`.
+
 ## How saving works
 
 - Every change still runs through the core rules in the browser first.
