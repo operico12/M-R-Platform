@@ -3,7 +3,7 @@
 // The anon key is public by design: row-level security decides what each
 // signed-in person can read and write. Never put the service_role key here.
 
-import { DEFAULT_FLAG_RULES, DEFAULT_WORK_SETTINGS, withAlertDefaults, type ApprovalRequest, type AuditRecord, type AlertAnswer, type AlertSettings, emptyFishbone, type WorkSettings, type ImprovementAction, type Project, type Rca, type AuditEntry, type Dataset, type DownFlag, type FlagRulesConfig, type ReasonCode, type Role, type ShiftCalendar, type SiteUser, type SmuReading, type Target, type WorkOrder, type Asset, type Inspection, type InspectionForm, type SavedAnalysis, type SavedView, type Component, type ComponentEvent, type LifeTarget, type OilSample, type CmResponse, type ConditionSettings, withConditionDefaults, type RcmMode, type JobPlanVersion, type RcmSettings, withRcmDefaults, type SparesSettings, withSparesDefaults, type AssistSettings, withAssistDefaults, type PlantNode, type ProcessDelay, type RunSignal, type PlantSettings, withPlantDefaults, type Shutdown, type ScopeItem, type Round, type SiteSnapshot, type SiteRecord, twelveHourCalendar, type ImportSource, withImportDefaults } from '@mr/core';
+import { DEFAULT_FLAG_RULES, DEFAULT_WORK_SETTINGS, withAlertDefaults, type ApprovalRequest, type AuditRecord, type AlertAnswer, type AlertSettings, emptyFishbone, type WorkSettings, type ImprovementAction, type Project, type Rca, type AuditEntry, type Dataset, type DownFlag, type FlagRulesConfig, type ReasonCode, type Role, type ShiftCalendar, type SiteUser, type SmuReading, type Target, type WorkOrder, type Asset, type Inspection, type InspectionForm, type SavedAnalysis, type SavedView, type Component, type ComponentEvent, type LifeTarget, type OilSample, type CmResponse, type ConditionSettings, withConditionDefaults, type RcmMode, type JobPlanVersion, type RcmSettings, withRcmDefaults, type SparesSettings, withSparesDefaults, type AssistSettings, withAssistDefaults, type PlantNode, type ProcessDelay, type RunSignal, type PlantSettings, withPlantDefaults, type Shutdown, type ScopeItem, type Round, type SiteSnapshot, type SiteRecord, twelveHourCalendar, type ImportSource, withImportDefaults, type ApiKeyRecord, type ApiKeyInput, type ApiScope } from '@mr/core';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 
 const url = import.meta.env.VITE_SUPABASE_URL as string | undefined;
@@ -106,6 +106,34 @@ export async function addSiteRemote(fromSite: string, s: SiteRecord): Promise<vo
 export async function retireSiteRemote(siteId: string, reason: string): Promise<void> {
   must(await remote!.rpc('app_retire_site', { p_site: siteId, p_reason: reason }));
 }
+
+// ---------- public API keys (docs/public-api.md) ----------
+
+/** The site's keys with their use. Row-level security shows them to the site's Admin only. */
+export async function loadApiKeys(siteId: string): Promise<ApiKeyRecord[]> {
+  const rows = must(await remote!.rpc('app_api_keys', { p_site: siteId })) as Array<{
+    id: string; name: string; prefix: string; scopes: ApiScope[]; expires_at: string; created_at: string; created_by: string | null;
+    revoked_at: string | null; revoked_by: string | null; revoke_reason: string | null; last_used_at: string | null; calls_24h: number;
+  }>;
+  const t = (x: string | null) => (x ? new Date(x).toISOString() : undefined);
+  return rows.map((r) => ({
+    id: r.id, siteId, name: r.name, prefix: r.prefix, scopes: r.scopes, expiresAt: t(r.expires_at)!, createdAt: t(r.created_at)!, createdBy: r.created_by ?? '',
+    revokedAt: t(r.revoked_at), revokedBy: r.revoked_by ?? undefined, revokeReason: r.revoke_reason ?? undefined, lastUsedAt: t(r.last_used_at), calls24h: Number(r.calls_24h),
+  }));
+}
+
+/** The database makes the key and returns it this once. */
+export async function createApiKeyRemote(siteId: string, input: ApiKeyInput): Promise<string> {
+  const r = must(await remote!.rpc('app_create_api_key', { p_site: siteId, p_name: input.name.trim(), p_scopes: input.scopes, p_days: input.days ?? 365 })) as { key: string };
+  return r.key;
+}
+
+export async function revokeApiKeyRemote(id: string, reason: string): Promise<void> {
+  must(await remote!.rpc('app_revoke_api_key', { p_id: id, p_reason: reason }));
+}
+
+/** The REST address other systems call (docs/public-api.md). The anon key is public; never the service key. */
+export const apiEndpoint = (url || 'https://<project>.supabase.co').replace(/\/$/, '') + '/rest/v1/rpc/api_v1';
 
 /** What the Sites page needs from one site: units, flags, SMU and rules for the last few weeks. */
 export async function loadSnapshot(siteId: string, since: string): Promise<SiteSnapshot> {

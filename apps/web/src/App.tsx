@@ -25,6 +25,7 @@ import { Work } from './screens/Work';
 import { Assist } from './screens/Assist';
 import { Plant } from './screens/Plant';
 import { Sites } from './screens/Sites';
+import { ApiAccess } from './screens/ApiAccess';
 import { DEMO_SITES, rememberSite, rememberedSite, type SiteChoice } from './data/sites';
 import { switcherOrder } from '@mr/core';
 import { AppProvider, useApp } from './store';
@@ -64,6 +65,7 @@ const NAV: Array<[string, string]> = [
   ['#/import', 'Data import'],
   ['#/console', 'Console'],
   ['#/sites', 'Sites'],
+  ['#/api', 'API access'],
 ];
 
 const ROLES: Array<[Role, string]> = [
@@ -118,6 +120,7 @@ function Shell() {
     case 'rules': page = <Console tab="codes" />; break;
     case 'console': page = <Console tab={arg ?? 'users'} />; break;
     case 'sites': page = <Sites />; break;
+    case 'api': page = <ApiAccess />; break;
     default: page = <Board tv={false} />;
   }
 

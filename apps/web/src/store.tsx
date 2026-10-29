@@ -50,11 +50,11 @@ import {
   DEFAULT_ASSIST_SETTINGS, STARTER_CODES, buildSuggester, type AssistSettings, type Suggester,
   type PlantNode, type Shutdown, type ScopeItem, type RunOutcome, type Round, type RoundResult, startRound,
   DEFAULT_IMPORT_SOURCE, mappingFor, setImportSource, type ImportMapping, type ImportSource,
-  addSite, retireSite, twelveHourCalendar as _cal, type SiteInput, type SiteRecord, type SiteSnapshot,
+  addSite, retireSite, createApiKey, revokeApiKey, apiKeyFromHex, type ApiKeyInput, type ApiKeyRecord, twelveHourCalendar as _cal, type SiteInput, type SiteRecord, type SiteSnapshot,
   DEFAULT_PLANT_SETTINGS, generatePlant, type ClassifyResult, type DelayContext, type PlantSettings, type ProcessDelay, type RunSignal,
 } from '@mr/core';
 import { demoImprovements } from './data/demo-improve';
-import { addSiteRemote, loadSnapshot, retireSiteRemote, savePlantNodes, saveShutdown, sendRound, saveProcessDelays, saveRunSignals, type PlantData, saveRcmModes, saveJobPlanVersion, saveCmResponse, saveOilSamples, saveComponentRecord, saveViewRecord, saveAnalysisRecord, loadPhoto, saveForms, sendInspection, sendPhoto, SendError, saveAlertAnswer, saveDecision, saveRequests, saveFlags, saveRecords, saveSetting, saveTarget, saveTaskStatus, type Loaded } from './data/remote';
+import { addSiteRemote, loadApiKeys, createApiKeyRemote, revokeApiKeyRemote, loadSnapshot, retireSiteRemote, savePlantNodes, saveShutdown, sendRound, saveProcessDelays, saveRunSignals, type PlantData, saveRcmModes, saveJobPlanVersion, saveCmResponse, saveOilSamples, saveComponentRecord, saveViewRecord, saveAnalysisRecord, loadPhoto, saveForms, sendInspection, sendPhoto, SendError, saveAlertAnswer, saveDecision, saveRequests, saveFlags, saveRecords, saveSetting, saveTarget, saveTaskStatus, type Loaded } from './data/remote';
 import { demoProjects } from './data/demo-projects';
 import { demoForms, demoInspections } from './data/demo-inspections';
 import { DEMO_SITES, demoFleet, type SiteChoice } from './data/sites';
@@ -219,6 +219,12 @@ export interface AppState {
   snapshot: (site: SiteChoice) => Promise<SiteSnapshot>;
   addSite: (input: SiteInput) => Promise<ConsoleResult<SiteRecord>>;
   retireSite: (site: SiteChoice, reason: string) => Promise<ConsoleResult<SiteRecord>>;
+  /** Public API keys of this site (docs/public-api.md). null until loaded. */
+  apiKeys: ApiKeyRecord[] | null;
+  loadApiKeys: () => Promise<void>;
+  /** Makes a key; `key` is the full key, to show once. */
+  createApiKey: (input: ApiKeyInput) => Promise<{ ok: true; key: string } | { ok: false; errors: string[] }>;
+  revokeApiKey: (id: string, reason: string) => Promise<ConsoleResult<ApiKeyRecord>>;
 }
 
 const Ctx = createContext<AppState | null>(null);
@@ -1063,7 +1069,49 @@ export function AppProvider({ children, live, onReload, onSignOut, sites = DEMO_
     onSitesChanged?.(rest, site.id === ds.site.id ? rest[0]?.id : undefined);
     return r;
   }, [actor, live, siteRecords, sites, ds.site.id, onSitesChanged]);
-  const value: AppState = { importSource, importMapping, runImportSource, sites, switchSite: (id: string) => onSwitchSite?.(id), snapshot, addSite: addSiteCmd, retireSite: retireSiteCmd, ds, forms, runForms, inspections, drafts, saveDraft, discardDraft, runInspection, outbox, sendOutbox: () => void sendOutbox(true), dropOutboxItem, photo, workSettings, runWorkSettings, alertSettings, runAlertSettings, alertAnswers, runAlertAnswer, analyses, runAnalysis, views, runView, components, componentEvents, lifeTargets, runComponents, oilSamples, cmResponses, conditionSettings, runSamples, runResponse, runConditionSettings, rcmModes, jobPlanVersions, rcmSettings, runRcm, runJobPlan, runRcmSettings, sparesSettings, runSparesSettings, assistSettings, runAssistSettings, suggester, plant, plantSettings, runPlantSettings, runDelay, runClassify, addSignals, runNode, runShutdown, runShutdownFlow, rounds, roundDrafts, beginRound, saveRoundDraft, discardRound, runRound, ruleAlerts: ruleAlertList, requests, runRequest, decide, actions: improve.actions, rcas: improve.rcas, projects: improve.projects, runImprove, people, userName, targets, targetOf, targetList, users, codes, runConsole, mode: live ? 'live' : 'demo', syncError, clearSyncError: () => setSyncError(null), signOut: onSignOut, importRuns, applyImport, newId, flags, audit, rules, now, actor, setRole, run, lastSync: ds.generatedAt, theme, setTheme };
+  const [apiKeys, setApiKeys] = useState<ApiKeyRecord[] | null>(live ? null : []);
+  const loadApiKeysCmd = useCallback(async () => {
+    if (live) setApiKeys(await loadApiKeys(siteId));
+  }, [live, siteId]);
+  const apiCtx = () => ({ actor, now: new Date().toISOString(), newId, timeZone: ds.site.timeZone, calendar: ds.calendar });
+  const createApiKeyCmd = useCallback(async (input: ApiKeyInput) => {
+    // In the demo the browser makes the key; live, the database makes it and keeps only its hash.
+    const bytes = crypto.getRandomValues(new Uint8Array(32));
+    const demoKey = apiKeyFromHex(Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join(''));
+    const r = createApiKey(apiCtx(), ds.site.id, input, demoKey);
+    if (!r.ok) return r;
+    try {
+      if (live) {
+        const key = await createApiKeyRemote(siteId, input);
+        await loadApiKeysCmd();
+        return { ok: true as const, key };
+      }
+    } catch (e) {
+      return { ok: false as const, errors: [e instanceof Error ? e.message : String(e)] };
+    }
+    setApiKeys((prev) => [r.records[0]!, ...(prev ?? [])]);
+    setAudit((prev) => [...r.audit, ...prev]);
+    return { ok: true as const, key: demoKey };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [actor, ds, live, siteId, loadApiKeysCmd]);
+  const revokeApiKeyCmd = useCallback(async (id: string, reason: string): Promise<ConsoleResult<ApiKeyRecord>> => {
+    const r = revokeApiKey(apiCtx(), apiKeys ?? [], id, reason);
+    if (!r.ok) return r;
+    try {
+      if (live) {
+        await revokeApiKeyRemote(id, reason.trim());
+        await loadApiKeysCmd();
+        return r;
+      }
+    } catch (e) {
+      return { ok: false, errors: [e instanceof Error ? e.message : String(e)] };
+    }
+    setApiKeys((prev) => (prev ?? []).map((k) => (k.id === id ? r.records[0]! : k)));
+    setAudit((prev) => [...r.audit, ...prev]);
+    return r;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [actor, ds, live, apiKeys, loadApiKeysCmd]);
+  const value: AppState = { apiKeys, loadApiKeys: loadApiKeysCmd, createApiKey: createApiKeyCmd, revokeApiKey: revokeApiKeyCmd, importSource, importMapping, runImportSource, sites, switchSite: (id: string) => onSwitchSite?.(id), snapshot, addSite: addSiteCmd, retireSite: retireSiteCmd, ds, forms, runForms, inspections, drafts, saveDraft, discardDraft, runInspection, outbox, sendOutbox: () => void sendOutbox(true), dropOutboxItem, photo, workSettings, runWorkSettings, alertSettings, runAlertSettings, alertAnswers, runAlertAnswer, analyses, runAnalysis, views, runView, components, componentEvents, lifeTargets, runComponents, oilSamples, cmResponses, conditionSettings, runSamples, runResponse, runConditionSettings, rcmModes, jobPlanVersions, rcmSettings, runRcm, runJobPlan, runRcmSettings, sparesSettings, runSparesSettings, assistSettings, runAssistSettings, suggester, plant, plantSettings, runPlantSettings, runDelay, runClassify, addSignals, runNode, runShutdown, runShutdownFlow, rounds, roundDrafts, beginRound, saveRoundDraft, discardRound, runRound, ruleAlerts: ruleAlertList, requests, runRequest, decide, actions: improve.actions, rcas: improve.rcas, projects: improve.projects, runImprove, people, userName, targets, targetOf, targetList, users, codes, runConsole, mode: live ? 'live' : 'demo', syncError, clearSyncError: () => setSyncError(null), signOut: onSignOut, importRuns, applyImport, newId, flags, audit, rules, now, actor, setRole, run, lastSync: ds.generatedAt, theme, setTheme };
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
 
