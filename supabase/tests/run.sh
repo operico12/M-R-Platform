@@ -26,5 +26,6 @@ psql -v ON_ERROR_STOP=1 -q -d "$DB" -f tests/plant_api.sql
 psql -v ON_ERROR_STOP=1 -q -d "$DB" -f tests/plant2_api.sql
 psql -v ON_ERROR_STOP=1 -q -d "$DB" -f tests/multisite_api.sql
 psql -v ON_ERROR_STOP=1 -q -d "$DB" -f tests/import_source_api.sql
+psql -v ON_ERROR_STOP=1 -q -d "$DB" -f tests/public_api.sql
 psql -v ON_ERROR_STOP=1 -q -d "$DB" -f tests/assist_api.sql
 psql -v ON_ERROR_STOP=1 -q -d "$DB" -f tests/assist_questions_api.sql

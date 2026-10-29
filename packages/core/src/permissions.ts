@@ -44,7 +44,8 @@ export type Action =
   | 'ask_assist'
   | 'manage_imports'
   | 'manage_users'
-  | 'add_site';
+  | 'add_site'
+  | 'manage_api_keys';
 
 const MATRIX: Record<Action, Partial<Record<Role, Permission>>> = {
   view_status: { viewer: 'yes', technician: 'yes', supervisor: 'yes', reliability_engineer: 'yes', superintendent: 'yes', admin: 'yes' },
@@ -102,6 +103,8 @@ const MATRIX: Record<Action, Partial<Record<Role, Permission>>> = {
   manage_users: { superintendent: 'approve', admin: 'yes' },
   // docs/multi-site.md: the Admin of a site of the tenant adds another site to it.
   add_site: { admin: 'yes' },
+  // docs/public-api.md: the site's Admin makes and revokes read-only API keys.
+  manage_api_keys: { admin: 'yes' },
 };
 
 /** Plain-language names for the console's "what this person can do" list. */
@@ -145,6 +148,7 @@ export const ACTION_LABELS: Record<Action, string> = {
   manage_imports: 'Field mapping, imports and data-quality rules',
   manage_users: 'Manage users and roles',
   add_site: 'Add or retire a site of the tenant',
+  manage_api_keys: 'Make and revoke API keys for other systems',
 };
 
 /** Everything a role may do, and how (yes, own area, propose, ...). Deny-by-default rows are left out. */
