@@ -654,9 +654,276 @@ export function lifetimeBuy(i: { perYear: number; years: number; change: number;
   };
 }
 
+// ---------- C-20 to C-22 repairable systems ----------
+
+export const chiSquareCdf = (x: number, nu: number) => gammaP(nu / 2, x / 2);
+export const normalCdf = (z: number) => 0.5 * erfc(-z / Math.SQRT2);
+
+export type DataEnd = 'time' | 'failure';
+
+function checkTimes(times: number[], end: number | undefined, endsAt: DataEnd, min: number): { t: number[]; T: number; used: number[] } {
+  if (times.some((x) => !(Number.isFinite(x) && x > 0))) bad('Failure times must be numbers above 0.');
+  const t = [...times].sort((a, b) => a - b);
+  if (t.length < min) bad(`Needs at least ${min} failures.`);
+  if (endsAt === 'time') {
+    if (end === undefined || !(Number.isFinite(end) && end > 0)) bad('Enter the time the data ends.');
+    if (end! < t[t.length - 1]!) bad('The data must end at or after the last failure.');
+    return { t, T: end!, used: t };
+  }
+  return { t, T: t[t.length - 1]!, used: t.slice(0, -1) };
+}
+
+export function crowAmsaa(i: { times: number[]; end?: number; endsAt: DataEnd; confidence: number; ahead?: number }): CalcOutput & { points: Array<{ t: number; n: number }>; line: Array<{ t: number; n: number }> } {
+  if (!(i.confidence > 0 && i.confidence < 1)) bad('Confidence must be between 0% and 100%.');
+  const { t, T, used } = checkTimes(i.times, i.end, i.endsAt, i.endsAt === 'time' ? 2 : 3);
+  const n = t.length;
+  const sumLog = used.reduce((a, x) => a + Math.log(T / x), 0);
+  if (!(sumLog > 0)) bad('The failures cannot all be at the end time.');
+  const beta = n / sumLog;
+  const lambda = n / T ** beta;
+  const unbiased = ((i.endsAt === 'time' ? n - 1 : n - 2) / n) * beta;
+  const nu = i.endsAt === 'time' ? 2 * n : 2 * (n - 1);
+  const lower = (beta * chiSquareQuantile((1 - i.confidence) / 2, nu)) / (2 * n);
+  const upper = (beta * chiSquareQuantile((1 + i.confidence) / 2, nu)) / (2 * n);
+  const rocof = lambda * beta * T ** (beta - 1);
+  const ahead = i.ahead !== undefined && i.ahead > 0 ? lambda * ((T + i.ahead) ** beta - T ** beta) : null;
+  const trend = upper < 1 ? 'improving: failures are coming further apart' : lower > 1 ? 'getting worse: failures are coming closer together' : 'not clearly changing: the bounds on β include 1';
+  const warnings = n < 5 ? ['Fewer than 5 failures: the bounds are wide.'] : [];
+  const lo = Math.min(t[0]!, T) / 2;
+  const line = Array.from({ length: 41 }, (_, k) => { const x = lo * (T / lo) ** (k / 40); return { t: x, n: lambda * x ** beta }; });
+  return {
+    values: { beta, lambdaScale: lambda, betaUnbiased: unbiased, betaLower: lower, betaUpper: upper, mtbfNow: 1 / rocof, cumulativeMtbf: T / n, rocof, expectedAhead: ahead, failures: n },
+    sentence: `β is ${beta.toFixed(3)} (${pct(i.confidence, 0)} bounds ${lower.toFixed(3)} to ${upper.toFixed(3)}), so the rate is ${trend}. MTBF now is ${n0(1 / rocof)} h against ${n0(T / n)} h on average so far.${ahead !== null ? ` Expect ${ahead.toFixed(2)} failures in the next ${n0(i.ahead!)} h.` : ''}`,
+    warnings,
+    points: t.map((x, k) => ({ t: x, n: k + 1 })),
+    line,
+  };
+}
+
+export function trendTest(i: { times: number[]; end?: number; endsAt: DataEnd; significance: number }): CalcOutput & { verdict: 'improving' | 'worse' | 'none' } {
+  if (!(i.significance > 0 && i.significance < 0.5)) bad('Significance must be between 0% and 50%.');
+  const { t, T, used } = checkTimes(i.times, i.end, i.endsAt, i.endsAt === 'time' ? 2 : 3);
+  const m = used.length;
+  const u = (used.reduce((a, x) => a + x, 0) / m - T / 2) / (T * Math.sqrt(1 / (12 * m)));
+  const pLaplace = 2 * (1 - normalCdf(Math.abs(u)));
+  const chi = 2 * used.reduce((a, x) => a + Math.log(T / x), 0);
+  const nu = 2 * m;
+  const cdf = chiSquareCdf(chi, nu);
+  const pMil = Math.min(1, 2 * Math.min(cdf, 1 - cdf));
+  const sigL = pLaplace < i.significance;
+  const sigM = pMil < i.significance;
+  // MIL: a small χ² means late failures, getting worse; a large one, improving.
+  const milDir = cdf < 0.5 ? 'worse' : 'improving';
+  const lapDir = u > 0 ? 'worse' : 'improving';
+  const word = (d: string) => (d === 'worse' ? 'getting worse' : 'improving');
+  const verdict: 'improving' | 'worse' | 'none' = sigL ? lapDir : sigM ? milDir : 'none';
+  let sentence: string;
+  if (sigL && sigM && lapDir === milDir) sentence = `Both tests say the failure rate is ${word(lapDir)} (Laplace p = ${pLaplace.toFixed(3)}, MIL-HDBK-189 p = ${pMil.toFixed(3)}).`;
+  else if (!sigL && !sigM) sentence = `No clear trend: neither test is below ${pct(i.significance, 0)} (Laplace p = ${pLaplace.toFixed(3)}, MIL-HDBK-189 p = ${pMil.toFixed(3)}).`;
+  else sentence = `The tests disagree: ${sigL ? `Laplace says ${word(lapDir)} (p = ${pLaplace.toFixed(3)})` : `Laplace finds no clear trend (p = ${pLaplace.toFixed(3)})`}, ${sigM ? `MIL-HDBK-189 says ${word(milDir)} (p = ${pMil.toFixed(3)})` : `MIL-HDBK-189 finds no clear trend (p = ${pMil.toFixed(3)})`}. The evidence is borderline.`;
+  return { values: { laplaceU: u, pLaplace, milChiSquare: chi, milDof: nu, pMil, failures: t.length }, sentence, warnings: t.length < 4 ? ['Fewer than 4 failures: the tests have little power.'] : [], verdict };
+}
+
+export interface UnitHistory { unit: string; ages: number[]; end: number }
+export interface McfPoint { t: number; mcf: number; se: number; lower: number; upper: number; atRisk: number }
+export interface RocofBand { from: number; to: number; rate: number; atRisk: number }
+
+export function meanCumulativeFunction(i: { units: UnitHistory[]; confidence: number; bands?: number }): CalcOutput & { points: McfPoint[]; bands: RocofBand[] } {
+  if (!(i.confidence > 0 && i.confidence < 1)) bad('Confidence must be between 0% and 100%.');
+  if (!i.units.length) bad('Add at least one unit.');
+  for (const u of i.units) {
+    if (!(Number.isFinite(u.end) && u.end > 0)) bad(`${u.unit}: the end age must be above 0.`);
+    if (u.ages.some((a) => !(Number.isFinite(a) && a >= 0))) bad(`${u.unit}: failure ages must be 0 or more.`);
+    if (u.ages.some((a) => a > u.end)) bad(`${u.unit}: a failure is after the end age.`);
+  }
+  const ages = [...new Set(i.units.flatMap((u) => u.ages))].sort((a, b) => a - b);
+  if (!ages.length) bad('There are no failures.');
+  const z = normalQuantile((1 + i.confidence) / 2);
+  const count = (u: UnitHistory, t: number) => u.ages.filter((a) => a === t).length;
+  const r = ages.map((t) => i.units.filter((u) => u.end >= t).length);
+  const d = ages.map((t) => i.units.reduce((a, u) => a + count(u, t), 0));
+  // Running sum per unit for the Lawless–Nadeau variance.
+  const part = i.units.map(() => 0);
+  let mcf = 0;
+  const points: McfPoint[] = ages.map((t, j) => {
+    mcf += d[j]! / r[j]!;
+    i.units.forEach((u, k) => { if (u.end >= t) part[k]! += (count(u, t) - d[j]! / r[j]!) / r[j]!; });
+    const se = Math.sqrt(part.reduce((a, x) => a + x * x, 0));
+    const f = se > 1e-9 * mcf ? Math.exp((z * se) / mcf) : 1;
+    return { t, mcf, se, lower: mcf / f, upper: mcf * f, atRisk: r[j]! };
+  });
+  const top = Math.max(...i.units.map((u) => u.end));
+  const nb = i.bands ?? 5;
+  const at = (x: number) => { let m = 0; for (const p of points) { if (p.t <= x) m = p.mcf; else break; } return m; };
+  const bands: RocofBand[] = Array.from({ length: nb }, (_, k) => {
+    const from = (top * k) / nb;
+    const to = (top * (k + 1)) / nb;
+    return { from, to, rate: (at(to) - at(from)) / (to - from), atRisk: i.units.filter((u) => u.end >= to).length };
+  });
+  const last = points[points.length - 1]!;
+  // Compare the first and last bands that still have 3 or more units watched.
+  const solid = bands.filter((b) => b.atRisk >= 3);
+  const first = solid[0];
+  const lastBand = solid[solid.length - 1];
+  const rising = solid.length >= 2 && lastBand!.rate > first!.rate * 1.5;
+  const falling = solid.length >= 2 && lastBand!.rate < first!.rate / 1.5;
+  const thin = bands.filter((b) => b.atRisk < 3).length;
+  return {
+    values: { mcfEnd: last.mcf, mcfEndAge: last.t, seEnd: last.se, units: i.units.length, failures: d.reduce((a, x) => a + x, 0) },
+    sentence: `By ${n0(last.t)} h a unit has had ${last.mcf.toFixed(2)} failures on average (${last.se > 1e-9 * last.mcf ? `${pct(i.confidence, 0)} bounds ${last.lower.toFixed(2)} to ${last.upper.toFixed(2)}` : `${last.atRisk} unit${last.atRisk === 1 ? '' : 's'} watched there, too few for bounds`}).${rising ? ' Failures come more often as units age.' : falling ? ' Failures come less often as units age.' : ''}`,
+    warnings: thin ? [`${thin} of the ${nb} age bands have fewer than 3 units watched at their end: read the right of the curve with care.`] : [],
+    points,
+    bands,
+  };
+}
+
+/**
+ * "Use my data" for C-20 and C-21: the fleet clock. Each failure is placed at the operating hours of all
+ * the units added up from the start of the period; T is the fleet hours at the end.
+ */
+export function fleetClock(failures: DowntimeEvent[], unitIds: string[], smu: SmuReading[], from: Iso, to: Iso): { times: number[]; end: number } {
+  const units = unitIds.map((id) => { const rs = smu.filter((r) => r.unitId === id); return { id, rs, start: smuAt(rs, from) }; }).filter((u) => u.start !== undefined);
+  const hoursAt = (at: Iso) => units.reduce((a, u) => a + Math.max(0, (smuAt(u.rs, at) ?? u.start!) - u.start!), 0);
+  const ids = new Set(units.map((u) => u.id));
+  const fs = failures.filter((e) => e.isFailure && ids.has(e.unitId) && Date.parse(e.start) >= Date.parse(from) && Date.parse(e.start) <= Date.parse(to));
+  const times = fs.map((e) => hoursAt(e.start)).filter((x) => x > 0).sort((a, b) => a - b);
+  return { times, end: hoursAt(to) };
+}
+
+/** "Use my data" for C-22: each unit's operating hours from the start of the period to its failures and to the end. */
+export function unitHistories(failures: DowntimeEvent[], units: Array<{ id: string; name: string }>, smu: SmuReading[], from: Iso, to: Iso): UnitHistory[] {
+  const out: UnitHistory[] = [];
+  for (const u of units) {
+    const rs = smu.filter((r) => r.unitId === u.id);
+    const start = smuAt(rs, from);
+    const stop = smuAt(rs, to);
+    if (start === undefined || stop === undefined || stop <= start) continue;
+    const ages = failures.filter((e) => e.isFailure && e.unitId === u.id && Date.parse(e.start) >= Date.parse(from) && Date.parse(e.start) <= Date.parse(to))
+      .map((e) => (smuAt(rs, e.start) ?? start) - start).filter((a) => a >= 0 && a <= stop - start).sort((a, b) => a - b);
+    out.push({ unit: u.name, ages, end: stop - start });
+  }
+  return out;
+}
+
+// ---------- C-23, C-24 system models ----------
+
+export interface BlockGroup { name: string; n: number; k: number; mtbf: number; mttr: number }
+
+const choose = (n: number, k: number) => { let c = 1; for (let j = 1; j <= k; j++) c = (c * (n - k + j)) / j; return c; };
+/** P(at least k of n work), each working with probability p. */
+export const kOfN = (n: number, k: number, p: number) => { let s = 0; for (let j = k; j <= n; j++) s += choose(n, j) * p ** j * (1 - p) ** (n - j); return s; };
+
+function checkGroup(g: { name: string; n: number; k: number }) {
+  if (!g.name.trim()) bad('Each group needs a name.');
+  if (!(Number.isInteger(g.n) && g.n >= 1 && g.n <= 50)) bad(`${g.name}: the number of items must be a whole number from 1 to 50.`);
+  if (!(Number.isInteger(g.k) && g.k >= 1 && g.k <= g.n)) bad(`${g.name}: items needed must be a whole number from 1 to ${g.n}.`);
+}
+
+export interface BlockResult extends BlockGroup { itemA: number; groupA: number; groupR: number; ifPerfect: number }
+
+export function blockDiagram(i: { groups: BlockGroup[]; mission: number }): CalcOutput & { groups: BlockResult[] } {
+  if (!i.groups.length) bad('Add at least one group.');
+  if (i.groups.length > 40) bad('Up to 40 groups.');
+  positive(i.mission, 'Mission');
+  for (const g of i.groups) { checkGroup(g); positive(g.mtbf, `${g.name}: MTBF`); if (!(Number.isFinite(g.mttr) && g.mttr >= 0)) bad(`${g.name}: MTTR must be 0 or more.`); }
+  const rows = i.groups.map((g) => { const itemA = g.mtbf / (g.mtbf + g.mttr); return { ...g, itemA, groupA: kOfN(g.n, g.k, itemA), groupR: kOfN(g.n, g.k, Math.exp(-i.mission / g.mtbf)), ifPerfect: 0 }; });
+  const A = rows.reduce((a, g) => a * g.groupA, 1);
+  const R = rows.reduce((a, g) => a * g.groupR, 1);
+  for (const g of rows) g.ifPerfect = g.groupA > 0 ? A / g.groupA : 1;
+  const weak = [...rows].sort((a, b) => b.ifPerfect - a.ifPerfect)[0]!;
+  return {
+    values: { systemAvailability: A, missionReliability: R, weakLinkGain: weak.ifPerfect - A, groups: rows.length },
+    sentence: `The system is available ${pct(A, 2)} of the time and gets through ${n0(i.mission)} h without a failure ${pct(R, 1)} of the time. ${weak.name} is the weak link: if it never failed, availability would be ${pct(weak.ifPerfect, 2)}.`,
+    warnings: [],
+    groups: rows,
+  };
+}
+
+export interface SimGroup { name: string; n: number; k: number; beta: number; eta: number; repair: number }
+
+/** Seeded random numbers (mulberry32), so a simulation can be repeated exactly. */
+export function seededRandom(seed: number): () => number {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = Math.imul(a ^ (a >>> 15), a | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return (((t ^ (t >>> 14)) >>> 0) + 0.5) / 4294967296;
+  };
+}
+
+export function availabilitySimulation(i: { groups: SimGroup[]; period: number; runs: number; seed: number }): CalcOutput & { histogram: Array<{ from: number; to: number; n: number }> } {
+  if (!i.groups.length) bad('Add at least one group.');
+  if (i.groups.length > 40) bad('Up to 40 groups.');
+  positive(i.period, 'Period');
+  if (!(Number.isInteger(i.runs) && i.runs >= 100 && i.runs <= 5000)) bad('Runs must be a whole number from 100 to 5,000.');
+  if (!Number.isInteger(i.seed)) bad('The seed must be a whole number.');
+  for (const g of i.groups) { checkGroup(g); positive(g.beta, `${g.name}: β`); positive(g.eta, `${g.name}: η`); if (!(Number.isFinite(g.repair) && g.repair >= 0)) bad(`${g.name}: mean repair must be 0 or more.`); }
+  const cycles = i.groups.reduce((a, g) => a + (g.n * i.period) / (g.eta * 0.5), 0) * i.runs;
+  if (cycles > 5e7) bad('Too many failures to simulate: use fewer runs or a shorter period.');
+  const rnd = seededRandom(i.seed);
+  const M = i.period;
+  const avail: number[] = [];
+  let outages = 0;
+  let down = 0;
+  for (let run = 0; run < i.runs; run++) {
+    const gd: Array<[number, number]> = [];
+    for (const g of i.groups) {
+      const ev: Array<[number, number]> = [];
+      for (let k = 0; k < g.n; k++) {
+        let t = 0;
+        for (;;) {
+          t += g.eta * (-Math.log(rnd())) ** (1 / g.beta);
+          if (t >= M) break;
+          const r = g.repair > 0 ? -Math.log(rnd()) * g.repair : 0;
+          ev.push([t, -1], [Math.min(t + r, M), 1]);
+          t += r;
+        }
+      }
+      ev.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+      let up = g.n;
+      let start: number | null = null;
+      for (const [t, dlt] of ev) {
+        up += dlt;
+        if (up < g.k && start === null) start = t;
+        else if (up >= g.k && start !== null) { if (t > start) gd.push([start, t]); start = null; }
+      }
+      if (start !== null && M > start) gd.push([start, M]);
+    }
+    gd.sort((a, b) => a[0] - b[0]);
+    let d = 0;
+    let n = 0;
+    let cur: [number, number] | null = null;
+    for (const x of gd) {
+      if (cur && x[0] <= cur[1]) cur[1] = Math.max(cur[1], x[1]);
+      else { if (cur) { d += cur[1] - cur[0]; n++; } cur = [x[0], x[1]]; }
+    }
+    if (cur) { d += cur[1] - cur[0]; n++; }
+    avail.push(1 - d / M);
+    outages += n;
+    down += d;
+  }
+  const sorted = [...avail].sort((a, b) => a - b);
+  const mean = avail.reduce((a, x) => a + x, 0) / avail.length;
+  const p5 = percentile(sorted, 0.05);
+  const p95 = percentile(sorted, 0.95);
+  const lo = sorted[0]!;
+  const hi = sorted[sorted.length - 1]!;
+  const nb = 20;
+  const w = (hi - lo) / nb || 1e-9;
+  const histogram = Array.from({ length: nb }, (_, k) => ({ from: lo + k * w, to: lo + (k + 1) * w, n: 0 }));
+  for (const a of avail) histogram[Math.min(nb - 1, Math.floor((a - lo) / w))]!.n++;
+  return {
+    values: { meanAvailability: mean, p5Availability: p5, p95Availability: p95, meanOutages: outages / i.runs, meanDownHours: down / i.runs, runs: i.runs },
+    sentence: `Over ${n0(M)} h the system is available ${pct(mean, 2)} of the time on average. In 9 runs out of 10 it is between ${pct(p5, 2)} and ${pct(p95, 2)}, with about ${n1(outages / i.runs)} outages and ${n0(down / i.runs)} down hours.`,
+    warnings: i.runs < 500 ? ['Fewer than 500 runs: the percentiles are rough.'] : [],
+    histogram,
+  };
+}
+
 // ---------- catalogue ----------
 
-export type CalculatorId = 'inherent_availability' | 'availability_target' | 'downtime_cost' | 'mtbf_confidence' | 'weibull' | 'conditional_weibull' | 'repair_times' | 'risk_matrix' | 'cost_per_hour' | 'mtbf_rate' | 'rebuild_or_replace' | 'pf_interval' | 'optimal_replacement' | 'failure_finding' | 'strategy_cost' | 'poisson_spares' | 'rebuild_pool' | 'kit_stocking' | 'lifetime_buy';
+export type CalculatorId = 'inherent_availability' | 'availability_target' | 'downtime_cost' | 'mtbf_confidence' | 'weibull' | 'conditional_weibull' | 'repair_times' | 'risk_matrix' | 'cost_per_hour' | 'mtbf_rate' | 'rebuild_or_replace' | 'pf_interval' | 'optimal_replacement' | 'failure_finding' | 'strategy_cost' | 'poisson_spares' | 'rebuild_pool' | 'kit_stocking' | 'lifetime_buy' | 'crow_amsaa' | 'trend_test' | 'mcf' | 'block_diagram' | 'availability_sim';
 
 export interface CalculatorInfo { id: CalculatorId; code: string; group: string; name: string; question: string; usesData: boolean; formula: string; version: number }
 
@@ -681,6 +948,12 @@ export const CALCULATORS: CalculatorInfo[] = [
   { id: 'rebuild_pool', code: 'C-17', group: 'Spares', name: 'Rebuild pool', question: 'How many spare components do we need in the rebuild pool?', usesData: true, formula: 'N ~ Poisson(change-outs a year × repair cycle days ÷ 365); total = s × carrying + EBO(s) × 8,760 × cost per down h', version: 1 },
   { id: 'kit_stocking', code: 'C-18', group: 'Spares', name: 'Kit stocking', question: 'How much of each part do we keep so a whole kit is there when needed?', usesData: true, formula: 'kit fill ≥ Π P(Nᵢ ≤ kᵢ − 1); stock qᵢ × kᵢ by greedy marginal analysis', version: 1 },
   { id: 'lifetime_buy', code: 'C-19', group: 'Spares', name: 'Lifetime buy', question: 'How many should we buy before a part is discontinued?', usesData: false, formula: 'D ~ Poisson(d × ((1 + g)^Y − 1) ÷ ln(1 + g)); smallest Q with P(D ≤ Q) ≥ confidence', version: 1 },
+
+  { id: 'crow_amsaa', code: 'C-20', group: 'Repairable systems', name: 'Crow-AMSAA reliability growth', question: 'Is the fleet getting more or less reliable over time, and what is the MTBF now?', usesData: true, formula: 'N(t) = λ t^β;  β = n ÷ Σ ln(T ÷ tᵢ);  MTBF now = 1 ÷ (λ β T^(β−1))', version: 1 },
+  { id: 'trend_test', code: 'C-21', group: 'Repairable systems', name: 'Trend test (Laplace and MIL-HDBK-189)', question: 'Are failures coming closer together or further apart?', usesData: true, formula: 'U = (Σtᵢ ÷ n − T ÷ 2) ÷ (T √(1 ÷ 12n));  χ² = 2 Σ ln(T ÷ tᵢ)', version: 1 },
+  { id: 'mcf', code: 'C-22', group: 'Repairable systems', name: 'Mean cumulative function and ROCOF', question: 'How many failures does a unit have by a given age, and do they come faster as it ages?', usesData: true, formula: 'MCF(t) = Σ d(s) ÷ r(s) over failure ages s ≤ t; ROCOF = slope of the MCF', version: 1 },
+  { id: 'block_diagram', code: 'C-23', group: 'System models', name: 'Reliability block diagram', question: 'What availability does this system of parts in series and in parallel give, and where is the weak link?', usesData: false, formula: 'A = Π P(at least k of n work);  A item = MTBF ÷ (MTBF + MTTR)', version: 1 },
+  { id: 'availability_sim', code: 'C-24', group: 'System models', name: 'Availability simulation', question: 'What range of availability should we expect over a year, with wear-out and luck?', usesData: false, formula: 'Monte Carlo: Weibull run times, exponential repairs, k-of-n groups in series', version: 1 },
 ];
 
 /** Search by name, code, group or question; every word must match. */
