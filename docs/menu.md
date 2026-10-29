@@ -15,6 +15,10 @@ of design 3 (icon bar) and design 5 (pinned and search). Code: `packages/core/sr
   it; Enter opens the first match. It matches page names first, then other words people use
   (for example "weibull" finds Calculators, "maximo" finds Data import). Ctrl + K still finds a
   calculator.
+- **Fold.** The « button at the top of the page list folds it away, leaving only the icon bar,
+  so pages get the room. While folded, a group button opens its pages as a pop-out that closes
+  when you pick a page, click outside it or press Escape; » keeps the list open again. The choice
+  is kept on the device. It starts open on screens 1200 px wide or more, folded on narrower ones.
 - On a phone the icon bar is a row across the top and the pages are a row you swipe.
 
 ## Groups

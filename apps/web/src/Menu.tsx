@@ -55,22 +55,36 @@ export function Menu({ hash, storeKey, counts, countLabel, top, bottom }: MenuPr
   const [q, setQ] = useState('');
   const [msg, setMsg] = useState<string | null>(null);
   const search = useRef<HTMLInputElement>(null);
+  // Folded: only the icon bar shows; a group opens its pages as a pop-out. Kept per device.
+  const [folded, setFolded] = useStored('mr.menu.folded', (v) => (typeof v === 'boolean' ? v : window.innerWidth < 1200));
+  const [pop, setPop] = useState(false);
+  const [focusSearch, setFocusSearch] = useState(0);
+  useEffect(() => { if (focusSearch) search.current?.focus(); }, [focusSearch]);
 
   // Follow the page: opening a page from outside the shown group shows its group.
   useEffect(() => {
     if (!current) return;
     if (current.href !== '#/tv') setRecent(addRecent(recent, current.href));
     if (view !== 'pinned' && view !== current.group) setView(current.group);
+    setPop(false);
   }, [current?.href]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // "/" jumps to the page search, unless someone is typing.
+  useEffect(() => {
+    if (!pop) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setPop(false); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [pop]);
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement | null;
       if (e.key !== '/' || e.ctrlKey || e.metaKey || e.altKey) return;
       if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return;
       e.preventDefault();
-      search.current?.focus();
+      setPop(true);
+      setFocusSearch((n) => n + 1);
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
@@ -87,14 +101,14 @@ export function Menu({ hash, storeKey, counts, countLabel, top, bottom }: MenuPr
   };
 
   const results = useMemo(() => searchPages(q), [q]);
-  const go = (href: string) => { window.location.hash = href; setQ(''); };
+  const go = (href: string) => { window.location.hash = href; setQ(''); setPop(false); };
 
   const row = (p: MenuPage, showGroup = false) => {
     const n = counts[p.href] ?? 0;
     const on = pins.includes(p.href);
     return (
       <li key={p.href} className="menu-row">
-        <a href={p.href} aria-current={current?.href === p.href ? 'page' : undefined} onClick={() => setQ('')}>
+        <a href={p.href} aria-current={current?.href === p.href ? 'page' : undefined} onClick={() => { setQ(''); setPop(false); }}>
           <span>{p.label}{showGroup && <small> · {MENU_GROUPS.find((g) => g.id === p.group)?.label}</small>}</span>
           {n > 0 && <span className="nav-count" aria-label={countLabel(p.href, n)}>{n}</span>}
         </a>
@@ -110,13 +124,14 @@ export function Menu({ hash, storeKey, counts, countLabel, top, bottom }: MenuPr
   const recents = recentToShow(recent, pins).map(menuPage).filter((p): p is MenuPage => !!p);
 
   return (
-    <nav className="menu" aria-label="Main">
+    <nav className={`menu${folded ? ' menu--folded' : ''}${pop ? ' menu--pop' : ''}`} aria-label="Main">
       <div className="menu-rail" aria-label="Menu groups" role="group">
         <span className="menu-mark" aria-hidden="true">M&amp;R</span>
         {views.map(([v, label]) => {
           const n = groupCount(v);
           return (
-            <button key={v} type="button" className="menu-group" aria-pressed={view === v && !q} onClick={() => { setView(v); setQ(''); setMsg(null); }}>
+            <button key={v} type="button" className="menu-group" aria-pressed={view === v && !q} aria-expanded={folded ? pop && view === v : undefined}
+              onClick={() => { setPop(folded && !(pop && view === v)); setView(v); setQ(''); setMsg(null); }}>
               <Icon v={v} />
               <span>{label}</span>
               {n > 0 && <span className="menu-dot" aria-label={`${n} waiting`} />}
@@ -124,7 +139,17 @@ export function Menu({ hash, storeKey, counts, countLabel, top, bottom }: MenuPr
           );
         })}
       </div>
+      {pop && <div className="menu-scrim" onClick={() => setPop(false)} />}
       <div className="menu-panel">
+        {folded ? (
+          <button type="button" className="menu-fold" aria-label="Keep the page list open" title="Keep open" onClick={() => { setFolded(false); setPop(false); }}>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M7 6l6 6-6 6M13 6l6 6-6 6" /></svg>
+          </button>
+        ) : (
+          <button type="button" className="menu-fold" aria-label="Fold the page list" title="Fold" onClick={() => setFolded(true)}>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M17 6l-6 6 6 6M11 6l-6 6 6 6" /></svg>
+          </button>
+        )}
         {top}
         <label className="menu-search">
           <span className="sr-only">Find a page</span>
