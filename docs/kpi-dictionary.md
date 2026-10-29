@@ -24,6 +24,7 @@ flag intervals and SMU readings; nothing is typed in. Fleet figures are ratios o
 | KPI-017 | Project status (phase 2) | Late, at risk or on track, from the records | Late: past its end date, or an open task past due (site date). At risk: a task due within 7 days not started, actual + forecast over budget, an open issue or a risk scoring ≥ 6 (likelihood × impact, 1 to 3 each), or a change request waiting. Code: `projectHealth`. |
 | KPI-044 | Utilisation (time) | (available h − standby h) ÷ available h | From standby flags (docs/standby.md). A unit is in use unless a standby flag or a down flag says otherwise. Standby only counts while the unit is available: time it overlaps a counting down flag, or parked time, is left out. Overlapping standby flags on one unit count once. Voided standby never counts. Shown next to KPI-002 (hour meter); a gap between the two points to missing flags or readings. |
 | KPI-045 | Standby hours | Σ standby h, by reason and by kind (operating delay or standby) | Same counting rules as KPI-044. |
+| KPI-046 | Wait hours | By kind: Σ wait tag h, clipped to the period and now. Down time waiting: h with at least one wait tag open; share = that ÷ down h of the same flags | docs/wait-tags.md. Tags of different kinds can overlap; each counts in full by kind, once in down time waiting. Never added into down time or PA. |
 
 ## Work and PM, tier 2 (phase 2, plan 3.3 tier 2 table)
 
@@ -94,6 +95,8 @@ in place of SMU. Process delays and idle installed spares never count as mainten
 - KPI-032: four alerts ending in the week, two answered in time, one 10 h late, one not answered → 50%.
 - Plan 3.2, one 12-hour shift: PA 62.5%, utilisation 90.7%, standby 0.7 h, effective utilisation 56.7%.
 - KPI-044 and KPI-045, the same shift with standby flags: shift change 06:00 to 06:30 (the unit went down at 06:10, so 10 min count), crib break 12:00 to 12:30 (30 min), waiting for an operator 15:00 to 17:00 (the PM ran to 16:00, so 1 h counts). Standby 1 h 40 (operating delay 40 min, standby 1 h). Utilisation (time) = (7.5 − 1.667) ÷ 7.5 = 77.8%. A voided 1 h flag and a second flag inside the crib break change nothing.
+- KPI-046, one truck down 10:00 to 20:00 (10 h): tow 10:00 to 11:30, parts 12:00 to 18:00, labour 14:00 to 17:00, and a voided
+  approval tag. Tow 1.5 h, parts 6 h, labour 3 h (by kind, 10.5 h). Down time waiting = 10:00 to 11:30 plus 12:00 to 18:00 = 7.5 h, 75% of down time.
 - Plan Appendix A: one truck, one week, 28 h down → PA 83.3%, unchanged by 10 h standby.
 - KPI-015, one truck: 20 h hydraulic down in the 28 days before, 5 h after → −75%, failures 2 → 1; a 6 h
   tyre stop is outside the slice but still lowers PA before (646 ÷ 672).

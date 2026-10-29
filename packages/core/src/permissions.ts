@@ -12,6 +12,7 @@ export type Action =
   | 'update_stage'
   | 'set_clear_flag'
   | 'set_standby'
+  | 'set_waits'
   | 'move_location'
   | 'reclassify_flag'
   | 'void_flag'
@@ -57,6 +58,8 @@ const MATRIX: Record<Action, Partial<Record<Role, Permission>>> = {
   set_clear_flag: { technician: 'propose', supervisor: 'area', reliability_engineer: 'yes', superintendent: 'yes' },
   // Standby flags (docs/standby.md): available but not in use. No approval step; down wins over standby.
   set_standby: { technician: 'yes', supervisor: 'yes', reliability_engineer: 'yes', superintendent: 'yes' },
+  // Wait tags (docs/wait-tags.md): follows update_stage.
+  set_waits: { technician: 'area', supervisor: 'area', reliability_engineer: 'yes', superintendent: 'yes' },
   // A7 D7: technicians move stage only; supervisors move locations. Overridable via rules.technicianCanMoveLocation.
   move_location: { supervisor: 'area', reliability_engineer: 'yes', superintendent: 'yes' },
   reclassify_flag: { supervisor: 'area', reliability_engineer: 'yes', superintendent: 'yes' },
@@ -121,6 +124,7 @@ export const ACTION_LABELS: Record<Action, string> = {
   update_stage: 'Update repair stage',
   set_clear_flag: 'Set or clear down flags',
   set_standby: 'Raise or end standby flags',
+  set_waits: 'Raise or end wait tags on a down unit',
   move_location: 'Move a unit between locations',
   reclassify_flag: 'Reclassify flag type or reason',
   void_flag: 'Void a flag',

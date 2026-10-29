@@ -3,6 +3,7 @@
 // document must be updated first (CLAUDE.md rule).
 
 import { describe, expect, it } from 'vitest';
+import { waitBreakdown, type WaitTag } from '../src/waits.js';
 import { DEFAULT_FLAG_RULES } from '../src/config.js';
 import { changeStage, flagDown, moveLocation, release, setEta } from '../src/flags.js';
 import { buildEvents, computeKpis, fieldRepairShare, locationHours, shopReleaseVsPlan, splitFlag, stageHours, timeToFirstWrench } from '../src/kpis.js';
@@ -189,5 +190,26 @@ describe('A7 section 10 worked example: HT107, Monday 26 October', () => {
     expect(f.locations.map((x) => x.kind)).toEqual(['field', 'towing', 'shop_yard', 'shop_line']);
     expect(f.etas.map((e) => e.eta)).toEqual([at('16:00'), at('18:00')]);
     expect(s.audit).toHaveLength(11);
+  });
+});
+
+describe('KPI-046 worked example: one stop with overlapping wait tags', () => {
+  const w = (id: string, kind: string, start: string, end: string, state: WaitTag['state'] = 'ended'): WaitTag =>
+    ({ id, tenantId: 't1', siteId: 's1', unitId: 'ht101', downFlagId: 'd', kind, start: L(start), end: L(end), state, setBy: 'x', enteredAt: L(start) });
+  const waits = [
+    w('a', 'TOW', '2026-10-26 10:00', '2026-10-26 11:30'),
+    w('b', 'PARTS', '2026-10-26 12:00', '2026-10-26 18:00'),
+    w('c', 'LABOUR', '2026-10-26 14:00', '2026-10-26 17:00'),
+    w('v', 'APPROVAL', '2026-10-26 11:00', '2026-10-26 19:00', 'voided'),
+  ];
+  const p = { from: L('2026-10-26 00:00'), to: L('2026-10-27 00:00') };
+  const r = waitBreakdown(waits, p, L('2026-10-27 06:00'));
+
+  it('counts each kind in full: tow 1.5 h, parts 6 h, labour 3 h', () => {
+    expect(r.byKind).toEqual({ TOW: 1.5, PARTS: 6, LABOUR: 3 });
+  });
+  it('counts down time waiting once: 7.5 h of the 10 h stop (75%)', () => {
+    expect(r.waiting).toBe(7.5);
+    expect(r.waiting / 10).toBe(0.75);
   });
 });

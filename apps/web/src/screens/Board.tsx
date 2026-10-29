@@ -4,22 +4,23 @@
 
 import {
   ALERT_PLAIN, BOARD_SUB_LABELS, STAGE_LABELS, sortAlerts, activeAlerts, boardCounts, boardFilterFromQuery, boardFilterToQuery, boardPlace, currentStandby,
-  downSince, downlineQueue, filterBoard, stageSince, subKey, toggleIn, upSince,
+  downSince, filterBoard, openWaits, stageSince, subKey, toggleIn, upSince,
   type Alert, type Asset, type BoardFilter, type BoardGroup, type BoardSub, type DownFlag, type StandbyFlag,
 } from '@mr/core';
 import { useMemo, useState } from 'react';
+import { FlagIcon } from '../components/FlagIcon';
 import { FlagSheet } from '../components/FlagSheet';
 import { fmtHours, hoursSince, locationLabel, siteTime, unitStatus } from '../format';
 import { useApp } from '../store';
 
-// Ope, 29 Oct 2026: four tiles on top (these three and Alerts). Parked units are listed at the bottom.
+// Ope, 29 Oct 2026: four tiles on top (these three and Alerts). Parked is a tag under any of them;
+// the alerts list replaces the downline queue at the bottom.
 const GROUPS: { group: BoardGroup; word: string; empty: string }[] = [
   { group: 'operational', word: 'Operational', empty: 'No units are operational.' },
   { group: 'unsched', word: 'Unscheduled down', empty: 'Nothing is down unscheduled.' },
   { group: 'sched', word: 'Scheduled down', empty: 'Nothing is scheduled down.' },
-  { group: 'parked', word: 'Parked', empty: '' },
 ];
-const TILES = GROUPS.filter((g) => g.group !== 'parked');
+const TILES = GROUPS;
 const NO_READING_HOURS = 14;
 // Alerts already shown another way on the card: the ETA line, the proposal line, the reading line, the stage line.
 const SHOWN_ELSEWHERE = new Set<Alert['kind']>(['no_eta', 'eta_passed', 'proposal_unconfirmed', 'no_smu_reading', 'waiting_line', 'waiting_parts']);
@@ -27,14 +28,13 @@ const SHOWN_ELSEWHERE = new Set<Alert['kind']>(['no_eta', 'eta_passed', 'proposa
 interface Row {
   unitId: string; unitNumber: string; model: string; group: BoardGroup; sub: BoardSub; text?: string;
   a: Asset; flag?: DownFlag; standby?: StandbyFlag; proposal?: DownFlag; since?: string;
-  noReadingSince?: string | null; alerts: Alert[]; stageLate: boolean; busy: boolean;
+  noReadingSince?: string | null; alerts: Alert[]; stageLate: boolean; busy: boolean; parked: boolean;
 }
 
 export function Board({ tv, query = '' }: { tv: boolean; query?: string }) {
   const app = useApp();
   const tz = app.ds.site.timeZone;
   const [open, setOpen] = useState<Asset | null>(null);
-  const [showAlerts, setShowAlerts] = useState(false);
   const [filter, setFilterState] = useState<BoardFilter>(() => boardFilterFromQuery(query));
   const setFilter = (f: BoardFilter) => {
     setFilterState(f);
@@ -48,6 +48,7 @@ export function Board({ tv, query = '' }: { tv: boolean; query?: string }) {
     [app.ds, app.flags, app.rules, app.now],
   );
   const sbLabel = (code: string) => app.standbyReasons.find((x) => x.code === code)?.label ?? code;
+  const waitLabel = (code: string) => app.waitKinds.find((x) => x.code === code)?.label ?? code;
 
   const rows = useMemo<Row[]>(() => {
     const lastReading = new Map<string, string>();
@@ -59,20 +60,21 @@ export function Board({ tv, query = '' }: { tv: boolean; query?: string }) {
       // Down wins over standby (docs/standby.md).
       const sb = !flag && !parked ? currentStandby(a.id, app.standby) : undefined;
       const { group, sub } = boardPlace(flag, sb, parked);
+      const isParked = parked;
       const proposal = !flag && !parked ? app.flags.find((f) => f.unitId === a.id && f.state === 'proposed') : undefined;
       const last = lastReading.get(a.id);
-      const noReadingSince = group === 'operational' && (!last || hoursSince(last, app.now) > NO_READING_HOURS) ? (last ?? null) : undefined;
+      const noReadingSince = group === 'operational' && !parked && (!last || hoursSince(last, app.now) > NO_READING_HOURS) ? (last ?? null) : undefined;
       const since = flag ? downSince(flag, app.flags) : group === 'operational' ? upSince(a.id, app.flags, app.now, app.standby) : undefined;
       const mine = alerts.filter((x) => x.unitId === a.id);
       const stageLate = mine.some((x) => x.kind === 'waiting_line' || x.kind === 'waiting_parts');
       const text = flag
-        ? `${flag.reasonCode} ${locationLabel(flag, app.ds)}`
+        ? `${flag.reasonCode} ${locationLabel(flag, app.ds)} ${openWaits(a.id, app.waits).map((w) => `waiting ${waitLabel(w.kind)}`).join(' ')}`
         : sb ? `standby ${sbLabel(sb.reasonCode)}` : proposal ? `proposed ${proposal.reasonCode}` : undefined;
       const shownAlerts = mine.filter((x) => !SHOWN_ELSEWHERE.has(x.kind));
-      const busy = Boolean(sb || proposal || noReadingSince !== undefined || shownAlerts.length);
-      return { unitId: a.id, unitNumber: a.unitNumber, model: a.model, group, sub, text, a, flag, standby: sb, proposal, since, noReadingSince, alerts: shownAlerts, stageLate, busy };
+      const busy = Boolean(sb || proposal || isParked || noReadingSince !== undefined || shownAlerts.length);
+      return { unitId: a.id, unitNumber: a.unitNumber, model: a.model, group, sub, text: isParked ? `${text ?? ''} parked` : text, a, flag, standby: sb, proposal, since, noReadingSince, alerts: shownAlerts, stageLate, busy, parked: isParked };
     });
-  }, [app.ds, app.flags, app.now, app.standby, app.standbyReasons, alerts]);
+  }, [app.ds, app.flags, app.now, app.standby, app.standbyReasons, app.waits, app.waitKinds, alerts]);
 
   const counts = boardCounts(rows, filter);
   const total = Object.values(counts.groups).reduce((s, n) => s + n, 0);
@@ -83,13 +85,12 @@ export function Board({ tv, query = '' }: { tv: boolean; query?: string }) {
     return [...m].sort((x, y) => x[0].localeCompare(y[0]));
   }, [rows]);
 
-  const queue = downlineQueue(app.flags, app.now);
   // A missing reading is shown on the unit's card, not counted as an alert.
   const alertList = useMemo(() => sortAlerts(alerts.filter((a) => a.kind !== 'no_smu_reading')), [alerts]);
   const alertCount = alertList.length;
   const alertKinds = Object.entries(alertList.reduce<Record<string, number>>((m, a) => ({ ...m, [a.kind]: (m[a.kind] ?? 0) + 1 }), {}));
   const unitOf = (id: string) => app.ds.assets.find((a) => a.id === id);
-  const alertsOpen = tv || showAlerts;
+  const toAlerts = () => document.getElementById('board-alerts')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   const tech = app.actor.role === 'technician';
   const filtered = filter.groups.length > 0 || filter.subs.length > 0 || filter.models.length > 0 || filter.q.trim() !== '';
   const clear = () => setFilter({ groups: [], subs: [], models: [], q: '' });
@@ -98,12 +99,12 @@ export function Board({ tv, query = '' }: { tv: boolean; query?: string }) {
   const longest = (x: Row, y: Row) => Date.parse(x.since ?? x.flag!.start) - Date.parse(y.since ?? y.flag!.start);
   const opOrder = (x: Row, y: Row) => {
     // Something open first: standby longest first, then other open items, then in use by unit number.
-    const rank = (r: Row) => (r.standby ? 0 : r.busy ? 1 : 2);
+    const rank = (r: Row) => (r.standby ? 0 : r.parked ? 2 : r.busy ? 1 : 3);
     if (rank(x) !== rank(y)) return rank(x) - rank(y);
     if (x.standby && y.standby) return Date.parse(x.standby.start) - Date.parse(y.standby.start);
     return byNumber(x, y);
   };
-  const inGroup = (g: BoardGroup) => shown.filter((r) => r.group === g).sort(g === 'operational' ? opOrder : g === 'parked' ? byNumber : longest);
+  const inGroup = (g: BoardGroup) => shown.filter((r) => r.group === g).sort(g === 'operational' ? opOrder : longest);
   // Sub-statuses of a status with a count, largest first.
   const subsOf = (g: BoardGroup) => Object.entries(counts.subs)
     .filter(([k]) => k.startsWith(`${g}:`))
@@ -112,26 +113,27 @@ export function Board({ tv, query = '' }: { tv: boolean; query?: string }) {
   const pick = (a: Asset) => { if (!tv) setOpen(a); };
   const hrs = (iso?: string | null) => (iso ? fmtHours(hoursSince(iso, app.now)) : '');
   const pct = (n: number) => (total ? `${Math.round((n / total) * 100)}%` : '');
-  const groups = GROUPS.filter((g) => g.group !== 'parked' || counts.groups.parked > 0 || filter.groups.includes('parked'));
+  const groups = GROUPS;
   const bar = [
     { key: 'operational:in_use', cls: 'fb-run', word: 'in use' },
     { key: 'operational:standby', cls: 'fb-standby', word: 'on standby' },
+    { key: 'operational:parked', cls: 'fb-parked', word: 'parked' },
   ].map((b) => ({ ...b, n: counts.subs[b.key] ?? 0 }))
     .concat([
       { key: 'sched', cls: 'fb-sched', word: 'scheduled down', n: counts.groups.sched },
       { key: 'unsched', cls: 'fb-down', word: 'unscheduled down', n: counts.groups.unsched },
-      { key: 'parked', cls: 'fb-parked', word: 'parked', n: counts.groups.parked },
     ]);
 
   const card = (r: Row) => {
     const f = r.flag;
     if (!f) {
       const items: JSX.Element[] = [];
-      if (r.standby) items.push(<li key="sb" className="ui-standby"><span>‖ Standby: {sbLabel(r.standby.reasonCode)}</span><span>{hrs(r.standby.start)}</span></li>);
-      if (r.proposal) items.push(<li key="pr" className="ui-warn"><span>Down proposed: {r.proposal.reasonCode}, waiting for a supervisor</span><span>{hrs(r.proposal.enteredAt)}</span></li>);
-      if (r.noReadingSince !== undefined) items.push(<li key="nr" className="ui-muted"><span>No hour meter reading</span><span>{r.noReadingSince ? hrs(r.noReadingSince) : 'none yet'}</span></li>);
-      for (const x of r.alerts) items.push(<li key={x.kind} className="ui-warn"><span>⚠ {ALERT_PLAIN[x.kind].title}</span><span>{hrs(x.since)}</span></li>);
-      const parked = r.group === 'parked';
+      if (r.parked) items.push(<li key="pk" className="ui-parked"><span><FlagIcon code="parked" /> Parked</span><span /></li>);
+      if (r.standby) items.push(<li key="sb" className="ui-standby"><span><FlagIcon code={r.standby.reasonCode} /> Standby: {sbLabel(r.standby.reasonCode)}</span><span>{hrs(r.standby.start)}</span></li>);
+      if (r.proposal) items.push(<li key="pr" className="ui-warn"><span><FlagIcon code="proposed" /> Down proposed: {r.proposal.reasonCode}, waiting for a supervisor</span><span>{hrs(r.proposal.enteredAt)}</span></li>);
+      if (r.noReadingSince !== undefined) items.push(<li key="nr" className="ui-muted"><span><FlagIcon code="no_reading" /> No hour meter reading</span><span>{r.noReadingSince ? hrs(r.noReadingSince) : 'none yet'}</span></li>);
+      for (const x of r.alerts) items.push(<li key={x.kind} className="ui-warn"><span><FlagIcon code="alert" /> {ALERT_PLAIN[x.kind].title}</span><span>{hrs(x.since)}</span></li>);
+      const parked = r.parked;
       return (
         <button key={r.unitId} type="button" className={`ucard uc-${parked ? 'parked' : r.standby ? 'standby' : 'run'} uc-small`} onClick={() => pick(r.a)}
           aria-label={`${r.unitNumber}, ${parked ? 'parked' : r.standby ? `on standby for ${hrs(r.standby.start)}` : 'operational'}`}>
@@ -139,7 +141,7 @@ export function Board({ tv, query = '' }: { tv: boolean; query?: string }) {
             <strong>{r.unitNumber}</strong><span className="muted small">{r.model}</span>
             <span className="uc-time">{parked ? 'parked' : r.since ? <><span className="muted small">up </span>{hrs(r.since)}</> : <span className="muted small">no stops on record</span>}</span>
           </span>
-          {!parked && (items.length ? <ul className="uc-items">{items}</ul> : <span className="uc-ok small">In use</span>)}
+          {items.length ? <ul className="uc-items">{items}</ul> : <span className="uc-ok small"><FlagIcon code="in_use" /> In use</span>}
         </button>
       );
     }
@@ -156,12 +158,16 @@ export function Board({ tv, query = '' }: { tv: boolean; query?: string }) {
         </span>
         <span className="uc-reason">{f.reasonCode} <span className="muted">· {locationLabel(f, app.ds)}</span></span>
         <ul className="uc-items">
-          <li className={r.stageLate ? 'ui-warn' : 'ui-stage'}><span>{st ? STAGE_LABELS[st.stage] : BOARD_SUB_LABELS.no_stage}</span><span>{hrs(stageSince(f))}</span></li>
+          {r.parked && <li className="ui-parked"><span><FlagIcon code="parked" /> Parked</span><span /></li>}
+          <li className={r.stageLate ? 'ui-warn' : 'ui-stage'}><span><FlagIcon code={st?.stage ?? 'no_stage'} /> {st ? STAGE_LABELS[st.stage] : BOARD_SUB_LABELS.no_stage}</span><span>{hrs(stageSince(f))}</span></li>
+          {openWaits(r.unitId, app.waits).map((w) => (
+            <li key={w.id} className="ui-wait"><span><FlagIcon code={w.kind} /> Waiting: {waitLabel(w.kind)}{w.note ? ` · ${w.note}` : ''}</span><span>{hrs(w.start)}</span></li>
+          ))}
           <li className={late || noEta ? 'ui-late' : 'ui-muted'}>
-            {eta ? <><span>{late ? 'ETA passed' : 'ETA'} {siteTime(eta.eta, tz, true)}</span><span>{late ? hrs(eta.eta) : ''}</span></>
-              : noEta ? <span>NO ETA</span> : <span>ETA not due yet</span>}
+            {eta ? <><span><FlagIcon code="eta" /> {late ? 'ETA passed' : 'ETA'} {siteTime(eta.eta, tz, true)}</span><span>{late ? hrs(eta.eta) : ''}</span></>
+              : noEta ? <span><FlagIcon code="eta" /> NO ETA</span> : <span><FlagIcon code="eta" /> ETA not due yet</span>}
           </li>
-          {r.alerts.map((x) => <li key={x.kind} className="ui-warn"><span>⚠ {ALERT_PLAIN[x.kind].title}</span><span>{x.kind === 'pm_overrun' ? '' : hrs(x.since)}</span></li>)}
+          {r.alerts.map((x) => <li key={x.kind} className="ui-warn"><span><FlagIcon code="alert" /> {ALERT_PLAIN[x.kind].title}</span><span>{x.kind === 'pm_overrun' ? '' : hrs(x.since)}</span></li>)}
         </ul>
       </button>
     );
@@ -206,41 +212,15 @@ export function Board({ tv, query = '' }: { tv: boolean; query?: string }) {
         <button
           type="button"
           className={`bstat bs-alerts${alertCount ? ' bs-alerts-on' : ''}`}
-          aria-expanded={alertsOpen}
-          aria-controls="board-alerts"
-          disabled={tv || alertCount === 0}
-          onClick={() => setShowAlerts(!showAlerts)}
-          title={tv ? undefined : showAlerts ? 'Hide the alerts' : 'Show the alerts'}
+          disabled={tv}
+          onClick={toAlerts}
+          title={tv ? undefined : 'Go to the alerts list'}
         >
           <span className="bs-w">Alerts</span>
-          <span className="bs-n">{alertCount}<span className="bs-pct">{alertCount ? (alertsOpen ? 'hide ▴' : 'show ▾') : ''}</span></span>
+          <span className="bs-n">{alertCount}<span className="bs-pct">{alertCount && !tv ? 'see list ▾' : ''}</span></span>
           <span className="bs-subs">{alertCount ? alertKinds.slice(0, 2).map(([k, n]) => `${n} ${ALERT_PLAIN[k as Alert['kind']].title}`).join(' · ') : 'Nothing needs action'}</span>
         </button>
       </div>
-
-      {alertsOpen && alertCount > 0 && (
-        <section id="board-alerts" className="balerts" aria-label="Alerts">
-          <ol>
-            {alertList.map((x) => {
-              const u = unitOf(x.unitId);
-              const p = ALERT_PLAIN[x.kind];
-              return (
-                <li key={`${x.kind}-${x.unitId}-${x.flagId ?? ''}`}>
-                  <button type="button" className="balert" onClick={() => u && pick(u)} disabled={tv}>
-                    <span className="ba-unit">{u?.unitNumber ?? x.unitId}</span>
-                    <span className="ba-body">
-                      <strong>{p.title}</strong>
-                      <span className="muted small">{p.what} Next: {p.next} ({x.goesTo.join(', ')}).</span>
-                    </span>
-                    <span className="ba-time">{x.kind === 'pm_overrun' ? 'now' : hrs(x.since)}</span>
-                  </button>
-                </li>
-              );
-            })}
-          </ol>
-          {!tv && <a className="small" href="#/alerts">Open the alerts page</a>}
-        </section>
-      )}
 
       {!tv && (
         <div className="btools">
@@ -276,24 +256,24 @@ export function Board({ tv, query = '' }: { tv: boolean; query?: string }) {
           {groups.map((g) => {
             const list = inGroup(g.group);
             const subs = subsOf(g.group);
-            if (!list.length && (filtered || g.group === 'parked')) return null;
+            if (!list.length && filtered) return null;
             return (
               <section key={g.group} className={`bcol bcol-${g.group}`} aria-label={g.word}>
                 <div className="bcol-head">
                   <h3>{g.word} <span className="muted">· {list.length}</span></h3>
-                  {subs.length > 0 && g.group !== 'parked' && (
+                  {subs.length > 0 && (
                     <div className="bsubs" role="group" aria-label={`${g.word} by sub-status`}>
                       {subs.map((x) => (
                         <button key={x.key} type="button" className={`bsub bsub-${x.sub}`} aria-pressed={filter.subs.includes(x.key)} disabled={tv}
                           onClick={() => setFilter({ ...filter, subs: toggleIn(filter.subs, x.key) })}>
-                          {BOARD_SUB_LABELS[x.sub]} <strong>{x.n}</strong>
+                          <FlagIcon code={x.sub} size={14} /> {BOARD_SUB_LABELS[x.sub]} <strong>{x.n}</strong>
                         </button>
                       ))}
                     </div>
                   )}
                 </div>
                 {list.length === 0 ? <p className="small muted bcol-empty">{g.empty}</p> : (
-                  <div className={g.group === 'operational' || g.group === 'parked' ? 'bcards bcards-small' : 'bcards'}>{list.map(card)}</div>
+                  <div className={g.group === 'operational' ? 'bcards bcards-small' : 'bcards'}>{list.map(card)}</div>
                 )}
               </section>
             );
@@ -301,25 +281,29 @@ export function Board({ tv, query = '' }: { tv: boolean; query?: string }) {
         </div>
       )}
 
-      <section className="card" style={{ marginTop: 16 }}>
-        <h3>Downline queue</h3>
-        {queue.length === 0 ? (
-          <p className="muted small">Nothing waiting for a crew, a tow or a line.</p>
-        ) : (
-          <table>
-            <thead><tr><th>Unit</th><th>Waiting for</th><th className="num">Waiting</th><th>Where</th></tr></thead>
-            <tbody>
-              {queue.map((q) => (
-                <tr key={q.flag.id}>
-                  <td>{app.ds.assets.find((a) => a.id === q.flag.unitId)?.unitNumber}</td>
-                  <td>{STAGE_LABELS[q.stage]}</td>
-                  <td className="num">{fmtHours(q.waitingHours)}</td>
-                  <td>{locationLabel(q.flag, app.ds)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+      <section id="board-alerts" className="balerts" aria-label="Alerts">
+        <h3><FlagIcon code="alert" size={18} /> Alerts · {alertCount}{alertCount > 0 ? ', most urgent first' : ''}</h3>
+        {alertCount === 0 ? <p className="muted small">No alerts. Nothing needs action right now.</p> : (
+          <ol>
+            {alertList.map((x) => {
+              const u = unitOf(x.unitId);
+              const p = ALERT_PLAIN[x.kind];
+              return (
+                <li key={`${x.kind}-${x.unitId}-${x.flagId ?? ''}`}>
+                  <button type="button" className="balert" onClick={() => u && pick(u)} disabled={tv}>
+                    <span className="ba-unit">{u?.unitNumber ?? x.unitId}</span>
+                    <span className="ba-body">
+                      <strong>{p.title}</strong>
+                      <span className="muted small">{p.what} Next: {p.next} ({x.goesTo.join(', ')}).</span>
+                    </span>
+                    <span className="ba-time">{x.kind === 'pm_overrun' ? 'now' : hrs(x.since)}</span>
+                  </button>
+                </li>
+              );
+            })}
+          </ol>
         )}
+        {!tv && <a className="small" href="#/alerts">Open the alerts page</a>}
       </section>
 
       {!tv && (
