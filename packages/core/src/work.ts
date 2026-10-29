@@ -5,7 +5,7 @@
 // Pure functions over imported ERP work orders; the ERP stays the record.
 
 import { DateTime } from 'luxon';
-import { MAXIMO_DEFAULT_MAPPING, normaliseWoNumber } from './imports.js';
+import { MAXIMO_DEFAULT_MAPPING, normaliseWoNumber, statusWords } from './imports.js';
 import { permission } from './permissions.js';
 import type { Period } from './kpis.js';
 import { ms } from './time.js';
@@ -34,11 +34,16 @@ export const READINESS_LABELS: Record<WorkReadiness, string> = {
   unknown: 'Status not mapped',
 };
 
+/** Most limiting first (docs/field-mapping.md): a status with several words takes the first of these it maps to. */
+const LIMITING: WorkReadiness[] = ['waiting_approval', 'waiting_parts', 'waiting_shutdown', 'in_progress', 'ready'];
+
 export function readiness(w: WorkOrder, map: Record<string, WorkReadiness> = MAXIMO_DEFAULT_MAPPING.readiness): WorkReadiness {
-  return (w.status && map[w.status.toUpperCase()]) || 'unknown';
+  const found = new Set(statusWords(w.status).map((x) => map[x]).filter((x): x is WorkReadiness => !!x));
+  return LIMITING.find((r) => found.has(r)) ?? 'unknown';
 }
 
-const isCancelled = (w: WorkOrder) => (w.status ?? '').toUpperCase() === 'CAN';
+/** Cancelled: CAN in Maximo, the deletion flag DLFL in SAP. */
+const isCancelled = (w: WorkOrder) => statusWords(w.status).some((x) => x === 'CAN' || x === 'DLFL');
 const hoursOf = (w: WorkOrder) => w.actualLabourHours ?? w.estimatedHours;
 export const isEmergency = (w: WorkOrder, s: WorkSettings) =>
   s.emergencyTypes.map((x) => x.toUpperCase()).includes((w.woType ?? '').toUpperCase()) || s.emergencyPriorities.includes(w.priority ?? '');

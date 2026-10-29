@@ -9,8 +9,10 @@
 // Pure functions: the same code runs in the browser preview and the server job.
 
 import { DateTime } from 'luxon';
+import type { ConsoleContext, ConsoleResult } from './console.js';
+import { can } from './permissions.js';
 import { HOUR_MS, ms } from './time.js';
-import type { Asset, Iso, SmuReading, WorkClass, WorkOrder, WorkReadiness } from './types.js';
+import type { Asset, AuditEntry, Iso, SmuReading, WorkClass, WorkOrder, WorkReadiness } from './types.js';
 
 // ---------- CSV ----------
 
@@ -88,6 +90,8 @@ export interface ImportMapping {
   readiness: Record<string, WorkReadiness>;
   /** Removed from work order numbers before matching, as a regular expression. */
   woNumberPrefix: string;
+  /** How dates are written in sample files made for this source. Default yyyy-MM-dd HH:mm:ss. */
+  writeDateFormat?: string;
 }
 
 export const MAXIMO_DEFAULT_MAPPING: ImportMapping = {
@@ -106,6 +110,73 @@ export const MAXIMO_DEFAULT_MAPPING: ImportMapping = {
   closedStatuses: ['COMP', 'CLOSE', 'CAN'],
   readiness: { WAPPR: 'waiting_approval', WMATL: 'waiting_parts', WPCOND: 'waiting_shutdown', APPR: 'ready', WSCH: 'ready', INPRG: 'in_progress' },
   woNumberPrefix: '^(WO|PM)[-\\s#]*',
+};
+
+/**
+ * SAP PM list exports (docs/field-mapping.md): equipment IH08, orders IW38/IW39, measurement
+ * documents IK17, with technical column names. A starting point to confirm against a real export.
+ */
+export const SAP_PM_DEFAULT_MAPPING: ImportMapping = {
+  sourceSystem: 'sap_pm',
+  dateFormats: ['dd.MM.yyyy HH:mm:ss', 'dd.MM.yyyy HH:mm', 'dd.MM.yyyy', 'yyyyMMdd HHmmss', 'yyyyMMdd', 'yyyy-MM-dd HH:mm:ss', 'yyyy-MM-dd'],
+  site: { column: 'SWERK', value: 'DEMO' },
+  assets: { unitNumber: 'TIDNR', externalAssetId: 'EQUNR', fleet: 'EQART', model: 'TYPBZ', serial: 'SERGE', functionalLocation: 'TPLNR' },
+  workOrders: {
+    number: 'AUFNR', asset: 'EQUNR', type: 'AUART', status: 'STTXT+USTXT', priority: 'PRIOK', description: 'KTEXT',
+    reportedAt: 'ERDAT', completedAt: 'GETRI+GEUZI', modifiedAt: 'AEDAT',
+    targetStart: 'GSTRP', targetFinish: 'GLTRP', scheduledStart: 'GSTRS', scheduledFinish: 'GLTRS',
+    estimatedHours: 'ARBEI', actualLabourHours: 'ISMNW', pmNumber: 'WARPL',
+  },
+  smu: { asset: 'EQUNR', at: 'IDATE+ITIME', hours: 'RECDV', meter: 'PSORT', meterValue: 'SMU' },
+  workClasses: { PM01: 'corrective', PM02: 'pm', PM03: 'inspection', PM04: 'project', PM05: 'corrective' },
+  closedStatuses: ['TECO', 'CLSD', 'DLFL'],
+  readiness: { CRTD: 'waiting_approval', MSPT: 'waiting_parts', WSHD: 'waiting_shutdown', PCNF: 'in_progress', REL: 'ready' },
+  woNumberPrefix: '^(WO|PM)[-\\s#]*',
+  writeDateFormat: 'dd.MM.yyyy HH:mm:ss',
+};
+
+export type SourceSystem = 'maximo' | 'sap_pm';
+export const SOURCE_SYSTEM_LABELS: Record<SourceSystem, string> = { maximo: 'IBM Maximo', sap_pm: 'SAP PM' };
+
+/** Site setting `imports` (docs/field-mapping.md): which ERP the files come from, and the site value they use. */
+export interface ImportSource {
+  sourceSystem: SourceSystem;
+  /** The site column value of this site's rows, e.g. a Maximo SITEID or an SAP maintenance plant. */
+  siteValue?: string;
+}
+export const DEFAULT_IMPORT_SOURCE: ImportSource = { sourceSystem: 'maximo' };
+
+export function withImportDefaults(v: Partial<ImportSource> | undefined): ImportSource {
+  const sys = v?.sourceSystem === 'sap_pm' ? 'sap_pm' : 'maximo';
+  const sv = typeof v?.siteValue === 'string' && v.siteValue.trim() ? v.siteValue.trim() : undefined;
+  return { sourceSystem: sys, ...(sv ? { siteValue: sv } : {}) };
+}
+
+/** The mapping a site's files are read with. */
+export function mappingFor(src: ImportSource): ImportMapping {
+  const m = src.sourceSystem === 'sap_pm' ? SAP_PM_DEFAULT_MAPPING : MAXIMO_DEFAULT_MAPPING;
+  return src.siteValue && m.site ? { ...m, site: { ...m.site, value: src.siteValue } } : m;
+}
+
+export function setImportSource(ctx: ConsoleContext, current: ImportSource, next: ImportSource, reason: string): ConsoleResult<ImportSource> {
+  if (!can(ctx.actor, 'manage_imports')) return { ok: false, errors: ['The data owner (Admin in phase 1a) chooses the source system.'] };
+  const e: string[] = [];
+  if (next.sourceSystem !== 'maximo' && next.sourceSystem !== 'sap_pm') e.push('Pick Maximo or SAP PM.');
+  if (next.siteValue !== undefined && next.siteValue.trim().length > 40) e.push('The site value is up to 40 characters.');
+  if (!reason.trim()) e.push('Give a reason for the change.');
+  if (e.length) return { ok: false, errors: e };
+  const clean = withImportDefaults(next);
+  const audit: AuditEntry = { at: ctx.now, userId: ctx.actor.userId, action: 'set_import_source', entity: 'settings', entityId: 'imports', before: current, after: clean, reason: reason.trim() };
+  return { ok: true, records: [clean], audit: [audit], warnings: current.sourceSystem !== clean.sourceSystem ? ['Files imported before keep the source system they came from.'] : [] };
+}
+
+/** The words of a status. SAP writes several together, e.g. "REL MACM WSHD"; Maximo writes one. */
+export const statusWords = (status?: string) => (status ?? '').toUpperCase().split(/[\s,;]+/).filter(Boolean);
+
+/** Closed when any word of the status is a closed status. */
+export const isClosedStatus = (status: string | undefined, closed: string[]) => {
+  const c = new Set(closed.map((x) => x.toUpperCase()));
+  return statusWords(status).some((w) => c.has(w));
 };
 
 export interface ImportSettings {
@@ -231,7 +302,10 @@ export function parseSourceDate(value: string, formats: string[], timeZone: stri
 export function parseSourceNumber(value: string): number | null {
   let v = value.trim().replace(/\s/g, '');
   if (!v) return null;
+  // SAP writes negatives with a trailing minus: "12,5-".
+  if (/^\d[\d.,]*-$/.test(v)) v = `-${v.slice(0, -1)}`;
   if (/^-?\d{1,3}(,\d{3})+(\.\d+)?$/.test(v)) v = v.replace(/,/g, '');
+  else if (/^-?\d{1,3}(\.\d{3})+,\d+$/.test(v) || /^-?\d{1,3}(\.\d{3}){2,}$/.test(v)) v = v.replace(/\./g, '').replace(',', '.');
   else if (/^-?\d+,\d+$/.test(v)) v = v.replace(',', '.');
   const n = Number(v);
   return Number.isFinite(n) ? n : null;
@@ -261,13 +335,16 @@ class Reader {
   constructor(readonly table: Table) {
     table.header.forEach((h, i) => this.index.set(h.toUpperCase(), i));
   }
+  /** "A+B" joins two columns (an SAP date and its time); only the first must be present. */
   has(col?: string): boolean {
-    return !!col && this.index.has(col.toUpperCase());
+    return !!col && this.index.has(col.split('+')[0]!.trim().toUpperCase());
   }
   get(row: string[], col?: string): string {
     if (!col) return '';
-    const i = this.index.get(col.toUpperCase());
-    return i === undefined ? '' : (row[i] ?? '').trim();
+    return col.split('+').map((c) => {
+      const i = this.index.get(c.trim().toUpperCase());
+      return i === undefined ? '' : (row[i] ?? '').trim();
+    }).filter(Boolean).join(' ');
   }
   payload(row: string[]): Record<string, string> {
     return Object.fromEntries(this.table.header.map((h, i) => [h, row[i] ?? '']));
@@ -382,7 +459,6 @@ export function importWorkOrders(table: Table, existing: WorkOrder[], assets: As
   const byKey = new Map(existing.map((w, i) => [`${w.sourceSystem}|${w.sourceId}`.toUpperCase(), i]));
   const fileRow = new Map<string, number>();
   const futureLimit = ms(ctx.now) + s.futureToleranceMinutes * 60_000;
-  const closed = new Set(m.closedStatuses.map((x) => x.toUpperCase()));
   const unknownUnits = new Map<string, number>();
   let otherSite = 0;
 
@@ -452,7 +528,7 @@ export function importWorkOrders(table: Table, existing: WorkOrder[], assets: As
       woType,
       workClass: (woType && m.workClasses[woType.toUpperCase()]) || 'other',
       status,
-      open: !status || !closed.has(status.toUpperCase()),
+      open: !isClosedStatus(status, m.closedStatuses),
       priority: rd.get(row, m.workOrders.priority) || undefined,
       description: rd.get(row, m.workOrders.description) || undefined,
       reportedAt,
@@ -622,8 +698,8 @@ export function importScore(stats: ImportStats): number | null {
 
 // ---------- export in the same shape (for synthetic files and round trips) ----------
 
-export function formatSourceDate(iso: Iso | undefined | null, timeZone: string): string {
-  return iso ? DateTime.fromISO(iso, { zone: timeZone }).toFormat('yyyy-MM-dd HH:mm:ss') : '';
+export function formatSourceDate(iso: Iso | undefined | null, timeZone: string, format = 'yyyy-MM-dd HH:mm:ss'): string {
+  return iso ? DateTime.fromISO(iso, { zone: timeZone }).toFormat(format) : '';
 }
 
 /** Write assets, work orders and SMU readings as Maximo-style CSV files, using the mapping's column names. */
@@ -636,7 +712,17 @@ export function toSourceCsv(
   const ext = new Map(data.assets.map((a) => [a.id, a.externalAssetId ?? a.unitNumber]));
   const cols = <T>(pairs: Array<[string | undefined, (x: T) => string | number | undefined]>) => pairs.filter((p): p is [string, (x: T) => string | number | undefined] => !!p[0]);
   const withSite = <T>(pairs: Array<[string, (x: T) => string | number | undefined]>) => (site ? [...pairs, [site.column, () => site.value] as [string, (x: T) => string]] : pairs);
-  const write = <T>(rows: T[], pairs: Array<[string, (x: T) => string | number | undefined]>) => toCsv([pairs.map((p) => p[0]), ...rows.map((r) => pairs.map((p) => p[1](r)))]);
+  const fd = (iso: Iso | undefined | null) => formatSourceDate(iso, timeZone, m.writeDateFormat);
+  // A joined column "DATE+TIME" is written as two columns: the date, then the time.
+  const write = <T>(rows: T[], pairs: Array<[string, (x: T) => string | number | undefined]>) => {
+    const out: Array<[string, (x: T) => string | number | undefined]> = pairs.flatMap(([c, f]): Array<[string, (x: T) => string | number | undefined]> => {
+      const parts = c.split('+');
+      if (parts.length < 2) return [[c, f]];
+      const piece = (x: T, n: number) => { const v = String(f(x) ?? ''); const k = v.indexOf(' '); return n === 0 ? (k < 0 ? v : v.slice(0, k)) : k < 0 ? '' : v.slice(k + 1); };
+      return [[parts[0]!.trim(), (x: T) => piece(x, 0)], [parts[1]!.trim(), (x: T) => piece(x, 1)]];
+    });
+    return toCsv([out.map((p) => p[0]), ...rows.map((r) => out.map((p) => p[1](r)))]);
+  };
 
   const assetCols = withSite(cols<Asset>([
     [m.assets.externalAssetId, (a) => a.externalAssetId ?? a.unitNumber],
@@ -653,13 +739,13 @@ export function toSourceCsv(
     [m.workOrders.status, (w) => w.status],
     [m.workOrders.priority, (w) => w.priority],
     [m.workOrders.description, (w) => w.description],
-    [m.workOrders.reportedAt, (w) => formatSourceDate(w.reportedAt, timeZone)],
-    [m.workOrders.completedAt, (w) => formatSourceDate(w.completedAt, timeZone)],
-    [m.workOrders.modifiedAt, (w) => formatSourceDate(w.sourceModifiedAt, timeZone)],
-    [m.workOrders.targetStart, (w) => formatSourceDate(w.targetStart, timeZone)],
-    [m.workOrders.targetFinish, (w) => formatSourceDate(w.targetFinish, timeZone)],
-    [m.workOrders.scheduledStart, (w) => formatSourceDate(w.scheduledStart, timeZone)],
-    [m.workOrders.scheduledFinish, (w) => formatSourceDate(w.scheduledFinish, timeZone)],
+    [m.workOrders.reportedAt, (w) => fd(w.reportedAt)],
+    [m.workOrders.completedAt, (w) => fd(w.completedAt)],
+    [m.workOrders.modifiedAt, (w) => fd(w.sourceModifiedAt)],
+    [m.workOrders.targetStart, (w) => fd(w.targetStart)],
+    [m.workOrders.targetFinish, (w) => fd(w.targetFinish)],
+    [m.workOrders.scheduledStart, (w) => fd(w.scheduledStart)],
+    [m.workOrders.scheduledFinish, (w) => fd(w.scheduledFinish)],
     [m.workOrders.estimatedHours, (w) => w.estimatedHours],
     [m.workOrders.actualLabourHours, (w) => w.actualLabourHours],
     [m.workOrders.pmNumber, (w) => w.pmNumber],
@@ -668,7 +754,7 @@ export function toSourceCsv(
   const smuCols = withSite(cols<SmuReading>([
     [m.smu.asset, (r) => ext.get(r.unitId)],
     [m.smu.meter, () => m.smu.meterValue],
-    [m.smu.at, (r) => formatSourceDate(r.at, timeZone)],
+    [m.smu.at, (r) => fd(r.at)],
     [m.smu.hours, (r) => r.hours],
   ]));
   return { assets: write(data.assets, assetCols), workOrders: write(data.workOrders, woCols), smu: write(data.smu, smuCols) };

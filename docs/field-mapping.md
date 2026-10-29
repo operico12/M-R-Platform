@@ -84,7 +84,8 @@ documents (IK17), exported to a spreadsheet with technical column names.
 
 - Order types (placeholder; sites configure their own): PM01 → corrective, PM02 → PM, PM03 →
   inspection, PM04 → project, PM05 → corrective.
-- Closed: TECO (technically complete), CLSD (closed), DLFL (deletion flag).
+- Closed: TECO (technically complete), CLSD (closed), DLFL (deletion flag). Cancelled work (left out of
+  schedule and PM compliance) is CAN in Maximo and DLFL in SAP.
 - Readiness: CRTD → waiting for approval (created, not released), MSPT → waiting for parts (missing
   parts), WSHD → waiting for shutdown (a user status; rename to the site's own), PCNF → in progress
   (partly confirmed), REL → ready.
