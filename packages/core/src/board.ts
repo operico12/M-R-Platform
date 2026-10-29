@@ -2,7 +2,7 @@
 // and the board's filters. Pure functions; durations are always calculated (rule 4).
 
 import type { StandbyFlag } from './standby.js';
-import type { DownFlag, Iso } from './types.js';
+import { STAGE_LABELS, type DownFlag, type Iso, type Stage } from './types.js';
 
 /** Start of the downtime event an open flag belongs to: a type switch or a linked reopen keeps the first start. */
 export function downSince(flag: DownFlag, flags: DownFlag[]): Iso {
@@ -37,43 +37,80 @@ export function upSince(unitId: string, flags: DownFlag[], now: Iso, standby: Ar
   return best === undefined ? undefined : new Date(best).toISOString();
 }
 
-export type BoardStatus = 'run' | 'standby' | 'sched' | 'down' | 'stale' | 'parked';
+/** The three broad statuses (Ope, 29 Oct 2026, docs/status-board.md), plus parked units. */
+export type BoardGroup = 'operational' | 'sched' | 'unsched' | 'parked';
+export const BOARD_GROUPS: readonly BoardGroup[] = ['operational', 'sched', 'unsched', 'parked'];
 
-export interface StatusRow { unitId: string; unitNumber: string; model: string; status: BoardStatus; text?: string }
+/** Sub-status: in use or standby when operational, the current stage when down. */
+export type BoardSub = 'in_use' | 'standby' | 'parked' | 'no_stage' | Stage;
+
+export const BOARD_SUB_LABELS: Record<BoardSub, string> = { in_use: 'In use', standby: 'Standby', parked: 'Parked', no_stage: 'No stage set', ...STAGE_LABELS };
+
+/**
+ * Where a unit sits on the board. An open down flag wins over standby; a parked unit is parked.
+ * A down unit's sub-status is its flag's current stage, so a wait is never a second flag.
+ */
+export function boardPlace(openFlag: Pick<DownFlag, 'type' | 'stages'> | undefined, standby: unknown, parked: boolean): { group: BoardGroup; sub: BoardSub } {
+  if (parked) return { group: 'parked', sub: 'parked' };
+  if (openFlag) return { group: openFlag.type === 'scheduled' ? 'sched' : 'unsched', sub: openFlag.stages.at(-1)?.stage ?? 'no_stage' };
+  return { group: 'operational', sub: standby ? 'standby' : 'in_use' };
+}
+
+/** Start of the flag's current stage interval: "in this stage for" is now minus this. */
+export function stageSince(flag: Pick<DownFlag, 'start' | 'stages'>): Iso {
+  return flag.stages.at(-1)?.start ?? flag.start;
+}
+
+export interface StatusRow { unitId: string; unitNumber: string; model: string; group: BoardGroup; sub: BoardSub; text?: string }
+
+/** A sub-status filter key: the same stage can be under scheduled and unscheduled. */
+export const subKey = (r: Pick<StatusRow, 'group' | 'sub'>): string => `${r.group}:${r.sub}`;
 
 export interface BoardFilter {
-  /** Empty: every status. */
-  statuses: BoardStatus[];
+  /** Statuses pressed. With subs: a unit shows if its status or its sub-status is pressed. Both empty: every unit. */
+  groups: BoardGroup[];
+  /** Sub-status keys pressed, e.g. "unsched:waiting_parts". */
+  subs: string[];
   /** Empty: every model. */
   models: string[];
   q: string;
 }
 
-export const EMPTY_BOARD_FILTER: BoardFilter = { statuses: [], models: [], q: '' };
+export const EMPTY_BOARD_FILTER: BoardFilter = { groups: [], subs: [], models: [], q: '' };
 
 export function filterBoard<T extends StatusRow>(rows: T[], f: BoardFilter): T[] {
   const q = f.q.trim().toLowerCase();
+  const anyStatus = f.groups.length === 0 && f.subs.length === 0;
   return rows.filter((r) =>
-    (!f.statuses.length || f.statuses.includes(r.status))
+    (anyStatus || f.groups.includes(r.group) || f.subs.includes(subKey(r)))
     && (!f.models.length || f.models.includes(r.model))
-    && (!q || [r.unitNumber, r.model, r.text ?? ''].some((v) => v.toLowerCase().includes(q))));
+    && (!q || [r.unitNumber, r.model, r.text ?? '', BOARD_SUB_LABELS[r.sub]].some((v) => v.toLowerCase().includes(q))));
 }
 
-/** Counts per status for the units the model filter and search leave, so a count matches what a click shows. */
-export function boardCounts(rows: StatusRow[], f: BoardFilter): Record<BoardStatus, number> {
-  const out: Record<BoardStatus, number> = { run: 0, standby: 0, sched: 0, down: 0, stale: 0, parked: 0 };
-  for (const r of filterBoard(rows, { ...f, statuses: [] })) out[r.status]++;
-  return out;
+export interface BoardCounts { groups: Record<BoardGroup, number>; subs: Record<string, number> }
+
+/** Counts per status and sub-status for the units the model filter and search leave, so a count matches what a press shows. */
+export function boardCounts(rows: StatusRow[], f: BoardFilter): BoardCounts {
+  const groups: Record<BoardGroup, number> = { operational: 0, sched: 0, unsched: 0, parked: 0 };
+  const subs: Record<string, number> = {};
+  for (const r of filterBoard(rows, { ...f, groups: [], subs: [] })) {
+    groups[r.group]++;
+    subs[subKey(r)] = (subs[subKey(r)] ?? 0) + 1;
+  }
+  return { groups, subs };
 }
 
 export const toggleIn = <T>(list: T[], v: T): T[] => (list.includes(v) ? list.filter((x) => x !== v) : [...list, v]);
 
-const STATUSES: BoardStatus[] = ['run', 'standby', 'sched', 'down', 'stale', 'parked'];
+// Links made before the three statuses still open the right units.
+const OLD_STATUS: Record<string, BoardGroup> = { run: 'operational', standby: 'operational', stale: 'operational', down: 'unsched' };
+const SUBS = new Set<string>(Object.keys(BOARD_SUB_LABELS));
 
-/** The filter as a query string (?status=down,sched&model=793F&q=brake), so a filtered board can be shared. */
+/** The filter as a query string (?status=unsched&sub=unsched:waiting_parts&model=793F&q=brake), so a filtered board can be shared. */
 export function boardFilterToQuery(f: BoardFilter): string {
   const p = new URLSearchParams();
-  if (f.statuses.length) p.set('status', f.statuses.join(','));
+  if (f.groups.length) p.set('status', f.groups.join(','));
+  if (f.subs.length) p.set('sub', f.subs.join(','));
   if (f.models.length) p.set('model', f.models.join(','));
   if (f.q.trim()) p.set('q', f.q.trim());
   return p.toString();
@@ -82,9 +119,14 @@ export function boardFilterToQuery(f: BoardFilter): string {
 export function boardFilterFromQuery(query: string): BoardFilter {
   const p = new URLSearchParams(query);
   const list = (k: string) => (p.get(k) ?? '').split(',').map((s) => s.trim()).filter(Boolean);
-  return {
-    statuses: list('status').filter((s): s is BoardStatus => (STATUSES as string[]).includes(s)),
-    models: list('model'),
-    q: p.get('q') ?? '',
-  };
+  const groups: BoardGroup[] = [];
+  for (const s of list('status')) {
+    const g = (BOARD_GROUPS as readonly string[]).includes(s) ? (s as BoardGroup) : OLD_STATUS[s];
+    if (g && !groups.includes(g)) groups.push(g);
+  }
+  const subs = list('sub').filter((k) => {
+    const [g, sub] = k.split(':');
+    return (BOARD_GROUPS as readonly string[]).includes(g ?? '') && SUBS.has(sub ?? '');
+  });
+  return { groups, subs, models: list('model'), q: p.get('q') ?? '' };
 }

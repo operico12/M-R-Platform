@@ -143,3 +143,26 @@ export function missingSmu(input: AlertInput): Alert[] {
       goesTo: ['supervisor'],
     }));
 }
+
+/**
+ * Alerts in plain words for the status board (docs/status-board.md): what it is, what it means
+ * and what to do next. Listed most urgent kind first.
+ */
+export const ALERT_PLAIN: Record<AlertKind, { title: string; what: string; next: string }> = {
+  eta_passed: { title: 'ETA passed', what: 'Should be back by now but is still down.', next: 'Update the ETA or release it' },
+  no_eta: { title: 'No ETA', what: 'Down with no return time given.', next: 'Add an ETA' },
+  proposal_unconfirmed: { title: 'Down flag not confirmed', what: 'A technician flagged it down and nobody has confirmed it yet.', next: 'Confirm or reject the flag' },
+  smu_rising_while_down: { title: 'Hour meter moving while down', what: 'The hour meter went up while the unit is flagged down, so the flag may be wrong.', next: 'Check the flag times' },
+  pm_overrun: { title: 'PM running over', what: 'Past its planned time. A defect may be keeping it down.', next: 'Check for a defect' },
+  waiting_parts: { title: 'Waiting parts too long', what: 'Stuck waiting for parts.', next: 'Chase the parts' },
+  waiting_line: { title: 'Waiting for a line too long', what: 'Ready to repair but no shop line is free.', next: 'Find a line or a crew' },
+  flag_open_long: { title: 'Down a long time', what: 'This down flag has been open for days.', next: 'Review the plan to get it back' },
+  no_smu_reading: { title: 'No hour meter reading', what: 'No reading came in for the last shift.', next: 'Check the reading feed' },
+};
+
+const ALERT_ORDER = Object.keys(ALERT_PLAIN) as AlertKind[];
+
+/** Most urgent kind first, then the one that has been on longest. */
+export function sortAlerts<T extends Pick<Alert, 'kind' | 'since'>>(alerts: T[]): T[] {
+  return [...alerts].sort((x, y) => ALERT_ORDER.indexOf(x.kind) - ALERT_ORDER.indexOf(y.kind) || ms(x.since) - ms(y.since));
+}
