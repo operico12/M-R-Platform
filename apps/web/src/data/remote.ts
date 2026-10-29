@@ -186,20 +186,26 @@ export async function loadSnapshot(siteId: string, since: string): Promise<SiteS
   };
 }
 
+/** One more try when the database cancels a slow call (Postgres code 57014, statement timeout). */
+async function rpcRetry(fn: string, args: Record<string, unknown>) {
+  const r = await remote!.rpc(fn, args);
+  return r.error?.code === '57014' ? remote!.rpc(fn, args) : r;
+}
+
 export async function loadSite(siteId: string): Promise<Loaded> {
   const since = new Date(Date.now() - 730 * 864e5).toISOString();
   const [main, imp, proj, wk, ans, appr, anl, vw, cmp, cond, rcmr, plnt, sds] = await Promise.all([
-    remote!.rpc('app_load', { p_site: siteId }), remote!.rpc('app_load_improve', { p_site: siteId }), remote!.rpc('app_load_projects', { p_site: siteId }),
-    remote!.rpc('app_load_work', { p_site: siteId }),
-    remote!.rpc('app_load_alert_answers', { p_site: siteId }),
-    remote!.rpc('app_load_approvals', { p_site: siteId }),
-    remote!.rpc('app_load_analyses', { p_site: siteId }),
-    remote!.rpc('app_load_views', { p_site: siteId }),
-    remote!.rpc('app_load_components', { p_site: siteId }),
-    remote!.rpc('app_load_condition', { p_site: siteId, p_since: since }),
-    remote!.rpc('app_load_rcm', { p_site: siteId }),
-    remote!.rpc('app_load_plant', { p_site: siteId, p_since: new Date(Date.now() - 400 * 864e5).toISOString() }),
-    remote!.rpc('app_load_shutdowns', { p_site: siteId }),
+    rpcRetry('app_load', { p_site: siteId }), rpcRetry('app_load_improve', { p_site: siteId }), rpcRetry('app_load_projects', { p_site: siteId }),
+    rpcRetry('app_load_work', { p_site: siteId }),
+    rpcRetry('app_load_alert_answers', { p_site: siteId }),
+    rpcRetry('app_load_approvals', { p_site: siteId }),
+    rpcRetry('app_load_analyses', { p_site: siteId }),
+    rpcRetry('app_load_views', { p_site: siteId }),
+    rpcRetry('app_load_components', { p_site: siteId }),
+    rpcRetry('app_load_condition', { p_site: siteId, p_since: since }),
+    rpcRetry('app_load_rcm', { p_site: siteId }),
+    rpcRetry('app_load_plant', { p_site: siteId, p_since: new Date(Date.now() - 400 * 864e5).toISOString() }),
+    rpcRetry('app_load_shutdowns', { p_site: siteId }),
   ]);
   const insp = await loadInspections(siteId);
   const work = iso(must(wk)) as { plans: Array<Partial<WorkOrder> & { id: string }>; settings: { work?: Partial<WorkSettings>; alerts?: Partial<AlertSettings>; condition?: Partial<ConditionSettings>; rcm?: Partial<RcmSettings>; spares?: Partial<SparesSettings>; assist?: Partial<AssistSettings>; plant?: Partial<PlantSettings>; imports?: Partial<ImportSource>; access?: Partial<AccessSettings> } };
