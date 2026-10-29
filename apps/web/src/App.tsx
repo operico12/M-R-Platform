@@ -30,6 +30,7 @@ import { Account, CodeCheck, MfaSetup, RequestAccess, mfaState, signedInAt, useS
 import { DEMO_SITES, rememberSite, rememberedSite, type SiteChoice } from './data/sites';
 import { switcherOrder } from '@mr/core';
 import { AppProvider, useApp } from './store';
+import { Menu } from './Menu';
 
 function useHash(): string {
   const [h, setH] = useState(() => window.location.hash || '#/board');
@@ -40,35 +41,6 @@ function useHash(): string {
   }, []);
   return h;
 }
-
-const NAV: Array<[string, string]> = [
-  ['#/board', 'Status board'],
-  ['#/lines', 'Shop lines'],
-  ['#/plant', 'Plant overview'],
-  ['#/units', 'Units'],
-  ['#/performance', 'Performance'],
-  ['#/analysis', 'Downtime analysis'],
-  ['#/explore', 'Explorer'],
-  ['#/components', 'Components'],
-  ['#/condition', 'Condition'],
-  ['#/rcm', 'RCM'],
-  ['#/spares', 'Spares'],
-  ['#/assist', 'Assist'],
-  ['#/work', 'Work and PM'],
-  ['#/inspections', 'Inspections'],
-  ['#/calc', 'Calculators'],
-  ['#/alerts', 'Alerts'],
-  ['#/actions', 'Actions'],
-  ['#/rca', 'Root cause analysis'],
-  ['#/projects', 'Projects'],
-  ['#/pack', 'Weekly pack'],
-  ['#/quality', 'Data quality'],
-  ['#/import', 'Data import'],
-  ['#/console', 'Console'],
-  ['#/sites', 'Sites'],
-  ['#/api', 'API access'],
-  ['#/account', 'Account'],
-];
 
 const ROLES: Array<[Role, string]> = [
   ['viewer', 'Viewer'],
@@ -136,44 +108,48 @@ function Shell() {
 
   return (
     <div className="shell">
-      <nav className="nav" aria-label="Main">
-        <h1>M&amp;R Platform{app.sites.length > 1 ? null : <small>{app.ds.site.name}</small>}</h1>
-        {app.sites.length > 1 && (
-          <label className="site-switch">
-            <select value={app.ds.site.id} onChange={(e) => app.switchSite(e.target.value)} aria-label="Site">
-              {app.sites.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
-            </select>
-          </label>
+      <Menu
+        hash={hash}
+        storeKey={`${app.mode === 'demo' ? 'demo' : app.actor.userId}.${app.ds.site.id}`}
+        counts={{ '#/alerts': openCount, '#/inspections': app.outbox.length }}
+        countLabel={(href, n) => (href === '#/inspections' ? `${n} waiting to send` : `${n} open`)}
+        top={(
+          <>
+            <h1>M&amp;R Platform{app.sites.length > 1 ? null : <small>{app.ds.site.name}</small>}</h1>
+            {app.sites.length > 1 && (
+              <label className="site-switch">
+                <select value={app.ds.site.id} onChange={(e) => app.switchSite(e.target.value)} aria-label="Site">
+                  {app.sites.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
+                </select>
+              </label>
+            )}
+          </>
         )}
-        {NAV.map(([href, label]) => (
-          <a key={href} href={href} aria-current={hash.startsWith(href) || (href === '#/units' && path === 'unit') ? 'page' : undefined}>
-            {label}{href === '#/alerts' && openCount > 0 && <span className="nav-count" aria-label={`${openCount} open`}>{openCount}</span>}
-            {href === '#/inspections' && app.outbox.length > 0 && <span className="nav-count" aria-label={`${app.outbox.length} waiting to send`}>{app.outbox.length}</span>}
-          </a>
-        ))}
-        <a href="#/tv">TV mode</a>
-        <div className="grow" />
-        {app.mode === 'demo' ? (
-          <label>
-            Viewing as (demo)
-            <select value={app.actor.role} onChange={(e) => app.setRole(e.target.value as Role)}>
-              {ROLES.map(([r, l]) => <option key={r} value={r}>{l}</option>)}
-            </select>
-          </label>
-        ) : (
-          <div className="small" style={{ marginTop: 8 }}>
-            Signed in as {ROLES.find(([r]) => r === app.actor.role)?.[1]}
-            {app.signOut && <button className="btn" style={{ marginTop: 6, width: '100%', minHeight: 36 }} onClick={app.signOut}>Sign out</button>}
+        bottom={(
+          <div className="menu-foot">
+            {app.mode === 'demo' ? (
+              <label>
+                Viewing as (demo)
+                <select value={app.actor.role} onChange={(e) => app.setRole(e.target.value as Role)}>
+                  {ROLES.map(([r, l]) => <option key={r} value={r}>{l}</option>)}
+                </select>
+              </label>
+            ) : (
+              <div className="small" style={{ marginTop: 8 }}>
+                Signed in as {ROLES.find(([r]) => r === app.actor.role)?.[1]}
+                {app.signOut && <button className="btn" style={{ marginTop: 6, width: '100%', minHeight: 36 }} onClick={app.signOut}>Sign out</button>}
+              </div>
+            )}
+            <label>
+              Theme
+              <select value={app.theme} onChange={(e) => app.setTheme(e.target.value as 'light' | 'dark')}>
+                <option value="light">Light (office)</option>
+                <option value="dark">Dark (night shift)</option>
+              </select>
+            </label>
           </div>
         )}
-        <label>
-          Theme
-          <select value={app.theme} onChange={(e) => app.setTheme(e.target.value as 'light' | 'dark')}>
-            <option value="light">Light (office)</option>
-            <option value="dark">Dark (night shift)</option>
-          </select>
-        </label>
-      </nav>
+      />
       <main>
         {app.syncError && (
           <div className="errors" role="alert" style={{ marginBottom: 12 }}>
