@@ -1,9 +1,9 @@
 # Fixed plant
 
-Phase 3b, part 1. This covers plan 4.3 and A7 section 11 for a processing plant such as a
-concentrator: plant structure and words, redundancy groups, circuit and plant availability, process
-delays, throughput lost, the plant overview board (Figure 7), historian run and stop signals from a
-file, and the plant KPIs. Shutdown tracking and operator rounds follow in part 2.
+Phase 3b. This covers plan 4.3 and A7 section 11 for a processing plant such as a concentrator.
+Part 1: plant structure and words, redundancy groups, circuit and plant availability, process delays,
+throughput lost, the plant overview board (Figure 7), historian run and stop signals from a file, and
+the plant KPIs. Part 2: the structure editor, shutdown tracking, and operator rounds and lube routes.
 
 The code is in `packages/core/src/plant.ts`, kept apart from the mobile code (plan 4.3 rule: one
 shared core, plant-only logic in its own module). Plant equipment uses the same down flags, stages,
@@ -30,13 +30,13 @@ Site, plant, area, circuit, group, equipment (plan 4.3, data model Circuit and R
 - **Equipment** is an asset with asset class fixed plant. It belongs to the node whose functional
   location is the longest prefix of its own functional location, compared segment by segment
   (`CON-GRD-CFP` holds `CON-GRD-CFP-PP01`, not `CON-GRD-CFP2-PP01`). Segments are split on `-`,
-  `.` and `/`, ignoring case. Placing an equipment by hand comes with the structure editor in part 2.
+  `.` and `/`, ignoring case. To move an equipment, change the functional location of a node (or the
+  equipment's own, in the ERP).
 - Equipment with no functional location match is listed as unplaced and left out of the roll-up.
 - Nodes are never deleted. A node that is no longer used is retired with a reason; its history stays.
 
 Changing the structure follows plan 11.2 "Edit shops, shop lines, field locations, plant structure":
-admin yes, reliability engineer propose. In part 1 the structure comes from the synthetic generator
-or an import; the editor screen comes with part 2.
+admin yes, reliability engineer propose. The editor is in "Structure editor" below.
 
 ## Redundancy and roll-up
 
@@ -207,6 +207,7 @@ Site setting `plant` (Console later; edited by reliability engineer, superintend
 | `changeoverMinutes` | 5 | How soon after a group member stops the others must be running for the stop to count as covered |
 | `coveredStops` | `propose` | `propose` or `skip` covered stops of a group member |
 | `delayCodes` | the starter list above | Process delay codes and categories. A code is retired, never removed, so old records keep it |
+| `scopeFreezeDays` | 7 | Default scope freeze for a new shutdown, in days before the planned start |
 
 ## Worked examples encoded as tests
 
@@ -220,11 +221,107 @@ Plan Appendix E plant cases, one week (168 h):
   1,000 t/h. Conveyor and circuit availability 100%; process delay 3 h; throughput lost 3,000 t,
   all against "Bins or stockpile full", none against maintenance.
 
+## Structure editor (part 2)
+
+On the Plant page, Structure tab. Code: `saveNode`, `retireNode`, `placementChanges` in
+`packages/core/src/plant.ts`.
+
+- **Who:** the admin (plan 11.2 "Edit shops, shop lines, field locations, plant structure": admin yes,
+  reliability engineer propose). The permission is `edit_shop_structure`. A reliability engineer sees
+  the editor read-only and asks the admin. There is no propose flow for structure yet.
+- **What a node has:** kind, name, parent, place in process order, needed (groups and any node with
+  redundancy), functional location, planned rate in t/h.
+- **Where a node can sit:**
+
+  | Kind | Parent |
+  | --- | --- |
+  | Plant | none (a plant is a root) |
+  | Area | a plant |
+  | Circuit | a plant or an area |
+  | Redundancy group | a circuit or another group |
+
+- **Checks:**
+  - Name 1 to 100 characters.
+  - A parent cannot be the node itself or anything under it.
+  - A functional location is used by one active node only (compared by segments, ignoring case).
+  - Needed is a whole number from 1 to 100. If it is above the number of children and equipment, the
+    editor warns: the node is then down whenever any child is down, so it is probably a mistake.
+  - A planned rate is above 0.
+  - A kind change must still fit its parent and its children.
+- **Retiring:** with a reason, and only once nothing active is under it. Its equipment then belongs to
+  the next node up whose functional location matches, or becomes unplaced. The editor shows this before
+  saving. A retired node is never brought back; add a new one.
+- **Preview:** before saving, the editor lists the equipment that would change node and any that would
+  become unplaced. The unplaced list on the tab shows equipment with no matching node.
+- **Audit:** every save and retire, with the reason, entity `plant_node`.
+
+## Shutdowns (part 2)
+
+Plant shutdowns are planned work on many pieces of equipment at once. Code:
+`packages/core/src/shutdowns.ts`. Words: a **shutdown** has a **plan** (planned start and end), a
+**scope** (the work orders to do), a **scope freeze** time, and actual start and end.
+
+- **Who:** supervisors, reliability engineers and superintendents (permission `run_shutdowns`; plan
+  11.2 has no shutdown row, so this follows "Set or clear down flags" for supervisors without the area
+  limit, because a shutdown crosses areas). Starting and ending also need `set_clear_flag` for each
+  equipment, as for any flag.
+- **Planning:** pick the node (a plant, area or circuit), name it, give the master work order (the
+  ERP's shutdown work order), the planned start and end, and the equipment taking part (default: all
+  equipment under the node). The scope freeze defaults to `scopeFreezeDays` (7) before the planned
+  start. The plan can change until the shutdown starts, with a reason.
+- **Scope:** work orders by number. The tab suggests open work orders on the shutdown's equipment that
+  are waiting for a shutdown (readiness map) or whose target or scheduled start falls between one day
+  before the planned start and the planned end. A work order added after the freeze is **work
+  added** and needs a reason. A work order is taken out of scope with a reason; the record stays.
+  Nothing is added after the shutdown ends.
+- **Starting:** records the actual start (now or earlier, under the flag back-dating rules) and raises
+  a scheduled down flag on each equipment taking part, In place, reason code `Shutdown` (or the
+  site's code picked on the form), with the master work order and the planned hours, then moves it to
+  In repair. Equipment that already has an open flag keeps its flag and is listed as a warning; its
+  time counts as the flag it has.
+- **Ending:** records the actual end and releases each shutdown flag still open, with the master work
+  order, the summary "Shutdown <name> complete" and the findings given on the form. A flag that was
+  already released by hand stays as it is. A flag in a stage that cannot be released (for example
+  Waiting parts) stays open and is listed, so the supervisor deals with it on the equipment.
+- **Cancelling:** only before it starts, with a reason.
+- **Completed work:** a scope work order is done when the imported work order is closed in the ERP.
+  The ERP stays the system of record; nothing is written back. A number not in the import yet is shown
+  as "not imported".
+- **Availability:** the shutdown flags are scheduled flags, so equipment and circuit availability count
+  the shutdown as planned down (KPI-033, KPI-034), exactly as any PM.
+- **Audit:** plan, plan change, scope add and removal, start, end and cancel, entity `shutdown`.
+
+KPIs: KPI-039 to KPI-041 in `docs/kpi-dictionary.md`.
+
+## Operator rounds and lube routes (part 2)
+
+Rounds go through Inspections (`docs/inspections.md`): the same items, scoring, defects, sign-off,
+photos and outbox. What a route adds:
+
+- A **route** is an inspection form for fixed plant with a kind (**operator round** or **lube
+  route**), a node, and **stops**: equipment under that node, in walking order. Each item belongs to
+  one stop.
+- **Lube points** use the item kind **task** (Done or Missed). Missed counts as a fail, so it becomes
+  a defect like any failed item. Rounds use pass or fail, ratings and readings as any inspection.
+- **How often:** every N shifts (site shift calendar) or every N site days.
+- **Doing one:** a technician, supervisor, reliability engineer or superintendent starts the round,
+  walks the stops and answers each stop's items. A stop can be **skipped with a reason** (for example
+  the equipment is down or isolated); a skipped stop has no answers and no score. At least one stop is
+  done. Submitting checks every stop not skipped, as for an inspection.
+- **Records:** a round record (who, when, the form version, skipped stops) and one inspection per stop
+  done, against that equipment, so the equipment's inspection history and its defects show the round.
+  Defects follow up as any inspection defect, including flagging the equipment down.
+- **Sign-off and void** as inspections: a supervisor or superintendent, not the person who did it.
+  Voiding a round voids its inspections.
+- **Due:** a route is due once per period of N shifts or N days after the last round started. It is
+  **due now** in the shift (or day) it falls due, **overdue** after that, and **never done** before
+  the first round. Route forms are left out of the unit due list on the Inspections page.
+- **Compliance:** KPI-042.
+
 ## Later
 
-- Shutdown tracking: scope, duration against plan, work orders completed and work added (part 2).
-- Operator rounds and lube routes through Inspections (part 2).
 - OEE where rate and quality data exist.
 - Isolation status read-only from the permit system.
 - Vibration, thermography and ultrasound for rotating equipment (condition monitoring).
 - Live historian connector (phase 1b, needs IT approval).
+- A propose flow for structure changes by reliability engineers.
