@@ -1,7 +1,8 @@
 // Weekly pack (MVP screen 5): pick a week, check it on screen, then export to
 // PowerPoint or Excel, or print to PDF. Target: pack done in under 15 minutes.
 
-import { STAGE_LABELS, can, recentWeeks, weeklyPack, type WeeklyPack } from '@mr/core';
+import { STAGE_LABELS, can, packSummary, recentWeeks, weeklyPack, type WeeklyPack } from '@mr/core';
+import { DraftBox } from '../components/DraftBox';
 import { useMemo, useState } from 'react';
 import { Bar, CartesianGrid, ComposedChart, Legend, Line, LineChart, ReferenceLine, ResponsiveContainer, XAxis, YAxis } from 'recharts';
 import { FORMULAS, fmtH, fmtP, packFileName, siteStamp } from '../pack/common';
@@ -60,6 +61,13 @@ export function Pack({ query }: { query: string }) {
         {!allowed && <span className="small muted">Your role can view the pack but not export it.</span>}
       </div>
       <p className="small muted no-print">The pack uses the same numbers as the Performance page. Publishing a pack and locking the week come with period locks in phase 1b.</p>
+
+      <DraftBox
+        title="Draft summary"
+        draft={packSummary(pack)}
+        note="Drafted from this pack's numbers; each sentence names its source. Copy it into the pack note and edit it. It is not saved."
+        empty="Nothing to summarise for this week."
+      />
 
       <section className="card page">
         <h2 style={{ margin: 0 }}>{pack.title}</h2>

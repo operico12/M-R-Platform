@@ -22,6 +22,7 @@ import { Performance } from './screens/Performance';
 import { ShopLines } from './screens/ShopLines';
 import { UnitList, UnitPage } from './screens/Units';
 import { Work } from './screens/Work';
+import { Assist } from './screens/Assist';
 import { AppProvider, useApp } from './store';
 
 function useHash(): string {
@@ -45,6 +46,7 @@ const NAV: Array<[string, string]> = [
   ['#/condition', 'Condition'],
   ['#/rcm', 'RCM'],
   ['#/spares', 'Spares'],
+  ['#/assist', 'Assist'],
   ['#/work', 'Work and PM'],
   ['#/inspections', 'Inspections'],
   ['#/calc', 'Calculators'],
@@ -95,6 +97,7 @@ function Shell() {
     case 'condition': page = <Condition arg={arg || undefined} sub={sub || undefined} query={query} />; break;
     case 'rcm': page = <Rcm arg={arg || undefined} sub={sub || undefined} query={query} />; break;
     case 'spares': page = <Spares query={query} />; break;
+    case 'assist': page = <Assist query={query} />; break;
     case 'work': page = <Work />; break;
     case 'alerts': page = <Alerts />; break;
     case 'calc': page = <Calculators arg={arg || undefined} sub={sub || undefined} query={query} />; break;

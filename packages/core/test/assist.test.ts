@@ -275,12 +275,15 @@ describe('AI-4 RCA timeline', () => {
         { id: 'E1', componentId: 'C1', kind: 'installed', at: L('2026-09-20 10:00'), unitId: 'ht1' } as never,
         { id: 'E2', componentId: 'C1', kind: 'installed', at: L('2026-08-01 10:00'), unitId: 'ht1' } as never, // more than 30 days before
       ],
-      oilSamples: [{ id: 'O1', unitId: 'ht1', compartment: 'hydraulic', takenAt: L('2026-10-05 09:00'), readings: {}, severity: 'action', reasons: ['Iron high'], enteredBy: 'u', enteredAt: L('2026-10-05 09:00') } as never],
+      oilSamples: [
+        { id: 'O1', unitId: 'ht1', compartment: 'hydraulic', takenAt: L('2026-10-05 09:00'), readings: {}, severity: 'action', reasons: ['Iron high.'], enteredBy: 'u', enteredAt: L('2026-10-05 09:00') } as never,
+        { id: 'O2', unitId: 'ht1', compartment: 'engine', takenAt: L('2026-10-06 09:00'), readings: {}, severity: 'normal', reasons: [], enteredBy: 'u', enteredAt: L('2026-10-06 09:00') } as never, // normal: left out
+      ],
       assets: [truck('ht1')], timeZone: TZ, now: L('2026-10-28 09:00'),
     });
     expect(t.rows.map((r) => `${r.cite} ${r.text}`)).toEqual([
-      'component:E1 HT1: engine SN1 installed',
-      'oil:O1 HT1: Oil sample, hydraulic: action (Iron high)',
+      'component:E1 HT1: Engine SN1 installed',
+      'oil:O1 HT1: Oil sample, Hydraulic: Action. Iron high',
       'flag:F1 HT1: Unscheduled down flag set, Hydraulics',
       'flag:F1 HT1: Location Down in field',
       'flag:F1 HT1: Stage In repair',
@@ -289,7 +292,7 @@ describe('AI-4 RCA timeline', () => {
       'flag:F1 HT1: Released, coded Hydraulics / Hose / Burst; repair: Replaced hose; findings: Hose burst at hoist',
       'wo:77 HT1: Work order 77 completed',
     ]);
-    expect(t.lines[0]).toBe('Sun 20 Sep 10:00  HT1: engine SN1 installed [component:E1]');
+    expect(t.lines[0]).toBe('Sun 20 Sep 10:00  HT1: Engine SN1 installed [component:E1]');
     expect(t.check.ok).toBe(true);
   });
 });

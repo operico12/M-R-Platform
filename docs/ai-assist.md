@@ -28,7 +28,9 @@ These hold for every assist feature, now and later:
 
 ## AI-1 Failure code suggestion
 
-**Where:** the release form of an unscheduled flag, and the failure coding quality list (KPI-026).
+**Where:** the release form of an unscheduled flag, and the Assist page: "Code suggestions" (the
+held-back check) and "Coding review" (released failures from the last 90 days that fail a KPI-026
+check, with the suggested codes, for review and coaching).
 
 **What it reads:** the text of the flag: its notes, the work order descriptions (long description in
 Maximo), the repair summary and the findings. Words are lower-cased; common words (the, and, a, was,
@@ -75,7 +77,7 @@ releasing. The release then runs as before (A7 T9).
 
 ## AI-2 Duplicate work orders
 
-**Where:** the Work page, "Possible duplicates".
+**Where:** the Assist page, "Duplicate work orders".
 
 Two open corrective work orders are a possible duplicate when:
 
@@ -106,19 +108,21 @@ A few sentences drafted from the pack's own numbers, each with its source:
 
 Each sentence cites KPI numbers and unit numbers, like `[KPI-001]` and `[unit:HT-104]`. The draft is
 checked against the records in the pack (`checkCitations`); one unknown citation and the draft is
-refused. The person copies the draft into the pack note and edits it. It is not saved by itself.
+refused. The person copies the draft into the pack note and edits it. It is not saved by itself, and it is
+not printed or exported with the pack.
 
 ## AI-4 RCA timeline draft
 
 **Where:** a root cause analysis, "Draft timeline".
 
-A list in time order of what happened to the flags under study, from their records only:
+A list in time order of what happened to the flags under study, from their records only. When no
+flags are linked to the RCA, the latest 5 events on its slice are used, and the page says so. It lists:
 
 - the flag start, each stage and location change, each ETA set, and the release (with the repair
   summary and findings),
 - the work orders on those flags (reported and completed),
-- component removals and installs, and oil samples, on the same units from 30 days before the first
-  flag to its last release.
+- component removals and installs, and oil samples above Normal, on the same units from 30 days
+  before the first flag to its last release.
 
 Each line cites its record, like `[flag:…]`, `[wo:…]`, `[component:…]` or `[oil:…]`. The draft is
 checked the same way as AI-3. The person copies it into the problem statement or a why.

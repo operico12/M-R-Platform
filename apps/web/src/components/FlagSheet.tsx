@@ -31,6 +31,7 @@ import {
   type ReleaseDetails,
   type Stage,
 } from '@mr/core';
+import { flagText, liveSuggestion, suggestCodes, workOrderIndex, type Ranked } from '@mr/core';
 import { useMemo, useState } from 'react';
 import { fmtHours, fromLocalInput, hoursSince, locationLabel, siteTime, stageLabel, toLocalInput } from '../format';
 import { useApp } from '../store';
@@ -406,6 +407,9 @@ function ReleasePanel({ asset, flag, setR, onDone }: { asset: Asset; flag: DownF
       <h3>Release checklist</h3>
       {u ? (
         <>
+          <label className="field"><span>Repair summary</span><textarea rows={2} value={d.repairSummary ?? ''} onChange={(e) => setD({ ...d, repairSummary: e.target.value })} /></label>
+          <label className="field"><span>Findings (optional)</span><input value={d.findings ?? ''} onChange={(e) => setD({ ...d, findings: e.target.value || undefined })} /></label>
+          <CodeSuggestions flag={flag} d={d} setD={setD} />
           <label className="field"><span>System</span>
             <select value={d.system ?? ''} onChange={(e) => setD({ ...d, system: e.target.value, component: undefined, failureModes: [] })}>
               <option value="">Choose…</option>{Object.keys(SYSTEMS).map((s) => <option key={s}>{s}</option>)}
@@ -441,7 +445,7 @@ function ReleasePanel({ asset, flag, setR, onDone }: { asset: Asset; flag: DownF
           <label className="field"><span>Findings (write "None" if none)</span><input value={d.findings ?? ''} onChange={(e) => setD({ ...d, findings: e.target.value || undefined })} /></label>
         </>
       )}
-      <label className="field"><span>Repair summary</span><textarea rows={2} value={d.repairSummary ?? ''} onChange={(e) => setD({ ...d, repairSummary: e.target.value })} /></label>
+      {!u && <label className="field"><span>Repair summary</span><textarea rows={2} value={d.repairSummary ?? ''} onChange={(e) => setD({ ...d, repairSummary: e.target.value })} /></label>}
       {currentLocation(flag)?.kind === 'shop_yard' && (
         <label className="field"><span>Reason for releasing from the yard</span><input value={reason} onChange={(e) => setReason(e.target.value)} /></label>
       )}
@@ -457,6 +461,44 @@ function ReleasePanel({ asset, flag, setR, onDone }: { asset: Asset; flag: DownF
       >
         Release {asset.unitNumber}
       </button>
+    </div>
+  );
+}
+
+/** AI-1 (docs/ai-assist.md): codes suggested from the text, only codes that passed the held-back check. "Use" fills the form; the person still releases. */
+function CodeSuggestions({ flag, d, setD }: { flag: DownFlag; d: ReleaseDetails; setD: (d: ReleaseDetails) => void }) {
+  const app = useApp();
+  const { model, check, live } = app.suggester;
+  const text = useMemo(() => flagText({ ...flag, release: d }, workOrderIndex(app.ds.workOrders)), [flag, d, app.ds.workOrders]);
+  if (!live.length || !text.trim()) return null;
+  const min = app.assistSettings.minConfidence;
+  const given = d.system || undefined;
+  const s = liveSuggestion(suggestCodes(model, text, min, given), live, given);
+  const free = given && live.includes('system') ? suggestCodes(model, text, min).system : null;
+  const other = free && free.code !== given ? free : null;
+  if (!s.system && !s.component && !s.mode && !other) return <p className="small muted">No code suggestion from the text yet.</p>;
+  const why = (r: Ranked) => `${Math.round(r.chance * 100)}%${r.words.length ? `, from "${r.words.join('", "')}"` : ''}`;
+  const use = () => {
+    const system = s.system?.code ?? d.system;
+    setD({ ...d, system, component: s.component?.code ?? (s.system ? undefined : d.component), failureModes: s.mode ? [s.mode.code] : s.system ? [] : d.failureModes });
+  };
+  const useOther = () => {
+    const t = liveSuggestion(suggestCodes(model, text, min, other!.code), live, other!.code);
+    setD({ ...d, system: other!.code, component: t.component?.code, failureModes: t.mode ? [t.mode.code] : [] });
+  };
+  return (
+    <div className="card" style={{ background: 'var(--surface-2, transparent)' }} aria-label="Suggested codes">
+      <p className="small" style={{ margin: 0 }}><strong>Suggested from the text</strong> <span className="muted">(learned from {check.trainedOn + check.held} released flags at this site; check it before you release)</span></p>
+      <ul className="small" style={{ margin: '4px 0', paddingLeft: 18 }}>
+        {s.system && <li>System: <strong>{s.system.code}</strong> <span className="muted">{why(s.system)}</span></li>}
+        {s.component && <li>Component: <strong>{s.component.code}</strong> <span className="muted">{why(s.component)}</span></li>}
+        {s.mode && <li>Failure mode: <strong>{s.mode.code}</strong> <span className="muted">{why(s.mode)}</span></li>}
+        {other && <li>The text reads more like <strong>{other.code}</strong> <span className="muted">({why(other)})</span> than {given}</li>}
+      </ul>
+      <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+        {(s.system || s.component || s.mode) && <button className="btn" onClick={use}>Use suggestion</button>}
+        {other && <button className="btn" onClick={useOther}>Use {other.code}</button>}
+      </div>
     </div>
   );
 }

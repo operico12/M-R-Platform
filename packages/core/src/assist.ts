@@ -6,7 +6,9 @@
 
 import { DateTime } from 'luxon';
 import type { ComponentEvent, Component } from './components.js';
+import { KIND_LABELS } from './components.js';
 import type { OilSample } from './condition.js';
+import { COMPARTMENT_LABELS, SEVERITY_LABELS } from './condition.js';
 import type { ConsoleContext } from './console.js';
 import type { Rca } from './improve.js';
 import type { WeeklyPack } from './pack.js';
@@ -478,11 +480,13 @@ export function rcaTimeline(i: TimelineInput): Draft & { rows: Array<{ at: Iso; 
       if (e.voidedAt || !e.unitId || !units.has(e.unitId) || !inWindow(e.at)) continue;
       if (e.kind !== 'installed' && e.kind !== 'removed') continue;
       const c = comp.get(e.componentId);
-      add(e.at, e.unitId, `${c ? `${c.kind} ${c.serial}` : 'Component'} ${EVENT_TEXT[e.kind]}${e.reason ? ` (${e.reason})` : ''}`, `component:${e.id}`, 1);
+      add(e.at, e.unitId, `${c ? `${KIND_LABELS[c.kind] ?? c.kind} ${c.serial}` : 'Component'} ${EVENT_TEXT[e.kind]}${e.reason ? ` (${e.reason})` : ''}`, `component:${e.id}`, 1);
     }
     for (const s of i.oilSamples) {
-      if (s.voidedAt || !units.has(s.unitId) || !inWindow(s.takenAt)) continue;
-      add(s.takenAt, s.unitId, `Oil sample, ${s.compartment.replace(/_/g, ' ')}: ${s.severity}${s.reasons.length ? ` (${s.reasons.join('; ')})` : ''}`, `oil:${s.id}`, 1);
+      // Normal samples are left out: they would bury the ones that matter.
+      if (s.voidedAt || s.severity === 'normal' || !units.has(s.unitId) || !inWindow(s.takenAt)) continue;
+      const why = s.reasons.map((x) => x.trim().replace(/\.$/, '')).filter(Boolean).join('; ');
+      add(s.takenAt, s.unitId, `Oil sample, ${COMPARTMENT_LABELS[s.compartment] ?? s.compartment}: ${SEVERITY_LABELS[s.severity] ?? s.severity}${why ? `. ${why}` : ''}`, `oil:${s.id}`, 1);
     }
   }
   rows.sort((a, b) => ms(a.at) - ms(b.at) || a.order - b.order);
