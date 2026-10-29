@@ -79,6 +79,7 @@ The app writes no raw HTML. React escapes all text.
 | S-8 | `app_log` lets a member add audit entries for their own actions. They are always recorded as that person, and nothing can edit them. | Accepted | Needed for offline work; reviewed |
 | S-9 | Supabase Auth lets anyone sign up with an email link. A new account sees nothing until an Admin invites that email or approves its request. | Accepted | Requests only reach sites that list the person's email domain (docs/access.md) |
 | S-10 | The style policy allows inline styles (React style attributes). Scripts stay blocked. | Accepted | Low risk |
+| S-11 | Read rules called `is_site_member(site_id)` once per row, so loading a site sometimes passed Supabase's 8-second limit (found 29 Oct 2026). | Bug | Fixed: `site_id in (select my_site_ids())`, checked once per query (`20261117000001_rls_speed.sql`); the security audit refuses the old form |
 
 ## 7. Incidents
 
