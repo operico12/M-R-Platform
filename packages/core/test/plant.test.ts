@@ -173,7 +173,7 @@ describe('historian file', () => {
     const text = 'tag,timestamp,value\nPP01.RUN,2026-11-02 06:00,1\nCON-GRD-CV01,2026-11-02T14:00:00Z,STOP\nPP99,2026-11-02 06:00,1\nPP01,02/11/2026,1\nPP01,2026-11-02 07:00,maybe\nPP01,2026-11-02 06:00,0\nPP02,2027-01-01 00:00,1\n';
     const r = parseHistorianCsv(text, equipment, TZ, [], W1);
     expect(r.signals).toEqual([
-      { assetId: 'pp01', at: '2026-11-02T14:00:00.000Z', running: true },
+      { assetId: 'pp01', at: L('2026-11-02 06:00'), running: true },
       { assetId: 'cv01', at: '2026-11-02T14:00:00.000Z', running: false },
     ]);
     expect(r.issues.map((i) => i.row)).toEqual([4, 5, 6, 7, 8]);
