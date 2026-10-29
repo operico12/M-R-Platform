@@ -11,7 +11,7 @@ has not settled is a setting in code, not a hard-coded choice.
 | A3 | Data source and field mapping | Maximo and SAP PM file mappings written down; both need a real sample export from the site to confirm | [field-mapping.md](field-mapping.md), `packages/core/src/imports.ts` |
 | A4 | MVP requirements and acceptance tests | Acceptance tests partly encoded as golden tests | `packages/core/test` |
 | A5 | Architecture decision records | ADR-001 to ADR-004 | [adr/](adr/) |
-| A6 | Data-use, security and ownership | Not started. Repo uses synthetic data only | |
+| A6 | Data-use, security and ownership | First version and security review, 29 Oct 2026 | [a6-security.md](a6-security.md), `supabase/tests/security_audit.sql` |
 | A7 | Status, location and flag rules | Draft 0.1 under review; 9 open questions | [a7-open-questions.md](a7-open-questions.md) |
 | A8 | Data model | Schema in `supabase/migrations` | |
 | A9 | Reference lists | Starter systems, components and failure modes in the synthetic generator | `packages/core/src/synth/generate.ts` |
