@@ -1,0 +1,159 @@
+// Main menu (docs/menu.md): an icon bar of groups, the chosen group's pages beside it,
+// pinned and recent pages, and a page search. Pins and recents are kept per person and site
+// on this device; they are a convenience, not records.
+
+import {
+  MENU_GROUPS, MENU_LIMITS, MENU_PAGES, addRecent, cleanPins, menuPage, pageForRoute, recentToShow, searchPages, togglePin,
+  type MenuGroupId, type MenuPage,
+} from '@mr/core';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+
+type View = 'pinned' | MenuGroupId;
+
+const ICONS: Record<View, ReactNode> = {
+  pinned: <path d="M12 3l2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.9 1-6.1L3.2 9.5l6.1-.9z" />,
+  today: <path d="M3 12h4l3-8 4 16 3-8h4" />,
+  assets: <path d="M3 7l9-4 9 4v10l-9 4-9-4zM3 7l9 4 9-4M12 11v10" />,
+  analyse: <path d="M4 20V10M10 20V4M16 20v-7M2 20h20" />,
+  improve: <path d="M9 12l2 2 4-4M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18z" />,
+  data: <path d="M4 6c0-1.7 3.6-3 8-3s8 1.3 8 3-3.6 3-8 3-8-1.3-8-3zM4 6v12c0 1.7 3.6 3 8 3s8-1.3 8-3V6M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3" />,
+  admin: <><circle cx="12" cy="12" r="3" /><path d="M12 2v3M12 19v3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M2 12h3M19 12h3M4.9 19.1L7 17M17 7l2.1-2.1" /></>,
+};
+
+const Icon = ({ v }: { v: View }) => (
+  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{ICONS[v]}</svg>
+);
+
+const Star = ({ on }: { on: boolean }) => (
+  <svg width="16" height="16" viewBox="0 0 24 24" fill={on ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" aria-hidden="true">{ICONS.pinned}</svg>
+);
+
+function useStored<T>(key: string, read: (v: unknown) => T): [T, (v: T) => void] {
+  const load = () => { try { const s = localStorage.getItem(key); return read(s === null ? null : JSON.parse(s)); } catch { return read(null); } };
+  const [v, setV] = useState<T>(load);
+  useEffect(() => { setV(load()); }, [key]); // eslint-disable-line react-hooks/exhaustive-deps
+  const save = (next: T) => { setV(next); try { localStorage.setItem(key, JSON.stringify(next)); } catch { /* storage can be unavailable */ } };
+  return [v, save];
+}
+
+const readRecent = (v: unknown) => (Array.isArray(v) ? v.filter((h): h is string => typeof h === 'string' && !!menuPage(h)).slice(0, MENU_LIMITS.recent) : []);
+
+export interface MenuProps {
+  hash: string;
+  storeKey: string;
+  counts: Partial<Record<string, number>>;
+  countLabel: (href: string, n: number) => string;
+  top: ReactNode;
+  bottom: ReactNode;
+}
+
+export function Menu({ hash, storeKey, counts, countLabel, top, bottom }: MenuProps) {
+  const current = pageForRoute(hash);
+  const [pins, setPins] = useStored(`mr.pins.${storeKey}`, cleanPins);
+  const [recent, setRecent] = useStored(`mr.recent.${storeKey}`, readRecent);
+  const [view, setView] = useState<View>('pinned');
+  const [q, setQ] = useState('');
+  const [msg, setMsg] = useState<string | null>(null);
+  const search = useRef<HTMLInputElement>(null);
+
+  // Follow the page: opening a page from outside the shown group shows its group.
+  useEffect(() => {
+    if (!current) return;
+    if (current.href !== '#/tv') setRecent(addRecent(recent, current.href));
+    if (view !== 'pinned' && view !== current.group) setView(current.group);
+  }, [current?.href]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // "/" jumps to the page search, unless someone is typing.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (e.key !== '/' || e.ctrlKey || e.metaKey || e.altKey) return;
+      if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return;
+      e.preventDefault();
+      search.current?.focus();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
+  const groupCount = (g: View) => {
+    const list = g === 'pinned' ? pins.map(menuPage).filter(Boolean) as MenuPage[] : MENU_PAGES.filter((p) => p.group === g);
+    return list.reduce((n, p) => n + (counts[p.href] ?? 0), 0);
+  };
+
+  const pin = (href: string) => {
+    const r = togglePin(pins, href);
+    if (r.ok) { setPins(r.pins); setMsg(null); } else setMsg(r.error);
+  };
+
+  const results = useMemo(() => searchPages(q), [q]);
+  const go = (href: string) => { window.location.hash = href; setQ(''); };
+
+  const row = (p: MenuPage, showGroup = false) => {
+    const n = counts[p.href] ?? 0;
+    const on = pins.includes(p.href);
+    return (
+      <li key={p.href} className="menu-row">
+        <a href={p.href} aria-current={current?.href === p.href ? 'page' : undefined} onClick={() => setQ('')}>
+          <span>{p.label}{showGroup && <small> · {MENU_GROUPS.find((g) => g.id === p.group)?.label}</small>}</span>
+          {n > 0 && <span className="nav-count" aria-label={countLabel(p.href, n)}>{n}</span>}
+        </a>
+        <button type="button" className="menu-pin" aria-pressed={on} aria-label={`${on ? 'Unpin' : 'Pin'} ${p.label}`} title={on ? 'Unpin' : 'Pin'} onClick={() => pin(p.href)}>
+          <Star on={on} />
+        </button>
+      </li>
+    );
+  };
+
+  const views: Array<[View, string]> = [['pinned', 'Pinned'], ...MENU_GROUPS.map((g): [View, string] => [g.id, g.label])];
+  const pinned = pins.map(menuPage).filter((p): p is MenuPage => !!p);
+  const recents = recentToShow(recent, pins).map(menuPage).filter((p): p is MenuPage => !!p);
+
+  return (
+    <nav className="menu" aria-label="Main">
+      <div className="menu-rail" aria-label="Menu groups" role="group">
+        <span className="menu-mark" aria-hidden="true">M&amp;R</span>
+        {views.map(([v, label]) => {
+          const n = groupCount(v);
+          return (
+            <button key={v} type="button" className="menu-group" aria-pressed={view === v && !q} onClick={() => { setView(v); setQ(''); setMsg(null); }}>
+              <Icon v={v} />
+              <span>{label}</span>
+              {n > 0 && <span className="menu-dot" aria-label={`${n} waiting`} />}
+            </button>
+          );
+        })}
+      </div>
+      <div className="menu-panel">
+        {top}
+        <label className="menu-search">
+          <span className="sr-only">Find a page</span>
+          <input ref={search} type="search" value={q} placeholder="Find a page" aria-keyshortcuts="/"
+            onChange={(e) => setQ(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter' && results[0]) go(results[0].href); else if (e.key === 'Escape') setQ(''); }} />
+          <kbd aria-hidden="true">/</kbd>
+        </label>
+        {q ? (
+          <>
+            <h2 className="menu-head">Pages</h2>
+            {results.length ? <ul className="menu-list">{results.map((p) => row(p, true))}</ul> : <p className="menu-empty">No page matches “{q}”.</p>}
+          </>
+        ) : view === 'pinned' ? (
+          <>
+            <h2 className="menu-head">Pinned</h2>
+            {pinned.length ? <ul className="menu-list">{pinned.map((p) => row(p))}</ul> : <p className="menu-empty">Pin pages with the star to keep them here.</p>}
+            {recents.length > 0 && (<><h2 className="menu-head">Recent</h2><ul className="menu-list">{recents.map((p) => row(p))}</ul></>)}
+          </>
+        ) : (
+          <>
+            <h2 className="menu-head">{MENU_GROUPS.find((g) => g.id === view)?.label}</h2>
+            <ul className="menu-list">{MENU_PAGES.filter((p) => p.group === view).map((p) => row(p))}</ul>
+          </>
+        )}
+        {msg && <p className="menu-msg" role="status">{msg}</p>}
+        <div className="grow" />
+        {bottom}
+      </div>
+    </nav>
+  );
+}
