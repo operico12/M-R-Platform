@@ -46,9 +46,10 @@ import {
   targetValue,
   smuIndex, type Component, type ComponentData, type ComponentEvent, type LifeTarget, type RecordResult,
   DEFAULT_CONDITION_SETTINGS, type CmResponse, type ConditionData, type ConditionSettings, type OilSample,
+  DEFAULT_RCM_SETTINGS, type JobPlanVersion, type RcmMode, type RcmSettings,
 } from '@mr/core';
 import { demoImprovements } from './data/demo-improve';
-import { saveCmResponse, saveOilSamples, saveComponentRecord, saveViewRecord, saveAnalysisRecord, loadPhoto, saveForms, sendInspection, sendPhoto, SendError, saveAlertAnswer, saveDecision, saveRequests, saveFlags, saveRecords, saveSetting, saveTarget, saveTaskStatus, type Loaded } from './data/remote';
+import { saveRcmModes, saveJobPlanVersion, saveCmResponse, saveOilSamples, saveComponentRecord, saveViewRecord, saveAnalysisRecord, loadPhoto, saveForms, sendInspection, sendPhoto, SendError, saveAlertAnswer, saveDecision, saveRequests, saveFlags, saveRecords, saveSetting, saveTarget, saveTaskStatus, type Loaded } from './data/remote';
 import { demoProjects } from './data/demo-projects';
 import { demoForms, demoInspections } from './data/demo-inspections';
 import { backoffMs, forgetPhoto, localPhoto, readDrafts, readOutbox, writeDrafts, writeOutbox, type OutboxItem } from './inspect/device';
@@ -116,6 +117,13 @@ export interface AppState {
   runSamples: <R extends ConsoleResult<OilSample>>(cmd: (ctx: ConsoleContext, data: ConditionData, s: ConditionSettings) => R) => R;
   runResponse: (cmd: (ctx: ConsoleContext, data: ConditionData) => ConsoleResult<CmResponse>) => ConsoleResult<CmResponse>;
   runConditionSettings: (cmd: (ctx: ConsoleContext, current: ConditionSettings) => ConsoleResult<ConditionSettings>) => ConsoleResult<ConditionSettings>;
+  /** RCM failure mode revisions, issued job plans and settings (docs/rcm.md). */
+  rcmModes: RcmMode[];
+  jobPlanVersions: JobPlanVersion[];
+  rcmSettings: RcmSettings;
+  runRcm: (cmd: (ctx: ConsoleContext, modes: RcmMode[]) => ConsoleResult<RcmMode>) => ConsoleResult<RcmMode>;
+  runJobPlan: (cmd: (ctx: ConsoleContext, versions: JobPlanVersion[]) => ConsoleResult<JobPlanVersion>) => ConsoleResult<JobPlanVersion>;
+  runRcmSettings: (cmd: (ctx: ConsoleContext, current: RcmSettings) => ConsoleResult<RcmSettings>) => ConsoleResult<RcmSettings>;
   /** Inspection forms, every version (docs/inspections.md). */
   forms: InspectionForm[];
   runForms: (cmd: (ctx: ConsoleContext) => ConsoleResult<InspectionForm>) => ConsoleResult<InspectionForm>;
@@ -455,6 +463,56 @@ export function AppProvider({ children, live, onReload, onSignOut }: { children:
     },
     [actor, ds, live, failed],
   );
+  const [rcmModes, setRcmModes] = useState<RcmMode[]>(ds.rcmModes ?? []);
+  const [jobPlanVersions, setJobPlanVersions] = useState<JobPlanVersion[]>(ds.jobPlanVersions ?? []);
+  const [rcmSettings, setRcmSettingsState] = useState<RcmSettings>(() => live?.rcmSettings ?? DEFAULT_RCM_SETTINGS);
+  const rcmRef = useRef({ modes: rcmModes, versions: jobPlanVersions, settings: rcmSettings });
+  rcmRef.current = { modes: rcmModes, versions: jobPlanVersions, settings: rcmSettings };
+  const runRcm = useCallback(
+    (cmd: (ctx: ConsoleContext, modes: RcmMode[]) => ConsoleResult<RcmMode>): ConsoleResult<RcmMode> => {
+      const prev = rcmRef.current;
+      const r = cmd({ actor, now: new Date().toISOString(), newId, timeZone: ds.site.timeZone, calendar: ds.calendar }, prev.modes);
+      if (r.ok) {
+        rcmRef.current = { ...prev, modes: r.records };
+        setRcmModes(r.records);
+        setAudit((a) => [...r.audit, ...a]);
+        const before = new Map(prev.modes.map((x) => [x.id, x]));
+        const added = r.records.filter((x) => !before.has(x.id));
+        const retired = r.records.filter((x) => before.has(x.id) && before.get(x.id) !== x && x.retiredAt);
+        if (live && (added.length || retired.length)) saveRcmModes(siteId, added, retired, r.audit).catch(failed);
+      }
+      return r;
+    },
+    [actor, ds, live, failed],
+  );
+  const runJobPlan = useCallback(
+    (cmd: (ctx: ConsoleContext, versions: JobPlanVersion[]) => ConsoleResult<JobPlanVersion>): ConsoleResult<JobPlanVersion> => {
+      const prev = rcmRef.current;
+      const r = cmd({ actor, now: new Date().toISOString(), newId, timeZone: ds.site.timeZone, calendar: ds.calendar }, prev.versions);
+      if (r.ok) {
+        rcmRef.current = { ...prev, versions: r.records };
+        setJobPlanVersions(r.records);
+        setAudit((a) => [...r.audit, ...a]);
+        const added = r.records.filter((x) => !prev.versions.includes(x));
+        if (live) for (const v of added) saveJobPlanVersion(siteId, v, r.audit).catch(failed);
+      }
+      return r;
+    },
+    [actor, ds, live, failed],
+  );
+  const runRcmSettings = useCallback(
+    (cmd: (ctx: ConsoleContext, current: RcmSettings) => ConsoleResult<RcmSettings>): ConsoleResult<RcmSettings> => {
+      const r = cmd({ actor, now: new Date().toISOString(), newId, timeZone: ds.site.timeZone, calendar: ds.calendar }, rcmRef.current.settings);
+      if (r.ok) {
+        rcmRef.current = { ...rcmRef.current, settings: r.records[0]! };
+        setRcmSettingsState(r.records[0]!);
+        setAudit((a) => [...r.audit, ...a]);
+        if (live) saveSetting(siteId, 'rcm', r.records[0]!, r.audit[0]!.reason ?? '', r.audit).catch(failed);
+      }
+      return r;
+    },
+    [actor, ds, live, failed],
+  );
   const ruleAlertList = useMemo(
     () => ruleAlerts({ assets: ds.assets, flags, smu: ds.smu, lifecycle: ds.lifecycle, rules, now, timeZone: ds.site.timeZone, workOrders: ds.workOrders, targets: targetList, workSettings }, alertSettings),
     [ds, flags, rules, now, targetList, workSettings, alertSettings],
@@ -651,7 +709,7 @@ export function AppProvider({ children, live, onReload, onSignOut }: { children:
   }, [live, siteId]);
   const people = useMemo(() => users.filter((u) => !u.retiredAt && !u.invited), [users]);
   const userName = useCallback((id: string) => users.find((u) => u.id === id)?.name ?? 'Unknown user', [users]);
-  const value: AppState = { ds, forms, runForms, inspections, drafts, saveDraft, discardDraft, runInspection, outbox, sendOutbox: () => void sendOutbox(true), dropOutboxItem, photo, workSettings, runWorkSettings, alertSettings, runAlertSettings, alertAnswers, runAlertAnswer, analyses, runAnalysis, views, runView, components, componentEvents, lifeTargets, runComponents, oilSamples, cmResponses, conditionSettings, runSamples, runResponse, runConditionSettings, ruleAlerts: ruleAlertList, requests, runRequest, decide, actions: improve.actions, rcas: improve.rcas, projects: improve.projects, runImprove, people, userName, targets, targetOf, targetList, users, codes, runConsole, mode: live ? 'live' : 'demo', syncError, clearSyncError: () => setSyncError(null), signOut: onSignOut, importRuns, applyImport, newId, flags, audit, rules, now, actor, setRole, run, lastSync: ds.generatedAt, theme, setTheme };
+  const value: AppState = { ds, forms, runForms, inspections, drafts, saveDraft, discardDraft, runInspection, outbox, sendOutbox: () => void sendOutbox(true), dropOutboxItem, photo, workSettings, runWorkSettings, alertSettings, runAlertSettings, alertAnswers, runAlertAnswer, analyses, runAnalysis, views, runView, components, componentEvents, lifeTargets, runComponents, oilSamples, cmResponses, conditionSettings, runSamples, runResponse, runConditionSettings, rcmModes, jobPlanVersions, rcmSettings, runRcm, runJobPlan, runRcmSettings, ruleAlerts: ruleAlertList, requests, runRequest, decide, actions: improve.actions, rcas: improve.rcas, projects: improve.projects, runImprove, people, userName, targets, targetOf, targetList, users, codes, runConsole, mode: live ? 'live' : 'demo', syncError, clearSyncError: () => setSyncError(null), signOut: onSignOut, importRuns, applyImport, newId, flags, audit, rules, now, actor, setRole, run, lastSync: ds.generatedAt, theme, setTheme };
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
 

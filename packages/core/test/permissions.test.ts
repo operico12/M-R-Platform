@@ -19,6 +19,8 @@ const EXPECTED: Partial<Record<Action, Record<Role, string>>> = {
   edit_life_targets: { viewer: 'no', technician: 'no', supervisor: 'no', reliability_engineer: 'propose', superintendent: 'approve', admin: 'no' },
   record_condition: { viewer: 'no', technician: 'no', supervisor: 'yes', reliability_engineer: 'yes', superintendent: 'yes', admin: 'no' },
   edit_condition_settings: { viewer: 'no', technician: 'no', supervisor: 'no', reliability_engineer: 'yes', superintendent: 'yes', admin: 'yes' },
+  edit_rcm: { viewer: 'no', technician: 'no', supervisor: 'no', reliability_engineer: 'yes', superintendent: 'yes', admin: 'no' },
+  issue_job_plans: { viewer: 'no', technician: 'no', supervisor: 'no', reliability_engineer: 'yes', superintendent: 'yes', admin: 'no' },
   manage_imports: { viewer: 'no', technician: 'no', supervisor: 'no', reliability_engineer: 'no', superintendent: 'no', admin: 'yes' },
 };
 

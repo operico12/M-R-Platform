@@ -395,9 +395,108 @@ export function rebuildOrReplace(i: { rebuildPrice: number; rebuildLife: number;
   return { values: { rebuildPerHour, replacePerHour, breakEvenLife, annualDifference }, sentence, warnings: i.changeoutHours === 0 ? ['Change-out hours are 0: the downtime cost of each change is left out.'] : [] };
 }
 
+// ---------- C-12 to C-15 maintenance strategy (RCM, docs/rcm.md) ----------
+
+export function pfInterval(i: { pf: number; checks: number; leadTime: number }): CalcOutput {
+  positive(i.pf, 'P-F interval');
+  if (!(Number.isFinite(i.checks) && i.checks >= 1)) bad('Checks inside the P-F interval must be 1 or more.');
+  if (!(Number.isFinite(i.leadTime) && i.leadTime >= 0)) bad('Lead time must be 0 or more.');
+  if (i.leadTime >= i.pf) bad('The lead time is as long as the P-F interval or longer: the warning comes too late to act on, whatever the interval.');
+  const byChecks = i.pf / i.checks;
+  const byLead = i.pf - i.leadTime;
+  const interval = Math.min(byChecks, byLead);
+  const why = byLead < byChecks ? `to leave the ${n0(i.leadTime)} h lead time` : `${i.checks} check${i.checks === 1 ? '' : 's'} inside the P-F interval`;
+  return { values: { interval, byChecks, byLead }, sentence: `Check every ${n0(interval)} h (${why}). A warning is then found with at least ${n0(i.pf - interval)} h left before the failure.`, warnings: i.checks < 2 ? ['One check per P-F interval can find the warning too late. Two or more is usual.'] : [] };
+}
+
+const weibullR = (t: number, b: number, e: number) => Math.exp(-((t / e) ** b));
+
+/** ∫₀ᵀ R(t) dt by Simpson's rule. */
+function meanCycle(T: number, b: number, e: number, steps = 400): number {
+  const h = T / steps;
+  let s = weibullR(0, b, e) + weibullR(T, b, e);
+  for (let k = 1; k < steps; k++) s += (k % 2 ? 4 : 2) * weibullR(k * h, b, e);
+  return (s * h) / 3;
+}
+
+const replacementCost = (T: number, b: number, e: number, cp: number, cu: number) => {
+  const R = weibullR(T, b, e);
+  return (cp * R + cu * (1 - R)) / meanCycle(T, b, e);
+};
+
+export const weibullMean = (beta: number, eta: number) => eta * Math.exp(logGamma(1 + 1 / beta));
+
+/** The age with the lowest cost per hour, by a coarse search then golden-section search. */
+export function optimalAge(beta: number, eta: number, cp: number, cu: number): { age: number; cost: number } {
+  const f = (T: number) => replacementCost(T, beta, eta, cp, cu);
+  const lo0 = eta / 200;
+  const hi0 = eta * 4;
+  let best = lo0;
+  let bestC = Infinity;
+  const n = 200;
+  for (let k = 0; k <= n; k++) {
+    const T = lo0 * (hi0 / lo0) ** (k / n);
+    const c = f(T);
+    if (c < bestC) { bestC = c; best = T; }
+  }
+  let a = best / (hi0 / lo0) ** (1 / n);
+  let d = best * (hi0 / lo0) ** (1 / n);
+  const g = (Math.sqrt(5) - 1) / 2;
+  let x1 = d - g * (d - a);
+  let x2 = a + g * (d - a);
+  let f1 = f(x1);
+  let f2 = f(x2);
+  for (let k = 0; k < 80 && d - a > 1e-6 * eta; k++) {
+    if (f1 < f2) { d = x2; x2 = x1; f2 = f1; x1 = d - g * (d - a); f1 = f(x1); } else { a = x1; x1 = x2; f1 = f2; x2 = a + g * (d - a); f2 = f(x2); }
+  }
+  const age = (a + d) / 2;
+  return { age, cost: f(age) };
+}
+
+export function optimalReplacement(i: { beta: number; eta: number; plannedCost: number; failureCost: number }): CalcOutput {
+  positive(i.beta, 'β'); positive(i.eta, 'η'); positive(i.plannedCost, 'Cost of a planned replacement'); positive(i.failureCost, 'Cost of a failure');
+  const mtbf = weibullMean(i.beta, i.eta);
+  const rtf = i.failureCost / mtbf;
+  if (i.beta <= 1) return { values: { age: null, costPerHour: null, survive: null, runToFailure: rtf, mtbf }, sentence: `β is ${i.beta.toFixed(2)}: the failure rate does not rise with age, so replacing on age does not help. Run to failure costs ${money(rtf)} an hour.`, warnings: ['β of 1 or less: no optimal replacement age.'] };
+  if (i.failureCost <= i.plannedCost) return { values: { age: null, costPerHour: null, survive: null, runToFailure: rtf, mtbf }, sentence: `A failure costs no more than a planned change, so replacing early cannot save money. Run to failure costs ${money(rtf)} an hour.`, warnings: ['The cost of a failure must be more than the cost of a planned replacement.'] };
+  const { age, cost } = optimalAge(i.beta, i.eta, i.plannedCost, i.failureCost);
+  const survive = weibullR(age, i.beta, i.eta);
+  const warnings = age > 3 * i.eta ? ['The best age is far past η: replacing on age saves very little.'] : [];
+  return { values: { age, costPerHour: cost, survive, runToFailure: rtf, mtbf }, sentence: `Replace at ${n0(age)} h for the lowest cost, ${money(cost)} an hour, against ${money(rtf)} an hour run to failure. ${pct(survive)} of items reach that age without failing.`, warnings };
+}
+
+export function failureFindingInterval(i: { mtbf: number; unavailability: number }): CalcOutput {
+  positive(i.mtbf, 'MTBF of the protective device');
+  if (!(i.unavailability > 0 && i.unavailability < 1)) bad('Tolerated unavailability must be between 0% and 100%.');
+  const ffi = 2 * i.unavailability * i.mtbf;
+  const x = ffi / i.mtbf;
+  const exact = 1 - (1 - Math.exp(-x)) / x;
+  return { values: { ffi, exact }, sentence: `Check the device every ${n0(ffi)} h. It is then failed without anyone knowing about ${pct(exact, 2)} of the time.`, warnings: x > 0.2 ? ['The interval is long compared with the MTBF, so the simple formula is less accurate; use the exact unavailability shown.'] : [] };
+}
+
+export function strategyCost(i: { beta: number; eta: number; failureCost: number; plannedCost: number; inspectionCost: number; inspectionInterval: number; detection: number; repairCost: number }): CalcOutput {
+  positive(i.beta, 'β'); positive(i.eta, 'η'); positive(i.failureCost, 'Cost of a failure'); positive(i.inspectionInterval, 'Inspection interval');
+  if (![i.plannedCost, i.inspectionCost, i.repairCost].every((x) => Number.isFinite(x) && x >= 0)) bad('Costs must be 0 or more.');
+  if (!(i.detection >= 0 && i.detection <= 1)) bad('The chance of finding the warning must be between 0% and 100%.');
+  const mtbf = weibullMean(i.beta, i.eta);
+  const rtf = i.failureCost / mtbf;
+  const tb = i.beta > 1 && i.failureCost > i.plannedCost && i.plannedCost > 0 ? optimalAge(i.beta, i.eta, i.plannedCost, i.failureCost) : null;
+  const cbm = i.inspectionCost / i.inspectionInterval + (i.detection * i.repairCost + (1 - i.detection) * i.failureCost) / mtbf;
+  const options: Array<[string, number]> = [['Run to failure', rtf], ['Condition-based', cbm]];
+  if (tb) options.push(['Time-based', tb.cost]);
+  options.sort((a, b) => a[1] - b[1]);
+  const [best, second] = options;
+  const warnings = tb ? [] : ['Time-based replacement is left out: it needs β above 1 and a failure that costs more than a planned change.'];
+  return {
+    values: { runToFailure: rtf, timeBased: tb?.cost ?? null, timeBasedAge: tb?.age ?? null, conditionBased: cbm, mtbf },
+    sentence: `${best![0]} is cheapest at ${money(best![1])} an hour, against ${money(second![1])} for ${second![0].toLowerCase()}.${tb ? ` Time-based replaces at ${n0(tb.age)} h.` : ''}`,
+    warnings,
+  };
+}
+
 // ---------- catalogue ----------
 
-export type CalculatorId = 'inherent_availability' | 'availability_target' | 'downtime_cost' | 'mtbf_confidence' | 'weibull' | 'conditional_weibull' | 'repair_times' | 'risk_matrix' | 'cost_per_hour' | 'mtbf_rate' | 'rebuild_or_replace';
+export type CalculatorId = 'inherent_availability' | 'availability_target' | 'downtime_cost' | 'mtbf_confidence' | 'weibull' | 'conditional_weibull' | 'repair_times' | 'risk_matrix' | 'cost_per_hour' | 'mtbf_rate' | 'rebuild_or_replace' | 'pf_interval' | 'optimal_replacement' | 'failure_finding' | 'strategy_cost';
 
 export interface CalculatorInfo { id: CalculatorId; code: string; group: string; name: string; question: string; usesData: boolean; formula: string; version: number }
 
@@ -414,6 +513,10 @@ export const CALCULATORS: CalculatorInfo[] = [
   { id: 'cost_per_hour', code: 'C-09', group: 'Cost', name: 'Cost per hour of component life', question: 'What does a component cost per hour it runs?', usesData: false, formula: '(purchase + fitting + rebuilds) ÷ hours of life', version: 1 },
   { id: 'mtbf_rate', code: 'C-10', group: 'Converters', name: 'MTBF and failure rate', question: 'What failure rate is this MTBF, and what are the odds of getting through a shift?', usesData: false, formula: 'λ = 1 ÷ MTBF;  R(t) = exp(−t ÷ MTBF)', version: 1 },
   { id: 'rebuild_or_replace', code: 'C-11', group: 'Cost', name: 'Rebuild or replace', question: 'Is it cheaper to rebuild this component or buy a new one?', usesData: true, formula: '(price + change-out h × cost per down h − core credit) ÷ expected life, for each option', version: 1 },
+  { id: 'pf_interval', code: 'C-12', group: 'Maintenance strategy', name: 'P-F inspection interval', question: 'How often should we check for a warning sign?', usesData: false, formula: 'interval = min(P-F ÷ n, P-F − lead time)', version: 1 },
+  { id: 'optimal_replacement', code: 'C-13', group: 'Maintenance strategy', name: 'Optimal replacement interval', question: 'At what age is it cheapest to replace before it fails?', usesData: true, formula: 'C(T) = (Cp R(T) + Cu (1 − R(T))) ÷ ∫₀ᵀ R(t) dt, lowest C(T)', version: 1 },
+  { id: 'failure_finding', code: 'C-14', group: 'Maintenance strategy', name: 'Failure-finding interval', question: 'How often should we test a protective device?', usesData: false, formula: 'FFI = 2 × U × MTBF', version: 1 },
+  { id: 'strategy_cost', code: 'C-15', group: 'Maintenance strategy', name: 'Strategy cost comparison', question: 'Is run to failure, time-based or condition-based maintenance cheapest?', usesData: true, formula: 'RTF = Cu ÷ MTBF;  TBM = C(T*);  CBM = Ci ÷ I + (p Cc + (1 − p) Cu) ÷ MTBF', version: 1 },
 ];
 
 /** Search by name, code, group or question; every word must match. */

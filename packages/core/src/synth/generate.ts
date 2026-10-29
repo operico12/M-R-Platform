@@ -14,6 +14,8 @@ import type { Component, ComponentEvent, LifeTarget } from '../components.js';
 import { generateComponents } from './components.js';
 import type { CmResponse, OilSample } from '../condition.js';
 import { generateOil } from './oil.js';
+import type { JobPlanVersion, RcmMode } from '../rcm.js';
+import { generateRcm } from './rcm.js';
 import type { Asset, AssetLifecycleInterval, DownFlag, WorkOrder, LocationInterval, ShopLine, ShopLineClosure, SmuReading, Stage, StageInterval } from '../types.js';
 
 export interface SynthOptions {
@@ -45,6 +47,9 @@ export interface Dataset {
   /** Oil analysis results and responses to them (phase 3, docs/condition-monitoring.md). */
   oilSamples: OilSample[];
   cmResponses: CmResponse[];
+  /** RCM failure mode library and issued job plans (phase 3, docs/rcm.md). */
+  rcmModes: RcmMode[];
+  jobPlanVersions: JobPlanVersion[];
   generatedAt: string;
 }
 
@@ -473,6 +478,7 @@ export function generateFleet(opts: SynthOptions = {}): Dataset {
   const parts = generateComponents({ seed, assets, smu, flags, end });
   const workOrders = [...wos.values()].sort((a, b) => ms(a.reportedAt!) - ms(b.reportedAt!));
   const oil = generateOil({ seed, assets, smu, componentEvents: parts.events, workOrders, end });
+  const rcm = generateRcm({ assets, end: toIso(end) });
 
   return {
     tenantId,
@@ -491,6 +497,8 @@ export function generateFleet(opts: SynthOptions = {}): Dataset {
     lifeTargets: parts.targets,
     oilSamples: oil.samples,
     cmResponses: oil.responses,
+    rcmModes: rcm.modes,
+    jobPlanVersions: rcm.versions,
     generatedAt: toIso(end),
   };
 }

@@ -4,7 +4,7 @@
 
 import {
   CALCULATORS, CalcError, analyse, availabilityTarget, can, conditionalCurve, conditionalWeibull, costPerHour, downtimeCost, filterFromQuery, filterToQuery,
-  inherentAvailability, lifeData, mtbfConfidence, mtbfRate, rebuildOrReplace, componentStates, allLives, meanLives, smuIndex, COMPONENT_KINDS, KIND_LABELS, type ComponentKind, repairBySystem, repairTimes, riskMatrix, saveAnalysis, searchCalculators, voidAnalysis, weibull,
+  inherentAvailability, lifeData, mtbfConfidence, mtbfRate, rebuildOrReplace, pfInterval, optimalReplacement, failureFindingInterval, strategyCost, componentStates, allLives, meanLives, smuIndex, COMPONENT_KINDS, KIND_LABELS, type ComponentKind, repairBySystem, repairTimes, riskMatrix, saveAnalysis, searchCalculators, voidAnalysis, weibull,
   RISK_BANDS, type AnalyticsFilter, type CalcOutput, type CalculatorId, type CalculatorInfo, type LifeTime, type SavedAnalysis,
 } from '@mr/core';
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
@@ -48,6 +48,25 @@ const FIELDS: Record<CalculatorId, Field[]> = {
     { key: 'changeoutHours', label: 'Change-out downtime', unit: 'h' }, { key: 'costPerDownHour', label: 'Cost per down hour', unit: '$/h', hint: 'C-03 works this out' },
     { key: 'coreCredit', label: 'Core credit when buying new', unit: '$' }, { key: 'hoursPerYear', label: 'Operating hours a year', unit: 'h' },
   ],
+  pf_interval: [
+    { key: 'pf', label: 'P-F interval', unit: 'h', hint: 'From when the warning can first be found to the failure' },
+    { key: 'checks', label: 'Checks inside the P-F interval', hint: '2 is usual; more if the P-F interval varies a lot' },
+    { key: 'leadTime', label: 'Lead time to plan and do the repair', unit: 'h' },
+  ],
+  optimal_replacement: [
+    { key: 'beta', label: 'β (shape)' }, { key: 'eta', label: 'η (characteristic life)', unit: 'h' },
+    { key: 'plannedCost', label: 'Cost of a planned replacement', unit: '$' }, { key: 'failureCost', label: 'Cost of a failure, with downtime', unit: '$', hint: 'C-03 gives the cost of a down hour' },
+  ],
+  failure_finding: [
+    { key: 'mtbf', label: 'MTBF of the protective device', unit: 'h' },
+    { key: 'unavailability', label: 'Tolerated unavailability', unit: '%', hint: 'Share of the time the device may be failed without anyone knowing' },
+  ],
+  strategy_cost: [
+    { key: 'beta', label: 'β (shape)' }, { key: 'eta', label: 'η (characteristic life)', unit: 'h' },
+    { key: 'failureCost', label: 'Cost of a failure, with downtime', unit: '$' }, { key: 'plannedCost', label: 'Cost of a planned replacement', unit: '$' },
+    { key: 'inspectionCost', label: 'Cost of one inspection', unit: '$' }, { key: 'inspectionInterval', label: 'Inspection interval', unit: 'h' },
+    { key: 'detection', label: 'Chance an inspection finds the warning in time', unit: '%' }, { key: 'repairCost', label: 'Cost of a planned repair after a warning', unit: '$' },
+  ],
 };
 
 /** The worked examples from docs/calculators.md; also the starting inputs. */
@@ -67,6 +86,10 @@ const EXAMPLE: Record<CalculatorId, { inputs: Inputs; text: string; assumptions:
     text: 'Rebuild $280,000 for 16,000 h vs new $600,000 for 22,000 h, 24 h change-out at $2,500/h, $60,000 core credit: rebuild $21.25/h, new $27.27/h; break-even life 12,467 h; rebuilding saves $36,136 a year at 6,000 h.',
     assumptions: 'Each option is judged on its cost per hour of life. Expected lives are averages; check the Weibull spread on the Components page before relying on them.',
   },
+  pf_interval: { inputs: { pf: '1000', checks: '2', leadTime: '200' }, text: 'P-F 1,000 h, 2 checks, 200 h lead time: min(500, 800) = 500 h. With a 600 h lead time: min(500, 400) = 400 h.', assumptions: 'The P-F interval is fairly steady. Moubray, RCM II chapter 7; SAE JA1012 section 9.' },
+  optimal_replacement: { inputs: { beta: '3', eta: '10000', plannedCost: '40000', failureCost: '160000' }, text: 'β 3, η 10,000 h, planned $40,000, failure $160,000: replace at 5,542 h for $11.06 an hour, against $17.92 an hour run to failure (checked with SciPy).', assumptions: 'The Weibull fit describes the item, a replacement makes it as good as new, and costs do not depend on age.' },
+  failure_finding: { inputs: { mtbf: '20000', unavailability: '1' }, text: 'MTBF 20,000 h and 1% tolerated unavailability: FFI = 2 × 0.01 × 20,000 = 400 h; exact unavailability 0.993%.', assumptions: 'One protective device, random failures, and every check finds a failure that is then fixed. Moubray, RCM II chapter 8.' },
+  strategy_cost: { inputs: { beta: '3', eta: '10000', failureCost: '160000', plannedCost: '40000', inspectionCost: '500', inspectionInterval: '500', detection: '90', repairCost: '40000' }, text: 'Run to failure $17.92/h, time-based $11.06/h at 5,542 h, condition-based $1.00 + (0.9 × $40,000 + 0.1 × $160,000) ÷ 8,930 h = $6.82/h: condition-based is cheapest.', assumptions: 'Failures start at the same rate under each strategy; a found warning becomes a planned repair and a missed one a failure.' },
 };
 
 const VALUE_LABELS: Record<string, [string, (x: number) => string]> = {
@@ -101,6 +124,19 @@ const VALUE_LABELS: Record<string, [string, (x: number) => string]> = {
   replacePerHour: ['New, per hour of life', (x) => `$${x.toFixed(2)}`],
   breakEvenLife: ['Break-even life for a rebuild', (x) => `${Math.round(x).toLocaleString('en-CA')} h`],
   annualDifference: ['Difference a year', (x) => `$${Math.round(x).toLocaleString('en-CA')}`],
+  interval: ['Inspection interval', (x) => `${Math.round(x).toLocaleString('en-CA')} h`],
+  byChecks: ['P-F ÷ checks', (x) => `${Math.round(x).toLocaleString('en-CA')} h`],
+  byLead: ['P-F − lead time', (x) => `${Math.round(x).toLocaleString('en-CA')} h`],
+  age: ['Replace at', (x) => `${Math.round(x).toLocaleString('en-CA')} h`],
+  costPerHour: ['Cost per hour at that age', (x) => `$${x.toFixed(2)}`],
+  survive: ['Items reaching that age', (x) => `${(x * 100).toFixed(1)}%`],
+  runToFailure: ['Run to failure, per hour', (x) => `$${x.toFixed(2)}`],
+  mtbf: ['MTBF (Weibull mean)', (x) => `${Math.round(x).toLocaleString('en-CA')} h`],
+  ffi: ['Failure-finding interval', (x) => `${Math.round(x).toLocaleString('en-CA')} h`],
+  exact: ['Unavailability at that interval', (x) => `${(x * 100).toFixed(3)}%`],
+  timeBased: ['Time-based, per hour', (x) => `$${x.toFixed(2)}`],
+  timeBasedAge: ['Time-based replaces at', (x) => `${Math.round(x).toLocaleString('en-CA')} h`],
+  conditionBased: ['Condition-based, per hour', (x) => `$${x.toFixed(2)}`],
 };
 
 const nums = (s: string | undefined) => (s ?? '').split(/[\s,;]+/).filter(Boolean).map(Number);
@@ -132,6 +168,13 @@ function compute(id: CalculatorId, i: Inputs): Run {
     case 'rebuild_or_replace': {
       const p = { rebuildPrice: n('rebuildPrice'), rebuildLife: n('rebuildLife'), newPrice: n('newPrice'), newLife: n('newLife'), changeoutHours: n('changeoutHours'), costPerDownHour: n('costPerDownHour'), coreCredit: n('coreCredit'), hoursPerYear: n('hoursPerYear') };
       return { out: rebuildOrReplace(p), parsed: p };
+    }
+    case 'pf_interval': { const p = { pf: n('pf'), checks: n('checks'), leadTime: n('leadTime') }; return { out: pfInterval(p), parsed: p }; }
+    case 'optimal_replacement': { const p = { beta: n('beta'), eta: n('eta'), plannedCost: n('plannedCost'), failureCost: n('failureCost') }; return { out: optimalReplacement(p), parsed: p }; }
+    case 'failure_finding': { const p = { mtbf: n('mtbf'), unavailability: n('unavailability') / 100 }; return { out: failureFindingInterval(p), parsed: p }; }
+    case 'strategy_cost': {
+      const p = { beta: n('beta'), eta: n('eta'), failureCost: n('failureCost'), plannedCost: n('plannedCost'), inspectionCost: n('inspectionCost'), inspectionInterval: n('inspectionInterval'), detection: n('detection') / 100, repairCost: n('repairCost') };
+      return { out: strategyCost(p), parsed: p };
     }
   }
 }
@@ -246,13 +289,15 @@ function Calculator({ info, savedId, query }: { info: CalculatorInfo; savedId?: 
       case 'availability_target': next = { known: fixed(inputs.solve === 'mttr' ? k.mtbf : k.mttr, 2) }; msg = `The fleet ${inputs.solve === 'mttr' ? 'MTBF' : 'MTTR'} for the units and dates chosen.`; break;
       case 'mtbf_confidence': next = { hours: fixed(k.operatingHours, 0), failures: String(a.failures), endsAt: 'time' }; msg = 'Operating hours from SMU for the units and dates chosen, and the failures that match the filter.'; break;
       case 'weibull':
+      case 'optimal_replacement':
+      case 'strategy_cost':
       case 'conditional_weibull': {
         const data = lifeData(a.events.map((e) => e.event), a.assets.map((x) => x.id), app.ds.smu, a.period.from, a.period.to);
         if (info.id === 'weibull') {
           next = { lives: data.map((d) => `${Math.round(d.t)}${d.failed ? '' : 's'}`).join('\n') };
           msg = `${data.filter((d) => d.failed).length} failed lives and ${data.filter((d) => !d.failed).length} suspensions, in operating hours. Each repair is taken as making the unit as good as new.`;
         } else {
-          try { const w = weibull(data); next = { beta: fixed(w.beta, 4), eta: fixed(w.eta, 1) }; msg = 'β and η fitted to the lives in the filter. Enter the hours this item has run.'; } catch (e) { setDataMsg(e instanceof CalcError ? `Could not fit the data: ${e.problems.join(' ')}` : String(e)); return; }
+          try { const w = weibull(data); next = { beta: fixed(w.beta, 4), eta: fixed(w.eta, 1) }; msg = info.id === 'conditional_weibull' ? 'β and η fitted to the lives in the filter. Enter the hours this item has run.' : 'β and η fitted to the lives in the filter. Filter to one system or component, then enter the costs.'; } catch (e) { setDataMsg(e instanceof CalcError ? `Could not fit the data: ${e.problems.join(' ')}` : String(e)); return; }
         }
         break;
       }

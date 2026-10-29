@@ -6,6 +6,7 @@ import { Explorer } from './screens/Explorer';
 import { Components } from './screens/Components';
 import { CalcPalette, Calculators } from './screens/Calculators';
 import { Condition } from './screens/Condition';
+import { Rcm } from './screens/Rcm';
 import { Actions } from './screens/Actions';
 import { Alerts } from './screens/Alerts';
 import { Analysis } from './screens/Analysis';
@@ -41,6 +42,7 @@ const NAV: Array<[string, string]> = [
   ['#/explore', 'Explorer'],
   ['#/components', 'Components'],
   ['#/condition', 'Condition'],
+  ['#/rcm', 'RCM'],
   ['#/work', 'Work and PM'],
   ['#/inspections', 'Inspections'],
   ['#/calc', 'Calculators'],
@@ -89,6 +91,7 @@ function Shell() {
     case 'explore': page = <Explorer query={query} />; break;
     case 'components': page = <Components arg={arg || undefined} query={query} />; break;
     case 'condition': page = <Condition arg={arg || undefined} sub={sub || undefined} query={query} />; break;
+    case 'rcm': page = <Rcm arg={arg || undefined} sub={sub || undefined} query={query} />; break;
     case 'work': page = <Work />; break;
     case 'alerts': page = <Alerts />; break;
     case 'calc': page = <Calculators arg={arg || undefined} sub={sub || undefined} query={query} />; break;

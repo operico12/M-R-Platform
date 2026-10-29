@@ -3,7 +3,7 @@
 // The anon key is public by design: row-level security decides what each
 // signed-in person can read and write. Never put the service_role key here.
 
-import { DEFAULT_FLAG_RULES, DEFAULT_WORK_SETTINGS, withAlertDefaults, type ApprovalRequest, type AuditRecord, type AlertAnswer, type AlertSettings, emptyFishbone, type WorkSettings, type ImprovementAction, type Project, type Rca, type AuditEntry, type Dataset, type DownFlag, type FlagRulesConfig, type ReasonCode, type Role, type ShiftCalendar, type SiteUser, type SmuReading, type Target, type WorkOrder, type Asset, type Inspection, type InspectionForm, type SavedAnalysis, type SavedView, type Component, type ComponentEvent, type LifeTarget, type OilSample, type CmResponse, type ConditionSettings, withConditionDefaults } from '@mr/core';
+import { DEFAULT_FLAG_RULES, DEFAULT_WORK_SETTINGS, withAlertDefaults, type ApprovalRequest, type AuditRecord, type AlertAnswer, type AlertSettings, emptyFishbone, type WorkSettings, type ImprovementAction, type Project, type Rca, type AuditEntry, type Dataset, type DownFlag, type FlagRulesConfig, type ReasonCode, type Role, type ShiftCalendar, type SiteUser, type SmuReading, type Target, type WorkOrder, type Asset, type Inspection, type InspectionForm, type SavedAnalysis, type SavedView, type Component, type ComponentEvent, type LifeTarget, type OilSample, type CmResponse, type ConditionSettings, withConditionDefaults, type RcmMode, type JobPlanVersion, type RcmSettings, withRcmDefaults } from '@mr/core';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 
 const url = import.meta.env.VITE_SUPABASE_URL as string | undefined;
@@ -38,6 +38,7 @@ export interface Loaded {
   analyses: SavedAnalysis[];
   views: SavedView[];
   conditionSettings: ConditionSettings;
+  rcmSettings: RcmSettings;
 }
 
 /** Postgres returns "+00:00" offsets; the app compares ISO strings, so make them all "Z". */
@@ -75,7 +76,7 @@ export async function mySites(): Promise<RemoteSite[]> {
 
 export async function loadSite(siteId: string): Promise<Loaded> {
   const since = new Date(Date.now() - 730 * 864e5).toISOString();
-  const [main, imp, proj, wk, ans, appr, anl, vw, cmp, cond] = await Promise.all([
+  const [main, imp, proj, wk, ans, appr, anl, vw, cmp, cond, rcmr] = await Promise.all([
     remote!.rpc('app_load', { p_site: siteId }), remote!.rpc('app_load_improve', { p_site: siteId }), remote!.rpc('app_load_projects', { p_site: siteId }),
     remote!.rpc('app_load_work', { p_site: siteId }),
     remote!.rpc('app_load_alert_answers', { p_site: siteId }),
@@ -84,9 +85,10 @@ export async function loadSite(siteId: string): Promise<Loaded> {
     remote!.rpc('app_load_views', { p_site: siteId }),
     remote!.rpc('app_load_components', { p_site: siteId }),
     remote!.rpc('app_load_condition', { p_site: siteId, p_since: since }),
+    remote!.rpc('app_load_rcm', { p_site: siteId }),
   ]);
   const insp = await loadInspections(siteId);
-  const work = iso(must(wk)) as { plans: Array<Partial<WorkOrder> & { id: string }>; settings: { work?: Partial<WorkSettings>; alerts?: Partial<AlertSettings>; condition?: Partial<ConditionSettings> } };
+  const work = iso(must(wk)) as { plans: Array<Partial<WorkOrder> & { id: string }>; settings: { work?: Partial<WorkSettings>; alerts?: Partial<AlertSettings>; condition?: Partial<ConditionSettings>; rcm?: Partial<RcmSettings> } };
   const plans = new Map(work.plans.map((x) => [x.id, x]));
   const num = (v: unknown) => (v === undefined || v === null ? undefined : Number(v));
   const projects = (iso(must(proj)) as Project[]).map((p) => ({
@@ -110,6 +112,7 @@ export async function loadSite(siteId: string): Promise<Loaded> {
   const approvedTargets = new Map(approvals.targets.map((x) => [x.id, { requestId: x.requestId, approvedBy: x.approvedBy }]));
   const parts = iso(optional(cmp, { components: [], events: [], targets: [] }, 'Components')) as { components: Component[]; events: ComponentEvent[]; targets: LifeTarget[] };
   const oil = iso(optional(cond, { samples: [], responses: [] }, 'Condition monitoring')) as { samples: OilSample[]; responses: CmResponse[] };
+  const rcm = iso(optional(rcmr, { modes: [], versions: [] }, 'RCM')) as { modes: RcmMode[]; versions: JobPlanVersion[] };
   const calendar: ShiftCalendar = { timeZone: d.site.timeZone, shifts: d.calendar?.shifts ?? [{ name: 'day', startLocal: '06:00' }, { name: 'night', startLocal: '18:00' }], rotation: d.calendar?.rotation ?? undefined };
   const flags = d.flags.map((f) => ({ ...f, stages: f.stages ?? [], locations: f.locations ?? [], etas: f.etas ?? [], workOrders: f.workOrders ?? [], source: f.source ?? 'app', setBy: f.setBy ?? '', enteredAt: f.enteredAt ?? f.start }));
   return {
@@ -130,6 +133,8 @@ export async function loadSite(siteId: string): Promise<Loaded> {
       lifeTargets: parts.targets.map((t) => ({ ...t, hours: Number(t.hours) })),
       oilSamples: oil.samples.map((x) => ({ ...x, smu: num(x.smu), oilHours: num(x.oilHours), readings: x.readings ?? {}, reasons: x.reasons ?? [] })),
       cmResponses: oil.responses,
+      rcmModes: rcm.modes.map((m) => ({ ...m, answers: m.answers ?? {}, parts: (m.parts ?? []).map((p) => ({ ...p, qty: Number(p.qty) })), intervalHours: num(m.intervalHours), taskHours: num(m.taskHours), people: num(m.people) })),
+      jobPlanVersions: rcm.versions.map((v) => ({ ...v, hours: Number(v.hours) })),
       generatedAt: new Date().toISOString(),
     },
     role: d.role,
@@ -140,6 +145,7 @@ export async function loadSite(siteId: string): Promise<Loaded> {
     workSettings: { ...DEFAULT_WORK_SETTINGS, ...(work.settings.work ?? {}) },
     alertSettings: withAlertDefaults(work.settings.alerts),
     conditionSettings: withConditionDefaults(work.settings.condition),
+    rcmSettings: withRcmDefaults(work.settings.rcm),
     alertAnswers: iso(must(ans)) as AlertAnswer[],
     requests: approvals.requests,
     forms: insp.forms,
@@ -174,7 +180,7 @@ export async function saveTaskStatus(siteId: string, projectId: string, taskId: 
   must(await remote!.rpc('app_set_task_status', { p_site: siteId, p_project: projectId, p_task: taskId, p_status: status, p_note: note ?? null }));
 }
 
-export async function saveSetting(siteId: string, key: 'work' | 'alerts' | 'condition', value: object, reason: string, audit: AuditEntry[]): Promise<void> {
+export async function saveSetting(siteId: string, key: 'work' | 'alerts' | 'condition' | 'rcm', value: object, reason: string, audit: AuditEntry[]): Promise<void> {
   must(await remote!.rpc('app_save_setting', { p_site: siteId, p_key: key, p_value: value, p_reason: reason }));
   if (audit.length) must(await remote!.rpc('app_log', { p_site: siteId, p_entries: audit }));
 }
@@ -213,6 +219,18 @@ export async function saveOilSamples(siteId: string, added: OilSample[], voided:
 
 export async function saveCmResponse(siteId: string, r: CmResponse, audit: AuditEntry[]): Promise<void> {
   must(await remote!.rpc('app_save_cm_response', { p_site: siteId, r }));
+  if (audit.length) must(await remote!.rpc('app_log', { p_site: siteId, p_entries: audit }));
+}
+
+/** A new failure mode revision, or retiring one. The database sets who and when. */
+export async function saveRcmModes(siteId: string, added: RcmMode[], retired: RcmMode[], audit: AuditEntry[]): Promise<void> {
+  for (const m of added) must(await remote!.rpc('app_save_rcm_mode', { p_site: siteId, m }));
+  for (const m of retired) must(await remote!.rpc('app_retire_rcm_mode', { p_site: siteId, p_id: m.id, p_reason: m.retireReason }));
+  if (audit.length) must(await remote!.rpc('app_log', { p_site: siteId, p_entries: audit }));
+}
+
+export async function saveJobPlanVersion(siteId: string, v: JobPlanVersion, audit: AuditEntry[]): Promise<void> {
+  must(await remote!.rpc('app_issue_job_plan', { p_site: siteId, v }));
   if (audit.length) must(await remote!.rpc('app_log', { p_site: siteId, p_entries: audit }));
 }
 

@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest';
 import type { ConsoleContext } from '../src/console.js';
 import {
   CalcError, availabilityTarget, chiSquareQuantile, conditionalWeibull, costPerHour, downtimeCost, inherentAvailability, mtbfConfidence,
-  lifeData, mtbfRate, normalQuantile, percentile, repairBySystem, repairTimes, riskMatrix, saveAnalysis, searchCalculators, voidAnalysis, weibull, CALCULATORS,
+  lifeData, mtbfRate, normalQuantile, percentile, repairBySystem, repairTimes, riskMatrix, saveAnalysis, searchCalculators, voidAnalysis, weibull, CALCULATORS, pfInterval, optimalReplacement, failureFindingInterval, strategyCost,
 } from '../src/calculators.js';
 import type { DowntimeEvent } from '../src/kpis.js';
 import type { Role, SmuReading } from '../src/types.js';
@@ -178,5 +178,39 @@ describe('use my data', () => {
     expect(g).toHaveLength(1);
     expect(g[0]).toMatchObject({ system: 'Engine', count: 5, median: 3 });
     expect(g[0]!.p90).toBeCloseTo(7.6, 9);
+  });
+});
+
+describe('C-12 to C-15 maintenance strategy (docs/calculators.md, docs/rcm.md)', () => {
+  it('C-12 P-F interval: half the P-F interval, or less to leave the lead time', () => {
+    expect(pfInterval({ pf: 1000, checks: 2, leadTime: 200 }).values.interval).toBe(500);
+    expect(pfInterval({ pf: 1000, checks: 2, leadTime: 600 }).values.interval).toBe(400);
+    expect(() => pfInterval({ pf: 1000, checks: 2, leadTime: 1000 })).toThrow(CalcError);
+    expect(pfInterval({ pf: 1000, checks: 1, leadTime: 0 }).warnings.length).toBe(1);
+  });
+  it('C-13 optimal replacement matches SciPy (T* 5,541.5 h, $11.0551/h)', () => {
+    const o = optimalReplacement({ beta: 3, eta: 10000, plannedCost: 40000, failureCost: 160000 });
+    expect(o.values.age!).toBeCloseTo(5541.5, 0);
+    expect(o.values.costPerHour!).toBeCloseTo(11.0551, 3);
+    expect(o.values.survive!).toBeCloseTo(0.8435, 3);
+    expect(o.values.runToFailure!).toBeCloseTo(17.9175, 3);
+    expect(o.sentence).toContain('5,542 h');
+  });
+  it('C-13 has no optimum when β ≤ 1 or a failure costs no more than a planned change', () => {
+    expect(optimalReplacement({ beta: 1, eta: 10000, plannedCost: 40000, failureCost: 160000 }).values.age).toBeNull();
+    expect(optimalReplacement({ beta: 3, eta: 10000, plannedCost: 40000, failureCost: 40000 }).values.age).toBeNull();
+  });
+  it('C-14 failure-finding interval: 2 × U × M, with the exact unavailability', () => {
+    const f = failureFindingInterval({ mtbf: 20000, unavailability: 0.01 });
+    expect(f.values.ffi).toBe(400);
+    expect(f.values.exact!).toBeCloseTo(0.0099337, 6);
+    expect(failureFindingInterval({ mtbf: 1000, unavailability: 0.2 }).warnings.length).toBe(1);
+  });
+  it('C-15 strategy cost: condition-based is cheapest in the worked example', () => {
+    const s = strategyCost({ beta: 3, eta: 10000, failureCost: 160000, plannedCost: 40000, inspectionCost: 500, inspectionInterval: 500, detection: 0.9, repairCost: 40000 });
+    expect(s.values.runToFailure!).toBeCloseTo(17.92, 2);
+    expect(s.values.timeBased!).toBeCloseTo(11.06, 2);
+    expect(s.values.conditionBased!).toBeCloseTo(6.82, 2);
+    expect(s.sentence.startsWith('Condition-based is cheapest')).toBe(true);
   });
 });

@@ -44,9 +44,13 @@ line says otherwise.
 | Cost | Cost per hour of component life | No |
 | Converters | MTBF and failure rate | No |
 | Cost (phase 3) | Rebuild or replace | Mean component lives from the component history |
+| Maintenance strategy (phase 3) | P-F inspection interval | No |
+| Maintenance strategy (phase 3) | Optimal replacement interval | Weibull fit from C-05 |
+| Maintenance strategy (phase 3) | Failure-finding interval | No |
+| Maintenance strategy (phase 3) | Strategy cost comparison | Weibull fit from C-05 |
 
-Pareto and jack-knife are already on the downtime analysis page. Later phases add Crow-AMSAA, spares,
-RCM intervals, simulation and the rest of 7.2.
+Pareto and jack-knife are already on the downtime analysis page. The RCM interval calculators C-12 to C-15 came with RCM (docs/rcm.md). Later phases add Crow-AMSAA,
+spares, simulation and the rest of 7.2.
 
 ---
 
@@ -209,3 +213,71 @@ RCM intervals, simulation and the rest of 7.2.
   - Rebuild costs $21.25 an hour and replace costs $27.27 an hour.
   - Break-even life is 12,467 h, and rebuilding saves $36,136 a year.
 - **Reference:** life cycle costing arithmetic (plan 7.1 "Life cycle cost / rebuild vs replace").
+
+## C-12 P-F inspection interval (phase 3, RCM)
+
+- **Formula:** interval = the smaller of P-F interval ÷ n and P-F interval − lead time.
+  - The P-F interval is the time from when a warning sign can first be found (P) to the failure (F).
+  - n is the number of checks inside the P-F interval (2 by default, so a warning is found with at
+    least half of the P-F interval left).
+  - The lead time is how long it takes to plan, get parts and do the repair once the warning is
+    found.
+- **Assumptions:** the P-F interval is fairly steady. A wide spread needs a larger n.
+- **Worked example:**
+  - P-F 1,000 h, n = 2 and a 200 h lead time give min(500, 800) = 500 h.
+  - With a 600 h lead time: min(500, 400) = 400 h.
+- **Reference:** Moubray, *Reliability-centred Maintenance* (2nd ed.), chapter 7; SAE JA1012
+  section 9.
+- **Warning:** if the lead time is longer than the P-F interval, no interval works, because the
+  warning comes too late to act.
+
+## C-13 Optimal replacement interval (phase 3, RCM)
+
+- **Formula:** the age T that gives the lowest cost per operating hour,
+  C(T) = (Cp × R(T) + Cu × (1 − R(T))) ÷ ∫₀ᵀ R(t) dt, with R(t) = exp(−(t/η)^β).
+  - Cp is the cost of a planned replacement and Cu the cost of a failure, including downtime.
+  - The integral is the mean operating hours per cycle.
+  - It is compared with run to failure: Cu ÷ MTBF, where MTBF = η × Γ(1 + 1/β).
+- **Assumptions:** the Weibull fit describes the item; a replacement makes it as good as new; the
+  cost of each kind of change does not depend on the age.
+- **Method:** Simpson's rule for the integral, and a coarse search followed by golden-section search
+  for the lowest cost.
+- **Worked example:**
+  - β = 3, η = 10,000 h, Cp = $40,000, Cu = $160,000.
+  - T* = 5,542 h, at $11.06 an hour. 84.4% of items reach T* without failing.
+  - Run to failure costs $17.92 an hour (MTBF 8,930 h).
+- **Reference:** checked with SciPy 1.18 (`integrate.quad` and `optimize.minimize_scalar`):
+  T* = 5,541.5 h, C(T*) = 11.0551.
+- **Warnings:**
+  - β of 1 or less: the failure rate does not rise with age, so replacement on age does not help.
+  - Cu no more than Cp: replacing early cannot save money.
+
+## C-14 Failure-finding interval (phase 3, RCM)
+
+- **Formula:** FFI = 2 × U × M, where U is the unavailability the site accepts for the protective
+  device and M its MTBF.
+  - The unavailability this gives is checked with U = 1 − (M ÷ FFI) × (1 − exp(−FFI ÷ M)).
+- **Assumptions:** one protective device; failures at random (constant rate); the check finds every
+  failure and the device is repaired straight away.
+- **Worked example:** M = 20,000 h and U = 1% give FFI = 400 h. The exact unavailability at 400 h is
+  0.993%.
+- **Reference:** Moubray, chapter 8; checked with SciPy 1.18 arithmetic.
+- **Warning:** when FFI ÷ M is above 0.2, the simple formula gets less accurate; the page shows the
+  exact unavailability.
+
+## C-15 Strategy cost comparison (phase 3, RCM)
+
+- **Formulas**, each as a cost per operating hour:
+  - Run to failure = Cu ÷ MTBF.
+  - Time-based = C(T*) from C-13.
+  - Condition-based = Ci ÷ I + (p × Cc + (1 − p) × Cu) ÷ MTBF.
+  - Ci is the cost of one inspection, I the inspection interval, p the chance an inspection finds
+    the warning in time, and Cc the cost of a planned repair after a warning.
+- **Assumptions:** failures start at the same rate under each strategy; a found warning becomes a
+  planned repair; a missed one becomes a failure.
+- **Worked example:**
+  - β = 3, η = 10,000 h, Cu = $160,000, Cp = $40,000, Ci = $500, I = 500 h, p = 0.9, Cc = $40,000.
+  - Run to failure costs $17.92 an hour.
+  - Time-based costs $11.06 an hour, replacing at 5,542 h.
+  - Condition-based costs $6.82 an hour, so it is the cheapest.
+- **Reference:** arithmetic, with C-13 for the time-based figure.
