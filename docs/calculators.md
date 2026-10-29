@@ -52,10 +52,15 @@ line says otherwise.
 | Spares (phase 3) | Rebuild pool | Change-outs and repair cycle from the component history |
 | Spares (phase 3) | Kit stocking | PM kits from RCM job plans |
 | Spares (phase 3) | Lifetime buy | No |
+| Repairable systems (phase 3) | Crow-AMSAA reliability growth | Fleet failures on cumulative operating hours |
+| Repairable systems (phase 3) | Trend test (Laplace and MIL-HDBK-189) | Fleet failures on cumulative operating hours |
+| Repairable systems (phase 3) | Mean cumulative function and ROCOF | Failures by unit, on each unit's operating hours |
+| System models (phase 3) | Reliability block diagram | No |
+| System models (phase 3) | Availability simulation | No |
 
-Pareto and jack-knife are already on the downtime analysis page. The RCM interval calculators C-12 to C-15 came with RCM (docs/rcm.md), and the spares
-calculators C-16 to C-19 with spares sizing (docs/spares.md). Later parts add Crow-AMSAA, simulation
-and the rest of 7.2.
+Pareto and jack-knife are already on the downtime analysis page. The RCM interval calculators C-12 to C-15 came with RCM (docs/rcm.md), the spares
+calculators C-16 to C-19 with spares sizing (docs/spares.md), and the repairable system and system
+model calculators C-20 to C-24 after them.
 
 ---
 
@@ -381,3 +386,166 @@ are refused.
     and buy 47.
 - **Reference:** newsvendor model (Silver, Pyke and Thomas, *Inventory and Production Management in
   Supply Chains*, 4th ed., chapter 6); checked with SciPy 1.18 `stats.poisson`.
+
+## Repairable systems (phase 3)
+
+C-05 Weibull treats each repair as making the unit as good as new. A truck is a repairable system:
+a repair makes it work again but leaves it about as old as before. C-20 to C-22 test and model that.
+
+**Time data.** Each failure is a time on one clock, and the data ends at time T:
+
+- **Ends at a time** (time-terminated): the clock ran on after the last failure, as with field data
+  to today.
+- **Ends at a failure** (failure-terminated): T is the last failure.
+
+**From the fleet ("Use my data")**, for the units and dates in the filter:
+
+- C-20 and C-21 use the fleet clock: the operating hours of all the units added up, from the start
+  of the period. Each failure is placed at the fleet hours when it started. T is the fleet hours at
+  the end. Failures are those A7 R9 counts.
+- C-22 uses each unit's own clock: operating hours from the start of the period to each of its
+  failures, and to the end of the period.
+
+## C-20 Crow-AMSAA reliability growth
+
+- **Model:** failures follow a power law in time (a non-homogeneous Poisson process). The expected
+  failures by time t are N(t) = λ t^β.
+  - β below 1: failures are coming further apart (improving). β above 1: closer together
+    (getting worse). β = 1: a steady rate.
+- **Formulas** (maximum likelihood, MIL-HDBK-189C):
+  - Ends at a time: β = n ÷ Σ ln(T ÷ tᵢ), over all n failures.
+  - Ends at a failure: β = n ÷ Σ ln(tₙ ÷ tᵢ), over the first n − 1 failures, and T = tₙ.
+  - λ = n ÷ T^β.
+  - Failure rate now (ROCOF at T) = λ β T^(β−1). MTBF now = 1 ÷ that.
+  - Cumulative MTBF = T ÷ n.
+  - Expected failures in the next h hours = λ ((T + h)^β − T^β).
+  - The unbiased β, shown too, is (n − 1) ÷ n × β when it ends at a time, and (n − 2) ÷ n × β when
+    it ends at a failure.
+- **Confidence bounds on β:** 2nβ_true ÷ β is chi-square with 2n degrees of freedom when it ends at
+  a time, and 2(n − 1) when it ends at a failure. Two-sided bounds at confidence C are
+  β × χ²((1 − C)/2; ν) ÷ 2n and β × χ²((1 + C)/2; ν) ÷ 2n.
+  - If the bounds are both below 1, the fleet is improving; both above 1, getting worse. Otherwise
+    the data cannot tell.
+- **Assumptions:** one clock for the fleet or unit; the power law fits (check the plot of
+  cumulative failures against time on log scales: it should be a straight line).
+- **Worked example:**
+  - 12 failures at 120, 410, 750, 1,300, 1,900, 2,700, 3,600, 4,800, 6,100, 7,600, 9,300 and
+    11,200 h; ends at 12,000 h.
+  - β = 0.6033 (unbiased 0.5531), λ = 0.04150.
+  - 90% bounds on β: 0.3481 to 0.9155, both below 1, so it is improving.
+  - MTBF now 1,657 h against a cumulative MTBF of 1,000 h. 1.17 failures expected in the next
+    2,000 h.
+  - Ending at the failure at 11,200 h instead: β = 0.6296, bounds 0.3236 to 0.8899.
+- **Reference:** MIL-HDBK-189C (2011) section 5; checked with SciPy 1.18 (`stats.chi2`). The chi-square
+  distribution of the bounds was also confirmed by simulation.
+- **Warning:** fewer than 5 failures.
+
+## C-21 Trend test (Laplace and MIL-HDBK-189)
+
+- **Question:** are failures coming closer together, further apart, or at a steady rate?
+- **Laplace test:**
+  - Ends at a time: U = (Σ tᵢ ÷ n − T ÷ 2) ÷ (T × √(1 ÷ 12n)).
+  - Ends at a failure: the same with the first n − 1 failures and T = tₙ.
+  - U is about normal when there is no trend. p = 2 × P(Z > |U|).
+- **MIL-HDBK-189 test:** χ² = 2 Σ ln(T ÷ tᵢ), with 2n degrees of freedom (ends at a time) or
+  2(n − 1) over the first n − 1 failures (ends at a failure). p = 2 × the smaller tail.
+  - It is the better test when the trend is a power law (C-20). Laplace is better for a steady
+    change in the rate.
+- **Verdict** at the significance level chosen (5% by default): if p is below it, the trend is
+  "getting worse" when U is above 0 and "improving" when U is below 0. Otherwise "no clear trend". The
+  page shows both tests and says when they disagree.
+- **Worked example:** the C-20 failures, ending at 12,000 h.
+  - Laplace U = −1.852, p = 0.064: no clear trend at 5%.
+  - MIL-HDBK-189 χ² = 39.78 on 24 degrees of freedom, p = 0.045: improving at 5%.
+  - The tests disagree, so the page says so: the evidence of improvement is borderline.
+- **Reference:** Ascher and Feingold, *Repairable Systems Reliability* (1984); MIL-HDBK-189C
+  section 5.1; checked with SciPy 1.18 (`stats.norm`, `stats.chi2`).
+- **Warning:** fewer than 4 failures.
+
+## C-22 Mean cumulative function and ROCOF
+
+- **Question:** how many failures does a unit have by a given age, across a fleet of units seen over
+  different ages?
+- **Formula (Nelson):** at each failure age t, MCF(t) = MCF(before) + d(t) ÷ r(t), where d is the
+  failures at that age and r the units still being watched at that age (their end age is t or
+  more).
+  - Standard error (Lawless and Nadeau): Var MCF(t) = Σ over units [Σ over failure ages s ≤ t
+    where the unit is watched of (dᵢ(s) − d(s) ÷ r(s)) ÷ r(s)]².
+  - Bounds: MCF × exp(± z × SE ÷ MCF), so they never go below 0.
+- **ROCOF** (rate of occurrence of failures): the slope of the MCF. The page shows the average
+  rate in 5 equal age bands: (MCF at the end of the band − MCF at its start) ÷ band width, while at
+  least one unit is watched.
+  - A rising ROCOF means units fail more often as they age. The sentence calls it rising or
+    falling when the last band with 3 or more units watched has a rate 1.5 times the first, or less
+    than the first ÷ 1.5.
+- **Inputs:** one unit per line: `name: failure ages; end age`, for example
+  `HT101: 1000, 2500, 4000; 5000`.
+- **Assumptions:** units are alike; when a unit stops being watched has nothing to do with its
+  failures.
+- **Worked example:**
+  - U1 fails at 1,000, 2,500 and 4,000 h, end 5,000 h. U2 fails at 1,500 and 3,000 h, end 3,500 h.
+    U3 fails at 500, 2,000, 4,500 and 5,500 h, end 6,000 h.
+  - MCF 0.333 at 500 h, 2.000 at 3,000 h, 2.500 at 4,000 h (2 units watched), 3.000 at 4,500 h and
+    4.000 at 5,500 h (1 unit).
+  - Standard error 0.2722 at 2,500 h, and 0.3536 at 4,000 h.
+- **Reference:** Nelson, *Recurrent Events Data Analysis for Product Repairs, Disease Recurrences
+  and Other Applications* (2003); Lawless and Nadeau, Technometrics 37 (1995); checked by hand
+  arithmetic in Python.
+- **Warning:** an age band with fewer than 3 units watched, where the MCF rests on few units.
+
+## System models (phase 3)
+
+C-23 and C-24 model a system made of groups of items. The groups are in series: the system works
+only when every group works. A group of n alike items needs k of them working (k-of-n): 1 of 1 is
+one item, 1 of 2 is a duty and standby pair, 2 of 3 is three pumps where two carry the load.
+
+Groups are typed one per line. Fixed plant structure (phase 3b) will fill them from the plant.
+
+## C-23 Reliability block diagram
+
+- **Formulas:**
+  - Item availability A = MTBF ÷ (MTBF + MTTR) (C-01).
+  - Group availability = P(at least k of n work) = Σ from j = k to n of C(n, j) A^j (1 − A)^(n − j).
+  - System availability = the product of the group availabilities.
+  - Mission reliability, with no repair during the mission: the same with R = exp(−mission ÷ MTBF)
+    in place of A.
+  - **Weak link:** the system availability if a group never failed. The group with the biggest
+    gain is where to start.
+- **Inputs:** one group per line: `name, n, k, MTBF, MTTR`, and the mission hours.
+- **Assumptions:** items fail and are repaired independently, each with its own crew; failures at
+  a steady rate for the mission reliability; standby items fail as often as running ones.
+- **Worked example:**
+  - Primary crusher 1 of 1 (MTBF 400 h, MTTR 8 h), feed pumps 2 of 3 (1,000 h, 24 h), conveyor
+    CV-01 1 of 1 (800 h, 4 h). Mission 24 h.
+  - Groups: crusher 98.04%, pumps 99.84% (one pump 97.66%), conveyor 99.50%.
+  - System availability 97.39%. Mission reliability over 24 h 91.24%.
+  - The crusher is the weak link: if it never failed, availability would be 99.34%.
+- **Reference:** Birolini, *Reliability Engineering* (8th ed.), chapter 2; checked with SciPy 1.18
+  arithmetic.
+
+## C-24 Availability simulation
+
+- **Question:** what availability range should we expect over a period, with wear-out failures and
+  the luck of the draw, not only the long-run average?
+- **Method (Monte Carlo):** for each run, each item starts new and alternates:
+  - running for a Weibull time with its β and η;
+  - then down for an exponential repair time with its mean;
+  - and is as good as new after each repair.
+  - A group is down while fewer than k of its items run. The system is down while any group is
+    down. Each run records the system availability, the number of system outages and the down
+    hours over the period.
+- **Results:** mean availability with the 5th and 95th percentiles across runs, mean outages and mean
+  down hours, and a histogram of availability.
+- **Inputs:** one group per line: `name, n, k, β, η, mean repair hours`; the period in hours; the
+  number of runs (100 to 5,000); and a seed, so the same inputs give the same answer.
+- **Assumptions:** as C-23, plus: items start new; repair crews are unlimited; standby items age
+  as if running.
+- **Worked example:**
+  - The C-23 plant with β = 1 (η = MTBF) over 8,760 h: the mean availability is 97.4%, matching
+    C-23's 97.39%. The unit test checks this within 0.15 points.
+  - Crusher β 2.0, η 450 h; pumps β 1.5, η 1,100 h; conveyor β 1, η 800 h. A reference simulation
+    of 20,000 runs in Python gave mean 97.42%, 5th percentile 96.47%, 95th percentile 98.26%, and
+    32.8 outages a year.
+- **Reference:** Birolini chapter 6 (Monte Carlo of alternating renewal processes); checked against
+  C-23 and a separate Python simulation.
+- **Warning:** fewer than 500 runs give rough percentiles.

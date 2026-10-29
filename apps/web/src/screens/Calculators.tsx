@@ -4,11 +4,11 @@
 
 import {
   CALCULATORS, CalcError, analyse, availabilityTarget, can, conditionalCurve, conditionalWeibull, costPerHour, downtimeCost, filterFromQuery, filterToQuery,
-  inherentAvailability, lifeData, mtbfConfidence, mtbfRate, rebuildOrReplace, pfInterval, optimalReplacement, failureFindingInterval, strategyCost, poissonSpares, rebuildPool, kitStocking, lifetimeBuy, type KitPart, type KitPartResult, componentStates, allLives, meanLives, smuIndex, COMPONENT_KINDS, KIND_LABELS, type ComponentKind, repairBySystem, repairTimes, riskMatrix, saveAnalysis, searchCalculators, voidAnalysis, weibull,
+  inherentAvailability, lifeData, mtbfConfidence, mtbfRate, rebuildOrReplace, pfInterval, optimalReplacement, failureFindingInterval, strategyCost, poissonSpares, rebuildPool, kitStocking, lifetimeBuy, type KitPart, type KitPartResult, crowAmsaa, trendTest, meanCumulativeFunction, blockDiagram, availabilitySimulation, fleetClock, unitHistories, type BlockResult, type McfPoint, type RocofBand, type UnitHistory, componentStates, allLives, meanLives, smuIndex, COMPONENT_KINDS, KIND_LABELS, type ComponentKind, repairBySystem, repairTimes, riskMatrix, saveAnalysis, searchCalculators, voidAnalysis, weibull,
   RISK_BANDS, type AnalyticsFilter, type CalcOutput, type CalculatorId, type CalculatorInfo, type LifeTime, type SavedAnalysis,
 } from '@mr/core';
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { Bar, BarChart, CartesianGrid, Cell, ComposedChart, Legend, Line, LineChart, ReferenceLine, ResponsiveContainer, Scatter, Tooltip, XAxis, YAxis } from 'recharts';
+import { Area, Bar, BarChart, CartesianGrid, Cell, ComposedChart, Legend, Line, LineChart, ReferenceLine, ResponsiveContainer, Scatter, Tooltip, XAxis, YAxis } from 'recharts';
 import { FilterBar } from '../components/FilterBar';
 import { siteTime } from '../format';
 import { useApp } from '../store';
@@ -90,6 +90,32 @@ const FIELDS: Record<CalculatorId, Field[]> = {
     { key: 'salvage', label: 'Salvage value of one left over (optional)', unit: '$' },
     { key: 'shortageCost', label: 'Cost of being short of one (optional)', unit: '$', hint: 'Getting one another way, plus the downtime' },
   ],
+  crow_amsaa: [
+    { key: 'times', label: 'Failure times', unit: 'h', kind: 'list', hint: 'Cumulative operating hours at each failure, on one clock. Separated by commas, spaces or new lines.' },
+    { key: 'endsAt', label: 'The data ends', kind: 'select', options: [['time', 'at a point in time (field data)'], ['failure', 'at the last failure']] },
+    { key: 'end', label: 'End time', unit: 'h', hint: 'Only when the data ends at a point in time' },
+    { key: 'confidence', label: 'Two-sided confidence', kind: 'select', options: [['0.8', '80%'], ['0.9', '90%'], ['0.95', '95%']] },
+    { key: 'ahead', label: 'Hours ahead to forecast (optional)', unit: 'h' },
+  ],
+  trend_test: [
+    { key: 'times', label: 'Failure times', unit: 'h', kind: 'list', hint: 'Cumulative operating hours at each failure, on one clock.' },
+    { key: 'endsAt', label: 'The data ends', kind: 'select', options: [['time', 'at a point in time (field data)'], ['failure', 'at the last failure']] },
+    { key: 'end', label: 'End time', unit: 'h', hint: 'Only when the data ends at a point in time' },
+    { key: 'significance', label: 'Significance level', kind: 'select', options: [['0.1', '10%'], ['0.05', '5%'], ['0.01', '1%']] },
+  ],
+  mcf: [
+    { key: 'units', label: 'Units', kind: 'lives', hint: 'One unit per line: name: failure ages; end age. For example HT101: 1000, 2500, 4000; 5000. A unit with no failures: HT102: ; 4000.' },
+    { key: 'confidence', label: 'Two-sided confidence', kind: 'select', options: [['0.8', '80%'], ['0.9', '90%'], ['0.95', '95%']] },
+  ],
+  block_diagram: [
+    { key: 'groups', label: 'Groups in series', kind: 'lives', hint: 'One per line: name, items, items needed, MTBF h, MTTR h. For example Feed pumps, 3, 2, 1000, 24.' },
+    { key: 'mission', label: 'Mission', unit: 'h', hint: 'For the chance of getting through it with no system failure' },
+  ],
+  availability_sim: [
+    { key: 'groups', label: 'Groups in series', kind: 'lives', hint: 'One per line: name, items, items needed, β, η h, mean repair h.' },
+    { key: 'period', label: 'Period', unit: 'h' }, { key: 'runs', label: 'Runs', hint: '100 to 5,000. More runs give steadier percentiles but take longer.' },
+    { key: 'seed', label: 'Seed', hint: 'The same seed and inputs give the same answer' },
+  ],
 };
 
 /** The worked examples from docs/calculators.md; also the starting inputs. */
@@ -117,6 +143,11 @@ const EXAMPLE: Record<CalculatorId, { inputs: Inputs; text: string; assumptions:
   rebuild_pool: { inputs: { perYear: '12', cycleDays: '75', target: '95', carryingCost: '60000', costPerDownHour: '2500' }, text: '12 change-outs a year and a 75 day cycle: a pool of 6 gives 96.02% with 6.8 unit-days a year waiting. At $60,000 a year to carry a spare and $2,500 a down hour, the lowest-cost pool is 8, at $509,674 a year (checked with SciPy).', assumptions: 'Each removed component goes to rebuild and comes back to the pool (Palm\'s theorem). A unit waiting for a component is down all day. A scrapped component is replaced within the cycle.' },
   kit_stocking: { inputs: { perYear: '24', target: '95', parts: 'FILTER, 2, 14, 80, Filter\nSEAL-KIT, 1, 45, 350, Seal kit\nPUMP, 1, 90, 4200, Pump' }, text: '24 kits a year, 95%: 12 filters, 9 seal kits and 11 pumps; a whole kit at least 95.70% of the time (at most 96.07%), $50,310 of stock (checked with SciPy and a simulation).', assumptions: 'Each part is stocked in whole kits with one-for-one reorder. The product of the part fill rates is a safe lower bound; the parts are short at the same times, so the true rate is a little higher. Parts used outside the kit need their own demand added.' },
   lifetime_buy: { inputs: { perYear: '10', years: '6', change: '-10', confidence: '90', onHand: '5', unitCost: '2000', salvage: '200', shortageCost: '15000' }, text: '10 a year now, 6 years, −10% a year: expect 44.5 uses. 90% confidence needs 53, so buy 48 ($96,000). Balancing $1,800 per part left over against $13,000 per part short gives 52 (checked with SciPy).', assumptions: 'Demand is random around the trend and parts do not wear out on the shelf. Newsvendor critical ratio for the cost-balanced figure.' },
+  crow_amsaa: { inputs: { times: '120, 410, 750, 1300, 1900, 2700, 3600, 4800, 6100, 7600, 9300, 11200', endsAt: 'time', end: '12000', confidence: '0.9', ahead: '2000' }, text: '12 failures to 12,000 h: β = 0.603 (90% bounds 0.348 to 0.915, both below 1, so improving), MTBF now 1,657 h against 1,000 h cumulative, 1.17 failures expected in the next 2,000 h (checked with SciPy).', assumptions: 'Failures follow a power law in time (non-homogeneous Poisson process), on one clock. Maximum likelihood and chi-square bounds from MIL-HDBK-189C.' },
+  trend_test: { inputs: { times: '120, 410, 750, 1300, 1900, 2700, 3600, 4800, 6100, 7600, 9300, 11200', endsAt: 'time', end: '12000', significance: '0.05' }, text: 'The C-20 failures: Laplace U = −1.852, p = 0.064 (no clear trend at 5%); MIL-HDBK-189 χ² = 39.78 on 24 degrees of freedom, p = 0.045 (improving). The tests disagree, so the evidence is borderline.', assumptions: 'No trend means failures at a steady rate. Laplace suits a steady change in the rate, MIL-HDBK-189 a power law.' },
+  mcf: { inputs: { units: 'U1: 1000, 2500, 4000; 5000\nU2: 1500, 3000; 3500\nU3: 500, 2000, 4500, 5500; 6000', confidence: '0.9' }, text: 'Three units: MCF 2.000 at 3,000 h, 2.500 at 4,000 h (2 units watched) and 4.000 at 5,500 h (1 unit). Standard error 0.272 at 2,500 h (Lawless–Nadeau).', assumptions: 'Units are alike, and when a unit stops being watched has nothing to do with its failures. Nelson (2003).' },
+  block_diagram: { inputs: { groups: 'Primary crusher, 1, 1, 400, 8\nFeed pumps, 3, 2, 1000, 24\nConveyor CV-01, 1, 1, 800, 4', mission: '24' }, text: 'Crusher 98.04%, pumps 2 of 3 99.84%, conveyor 99.50%: system 97.39%, 91.24% chance of 24 h with no failure. The crusher is the weak link (99.34% if it never failed).', assumptions: 'Groups in series; items fail and are repaired independently, each with its own crew; random failures for the mission figure; standby items fail like running ones.' },
+  availability_sim: { inputs: { groups: 'Primary crusher, 1, 1, 2, 450, 8\nFeed pumps, 3, 2, 1.5, 1100, 24\nConveyor CV-01, 1, 1, 1, 800, 4', period: '8760', runs: '2000', seed: '1' }, text: 'The C-23 plant with wear-out: mean 97.4%, 5th to 95th percentile about 96.5% to 98.3%, about 33 outages a year (a 20,000-run Python simulation gave 97.42%, 96.47% to 98.26%). With β = 1 the mean matches C-23.', assumptions: 'Items start new, run for Weibull times and have exponential repairs, as good as new after each; unlimited crews; standby items age as if running.' },
 };
 
 const VALUE_LABELS: Record<string, [string, (x: number) => string]> = {
@@ -188,6 +219,31 @@ const VALUE_LABELS: Record<string, [string, (x: number) => string]> = {
   ratio: ['Critical ratio', (x) => x.toFixed(3)],
   costTotal: ['Cost-balanced total', (x) => Math.round(x).toLocaleString('en-CA')],
   costBuy: ['Cost-balanced buy', (x) => Math.round(x).toLocaleString('en-CA')],
+  lambdaScale: ['λ (scale)', (x) => x.toPrecision(4)],
+  betaUnbiased: ['β unbiased', (x) => x.toFixed(3)],
+  mtbfNow: ['MTBF now', (x) => `${Math.round(x).toLocaleString('en-CA')} h`],
+  cumulativeMtbf: ['Cumulative MTBF', (x) => `${Math.round(x).toLocaleString('en-CA')} h`],
+  rocof: ['Failure rate now (ROCOF)', (x) => `${x.toPrecision(3)} per h`],
+  expectedAhead: ['Failures expected ahead', (x) => x.toFixed(2)],
+  laplaceU: ['Laplace U', (x) => x.toFixed(3)],
+  pLaplace: ['Laplace p', (x) => x.toFixed(4)],
+  milChiSquare: ['MIL-HDBK-189 χ²', (x) => x.toFixed(2)],
+  milDof: ['Degrees of freedom', (x) => String(x)],
+  pMil: ['MIL-HDBK-189 p', (x) => x.toFixed(4)],
+  mcfEnd: ['MCF at the last failure', (x) => x.toFixed(3)],
+  mcfEndAge: ['Age of the last failure', (x) => `${Math.round(x).toLocaleString('en-CA')} h`],
+  seEnd: ['Standard error there', (x) => x.toFixed(3)],
+  units: ['Units', (x) => String(x)],
+  systemAvailability: ['System availability', (x) => `${(x * 100).toFixed(2)}%`],
+  missionReliability: ['No failure in the mission', (x) => `${(x * 100).toFixed(2)}%`],
+  weakLinkGain: ['Gain if the weak link never failed', (x) => `${(x * 100).toFixed(2)} points`],
+  groups: ['Groups', (x) => String(x)],
+  meanAvailability: ['Mean availability', (x) => `${(x * 100).toFixed(2)}%`],
+  p5Availability: ['5th percentile', (x) => `${(x * 100).toFixed(2)}%`],
+  p95Availability: ['95th percentile', (x) => `${(x * 100).toFixed(2)}%`],
+  meanOutages: ['Outages (mean)', (x) => x.toFixed(1)],
+  meanDownHours: ['Down hours (mean)', (x) => Math.round(x).toLocaleString('en-CA')],
+  runs: ['Runs', (x) => x.toLocaleString('en-CA')],
 };
 
 const nums = (s: string | undefined) => (s ?? '').split(/[\s,;]+/).filter(Boolean).map(Number);
@@ -239,7 +295,47 @@ function compute(id: CalculatorId, i: Inputs): Run {
       const p = { perYear: n('perYear'), years: n('years'), change: n('change') / 100, confidence: n('confidence') / 100, onHand: n('onHand'), unitCost: n('unitCost'), salvage: opt('salvage'), shortageCost: opt('shortageCost') };
       return { out: lifetimeBuy(p), parsed: p };
     }
+    case 'crow_amsaa': {
+      const p = { times: nums(i.times), endsAt: (i.endsAt === 'failure' ? 'failure' : 'time') as 'time' | 'failure', end: opt('end'), confidence: Number(i.confidence ?? 0.9), ahead: opt('ahead') };
+      return { out: crowAmsaa(p), parsed: p };
+    }
+    case 'trend_test': {
+      const p = { times: nums(i.times), endsAt: (i.endsAt === 'failure' ? 'failure' : 'time') as 'time' | 'failure', end: opt('end'), significance: Number(i.significance ?? 0.05) };
+      return { out: trendTest(p), parsed: p };
+    }
+    case 'mcf': { const p = { units: unitLines(i.units), confidence: Number(i.confidence ?? 0.9) }; return { out: meanCumulativeFunction(p), parsed: p }; }
+    case 'block_diagram': {
+      const p = { groups: groupLines(i.groups, 5).map(([name, a, b, c, d]) => ({ name, n: a!, k: b!, mtbf: c!, mttr: d! })), mission: n('mission') };
+      return { out: blockDiagram(p), parsed: p };
+    }
+    case 'availability_sim': {
+      const p = { groups: groupLines(i.groups, 6).map(([name, a, b, c, d, e]) => ({ name, n: a!, k: b!, beta: c!, eta: d!, repair: e! })), period: n('period'), runs: n('runs'), seed: n('seed') };
+      return { out: availabilitySimulation(p), parsed: p };
+    }
   }
+}
+
+/** Units typed one per line: "name: ages; end". */
+function unitLines(text: string | undefined): UnitHistory[] {
+  return (text ?? '').split(/\n+/).map((l) => l.trim()).filter(Boolean).map((l, k) => {
+    const m = /^(.*?):(.*);(.*)$/.exec(l);
+    if (!m) throw new CalcError([`Line ${k + 1}: write name: failure ages; end age.`]);
+    const ages = m[2]!.split(/[\s,]+/).filter(Boolean).map(Number);
+    const end = Number(m[3]!.trim());
+    if (ages.some((x) => !Number.isFinite(x)) || !m[3]!.trim() || !Number.isFinite(end)) throw new CalcError([`Line ${k + 1}: ages and the end age must be numbers.`]);
+    return { unit: m[1]!.trim() || `Unit ${k + 1}`, ages, end };
+  });
+}
+
+/** Groups typed one per line: a name, then numbers separated by commas. */
+function groupLines(text: string | undefined, fields: number): Array<[string, ...number[]]> {
+  return (text ?? '').split(/\n+/).map((l) => l.trim()).filter(Boolean).map((l, k) => {
+    const parts = l.split(',').map((x) => x.trim());
+    const nums_ = parts.slice(-(fields - 1)).map(Number);
+    const name = parts.slice(0, parts.length - (fields - 1)).join(', ');
+    if (parts.length < fields || nums_.some((x) => !Number.isFinite(x))) throw new CalcError([`Line ${k + 1}: write a name and ${fields - 1} numbers, separated by commas.`]);
+    return [name, ...nums_];
+  });
 }
 
 /** Kit parts typed one per line: item, quantity, lead days, unit cost, description. */
@@ -385,6 +481,21 @@ function Calculator({ info, savedId, query }: { info: CalculatorInfo; savedId?: 
         break;
       }
       case 'repair_times': next = { hours: repairRows.map((r) => Number(r.hours.toFixed(2))).join(', ') }; msg = 'Down hours of each closed downtime event that matches the filter.'; break;
+      case 'crow_amsaa':
+      case 'trend_test': {
+        const c = fleetClock(a.events.map((e) => e.event), a.assets.map((x) => x.id), app.ds.smu, a.period.from, a.period.to);
+        if (!c.times.length) { setDataMsg('No failures with SMU readings in this filter.'); return; }
+        next = { times: c.times.map((x) => Math.round(x)).join(', '), endsAt: 'time', end: String(Math.round(c.end)) };
+        msg = `${c.times.length} failures placed on the fleet clock: the operating hours of the ${a.assets.length} units added up from the start of the period (${Math.round(c.end).toLocaleString('en-CA')} h in all).`;
+        break;
+      }
+      case 'mcf': {
+        const h = unitHistories(a.events.map((e) => e.event), a.assets.map((x) => ({ id: x.id, name: x.unitNumber })), app.ds.smu, a.period.from, a.period.to);
+        if (!h.length) { setDataMsg('No units with SMU readings in this filter.'); return; }
+        next = { units: h.map((u) => `${u.unit}: ${u.ages.map((x) => Math.round(x)).join(', ')}; ${Math.round(u.end)}`).join('\n') };
+        msg = `${h.length} units, each on its own operating hours from the start of the period.`;
+        break;
+      }
       default: return;
     }
     setInputs((p) => ({ ...p, ...next }));
@@ -711,6 +822,112 @@ function Chart({ id, run }: { id: CalculatorId; run: Run }) {
               <Line dataKey="p" stroke="var(--brand)" strokeWidth={2} dot={false} isAnimationActive={false} />
               {v.needTotal !== null && <ReferenceLine x={v.needTotal} stroke="var(--text-2)" strokeDasharray="4 4" label={{ value: `${v.needTotal}`, position: 'top', fill: 'var(--text-2)', fontSize: 12 }} />}
             </LineChart>
+          </ResponsiveContainer>
+        </div>
+      </section>
+    );
+  }
+  if (id === 'crow_amsaa') {
+    const o = run.out as unknown as { points: Array<{ t: number; n: number }>; line: Array<{ t: number; n: number }> };
+    const lt = (x: number) => Math.log10(x);
+    const pts = o.points.map((p) => ({ x: lt(p.t), y: lt(p.n), t: p.t, n: p.n }));
+    const line = o.line.map((p) => ({ x: lt(p.t), fit: lt(p.n) }));
+    const xs = [...pts.map((p) => p.x), ...line.map((p) => p.x)];
+    const ys = [...pts.map((p) => p.y), ...line.map((p) => p.fit)];
+    const tick = (v: number) => { const x = 10 ** v; return x >= 100 ? Math.round(x).toLocaleString('en-CA') : x.toPrecision(2); };
+    return (
+      <section className="card">
+        <h3 style={{ marginTop: 0 }}>Cumulative failures against time (log scales)</h3>
+        <div style={{ height: 300 }}>
+          <ResponsiveContainer>
+            <ComposedChart margin={{ top: 8, right: 16, bottom: 20, left: 10 }}>
+              <CartesianGrid stroke="var(--border)" strokeDasharray="3 3" />
+              <XAxis type="number" dataKey="x" domain={[Math.min(...xs), Math.max(...xs)]} tick={axis} tickFormatter={tick} label={{ value: 'Operating hours', position: 'insideBottom', offset: -12, fill: 'var(--text-2)', fontSize: 12 }} />
+              <YAxis type="number" dataKey="y" domain={[Math.min(...ys), Math.max(...ys)]} tick={axis} tickFormatter={tick} />
+              <Tooltip formatter={(v: number, name: string) => [tick(v), name]} labelFormatter={(v: number) => `${tick(v)} h`} />
+              <Legend verticalAlign="top" height={24} />
+              <Line data={line} dataKey="fit" name="Crow-AMSAA fit" stroke="var(--brand)" strokeWidth={2} dot={false} isAnimationActive={false} />
+              <Scatter data={pts} dataKey="y" name="Failures" fill="var(--down)" isAnimationActive={false} />
+            </ComposedChart>
+          </ResponsiveContainer>
+        </div>
+        <p className="small muted">The power law is a straight line on these scales. Points bending away from it mean the model does not fit well.</p>
+      </section>
+    );
+  }
+  if (id === 'mcf') {
+    const o = run.out as unknown as { points: McfPoint[]; bands: RocofBand[] };
+    const data = o.points.map((p) => ({ t: p.t, mcf: Number(p.mcf.toFixed(3)), band: [Number(p.lower.toFixed(3)), Number(p.upper.toFixed(3))] }));
+    return (
+      <>
+        <section className="card">
+          <h3 style={{ marginTop: 0 }}>Mean cumulative function</h3>
+          <div style={{ height: 280 }}>
+            <ResponsiveContainer>
+              <ComposedChart data={data} margin={{ top: 8, right: 16, bottom: 20, left: 0 }}>
+                <CartesianGrid stroke="var(--border)" strokeDasharray="3 3" />
+                <XAxis dataKey="t" type="number" domain={[0, 'dataMax']} tick={axis} label={{ value: 'Age (operating hours)', position: 'insideBottom', offset: -12, fill: 'var(--text-2)', fontSize: 12 }} />
+                <YAxis tick={axis} />
+                <Tooltip formatter={(v: number | number[], name: string) => [Array.isArray(v) ? `${v[0]} to ${v[1]}` : v, name]} labelFormatter={(v: number) => `${v.toLocaleString('en-CA')} h`} />
+                <Legend verticalAlign="top" height={24} />
+                <Area dataKey="band" name="Bounds" type="stepAfter" stroke="none" fill="var(--brand)" fillOpacity={0.15} isAnimationActive={false} />
+                <Line dataKey="mcf" name="MCF" type="stepAfter" stroke="var(--brand)" strokeWidth={2} dot={false} isAnimationActive={false} />
+              </ComposedChart>
+            </ResponsiveContainer>
+          </div>
+        </section>
+        <section className="card">
+          <h3 style={{ marginTop: 0 }}>Rate of failures by age (ROCOF)</h3>
+          <div className="table-wrap">
+            <table>
+              <thead><tr><th>Age band (h)</th><th>Failures per 1,000 h</th><th>Units watched at the end of the band</th></tr></thead>
+              <tbody>{o.bands.map((b) => <tr key={b.from}><td>{Math.round(b.from).toLocaleString('en-CA')} to {Math.round(b.to).toLocaleString('en-CA')}</td><td>{(b.rate * 1000).toFixed(2)}</td><td>{b.atRisk}{b.atRisk < 3 ? ' (few)' : ''}</td></tr>)}</tbody>
+            </table>
+          </div>
+        </section>
+      </>
+    );
+  }
+  if (id === 'block_diagram') {
+    const g = (run.out as unknown as { groups: BlockResult[] }).groups;
+    const p2 = (x: number) => `${(x * 100).toFixed(2)}%`;
+    return (
+      <section className="card">
+        <h3 style={{ marginTop: 0 }}>Groups in series</h3>
+        <div className="row" style={{ gap: 6, flexWrap: 'wrap', alignItems: 'stretch', marginBottom: 12 }} aria-label="Block diagram">
+          {g.map((x, k) => (
+            <div key={x.name + k} className="row" style={{ gap: 6, alignItems: 'center' }}>
+              {k > 0 && <span aria-hidden className="muted">→</span>}
+              <div style={{ border: '1px solid var(--border)', borderRadius: 8, padding: '6px 10px', background: 'var(--surface)' }}>
+                <div style={{ fontWeight: 600 }}>{x.name}</div>
+                <div className="small muted">{x.n === 1 ? '1 item' : `${x.k} of ${x.n} needed`} · {p2(x.groupA)}</div>
+              </div>
+            </div>
+          ))}
+        </div>
+        <div className="table-wrap">
+          <table>
+            <thead><tr><th>Group</th><th>Items</th><th>Needed</th><th>One item</th><th>Group availability</th><th>Group, no failure in mission</th><th>System if this never failed</th></tr></thead>
+            <tbody>{g.map((x, k) => <tr key={x.name + k}><td>{x.name}</td><td>{x.n}</td><td>{x.k}</td><td>{p2(x.itemA)}</td><td>{p2(x.groupA)}</td><td>{p2(x.groupR)}</td><td>{p2(x.ifPerfect)}</td></tr>)}</tbody>
+          </table>
+        </div>
+      </section>
+    );
+  }
+  if (id === 'availability_sim') {
+    const h = (run.out as unknown as { histogram: Array<{ from: number; to: number; n: number }> }).histogram.map((b) => ({ bin: `${(b.from * 100).toFixed(1)}`, label: `${(b.from * 100).toFixed(2)}% to ${(b.to * 100).toFixed(2)}%`, n: b.n }));
+    return (
+      <section className="card">
+        <h3 style={{ marginTop: 0 }}>Availability across runs</h3>
+        <div style={{ height: 240 }}>
+          <ResponsiveContainer>
+            <BarChart data={h} margin={{ top: 8, right: 16, bottom: 20, left: -10 }}>
+              <CartesianGrid stroke="var(--border)" strokeDasharray="3 3" vertical={false} />
+              <XAxis dataKey="bin" tick={axis} label={{ value: 'Availability (%)', position: 'insideBottom', offset: -12, fill: 'var(--text-2)', fontSize: 12 }} />
+              <YAxis allowDecimals={false} tick={axis} />
+              <Tooltip formatter={(v: number) => [v, 'Runs']} labelFormatter={(_: string, p: Array<{ payload?: { label: string } }>) => p?.[0]?.payload?.label ?? ''} />
+              <Bar dataKey="n" name="Runs" fill="var(--brand)" radius={[4, 4, 0, 0]} isAnimationActive={false} />
+            </BarChart>
           </ResponsiveContainer>
         </div>
       </section>

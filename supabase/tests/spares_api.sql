@@ -1,5 +1,5 @@
--- Spares API test: the spares setting by the right roles only, and the spares
--- calculators accepted in saved analyses.
+-- Spares API test: the spares setting by the right roles only, and the spares and
+-- repairable system calculators accepted in saved analyses.
 \set QUIET on
 \o /dev/null
 begin;
@@ -33,10 +33,15 @@ select app_save_analysis('10000000-0000-0000-0000-000000000002', '{"id": "400000
   "title": "793F-500 kit", "inputs": {"form": {"parts": "A, 1, 30"}}, "result": {}}'::jsonb);
 select app_save_analysis('10000000-0000-0000-0000-000000000002', '{"id": "40000000-0000-0000-0000-000000000002", "calculator": "rebuild_pool", "version": 1,
   "title": "Engines", "inputs": {}, "result": {}}'::jsonb);
+-- The repairable system calculators (C-20 to C-24) are accepted too.
+select app_save_analysis('10000000-0000-0000-0000-000000000002', '{"id": "40000000-0000-0000-0000-000000000003", "calculator": "crow_amsaa", "version": 1,
+  "title": "Fleet growth", "inputs": {}, "result": {}}'::jsonb);
+select app_save_analysis('10000000-0000-0000-0000-000000000002', '{"id": "40000000-0000-0000-0000-000000000004", "calculator": "availability_sim", "version": 1,
+  "title": "Plant", "inputs": {}, "result": {}}'::jsonb);
 reset role;
 do $$ begin
   if (select (value->>'fillTarget')::numeric from site_settings where key = 'spares') <> 0.9 then raise exception 'setting not saved'; end if;
-  if (select count(*) from saved_analyses where calculator in ('kit_stocking', 'rebuild_pool')) <> 2 then raise exception 'analyses not saved'; end if;
+  if (select count(*) from saved_analyses where calculator in ('kit_stocking', 'rebuild_pool', 'crow_amsaa', 'availability_sim')) <> 4 then raise exception 'analyses not saved'; end if;
 end $$;
 rollback;
 \o
