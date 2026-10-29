@@ -68,7 +68,7 @@ function Shell() {
   let page;
   switch (path) {
     case 'tv':
-    case 'board': page = <Board tv={tv} />; break;
+    case 'board': page = <Board tv={tv} query={query} />; break;
     case 'lines': page = <ShopLines />; break;
     case 'plant': page = <Plant query={query} />; break;
     case 'units': page = <UnitList />; break;

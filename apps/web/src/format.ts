@@ -2,10 +2,11 @@ import { LOCATION_LABELS, STAGE_LABELS, currentLocation, currentStage, lineName,
 
 export function fmtHours(h: number | null | undefined): string {
   if (h === null || h === undefined || !Number.isFinite(h)) return '—';
-  if (h < 1) return `${Math.round(h * 60)} min`;
-  const whole = Math.floor(h);
-  const m = Math.round((h - whole) * 60);
+  if (Math.round(h * 60) < 60) return `${Math.round(h * 60)} min`;
   if (h >= 48) return `${(h / 24).toFixed(1)} d`;
+  const mins = Math.round(h * 60);
+  const whole = Math.floor(mins / 60);
+  const m = mins % 60;
   return m ? `${whole} h ${String(m).padStart(2, '0')}` : `${whole} h`;
 }
 
