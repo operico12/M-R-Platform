@@ -43,7 +43,8 @@ export type Action =
   | 'edit_assist'
   | 'ask_assist'
   | 'manage_imports'
-  | 'manage_users';
+  | 'manage_users'
+  | 'add_site';
 
 const MATRIX: Record<Action, Partial<Record<Role, Permission>>> = {
   view_status: { viewer: 'yes', technician: 'yes', supervisor: 'yes', reliability_engineer: 'yes', superintendent: 'yes', admin: 'yes' },
@@ -99,6 +100,8 @@ const MATRIX: Record<Action, Partial<Record<Role, Permission>>> = {
   // Field mapping, imports, data-quality rules: data owner only. In phase 1a the Admin role is the data owner (11.7).
   manage_imports: { admin: 'yes' },
   manage_users: { superintendent: 'approve', admin: 'yes' },
+  // docs/multi-site.md: the Admin of a site of the tenant adds another site to it.
+  add_site: { admin: 'yes' },
 };
 
 /** Plain-language names for the console's "what this person can do" list. */
@@ -141,6 +144,7 @@ export const ACTION_LABELS: Record<Action, string> = {
   ask_assist: 'Ask Claude a question about the weekly numbers',
   manage_imports: 'Field mapping, imports and data-quality rules',
   manage_users: 'Manage users and roles',
+  add_site: 'Add or retire a site of the tenant',
 };
 
 /** Everything a role may do, and how (yes, own area, propose, ...). Deny-by-default rows are left out. */
