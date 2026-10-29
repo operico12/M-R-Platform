@@ -42,7 +42,7 @@ Dispatchers and operators can be given the Technician role if they should raise 
 
 ## On the status board
 
-- **Standby** is its own status, in blue-grey, with its own count.
-- Each standby unit shows its reason and how long it has been on standby.
+- Standby is a sub-status of **Operational** (docs/status-board.md), shown in blue-grey with its own count.
+- Each standby unit's card shows its reason and how long it has been on standby.
 - Up time counts from the end of the last stop or standby.
 - Phase 1b will fill standby from the fleet management system. Flags made in the app stay as the record of what was entered by hand.

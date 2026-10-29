@@ -28,6 +28,11 @@ import {
   startStandby,
   voidStandby,
   type StandbyResult,
+  type WaitResult,
+  endWait,
+  openWaits,
+  startWait,
+  voidWait,
   type Asset,
   type CommandResult,
   type DownFlag,
@@ -40,6 +45,7 @@ import { flagText, liveSuggestion, suggestCodes, workOrderIndex, type Ranked, PL
 import { useMemo, useState } from 'react';
 import { fmtHours, fromLocalInput, hoursSince, locationLabel, siteTime, stageLabel, toLocalInput } from '../format';
 import { useApp } from '../store';
+import { FlagIcon } from './FlagIcon';
 
 
 export function FlagSheet({ asset, onClose }: { asset: Asset; onClose: () => void }) {
@@ -85,8 +91,8 @@ function StandbyPanel({ asset, onDone }: { asset: Asset; onDone: () => void }) {
   if (open) {
     return (
       <section className="standby-panel">
-        <div className="status standby">‖ STANDBY</div>
-        <p style={{ margin: '4px 0 8px' }}><strong>{label(open.reasonCode)}</strong> since {siteTime(open.start, tz, true)} · {fmtHours(hoursSince(open.start, app.now))}</p>
+        <div className="status standby"><FlagIcon code="standby" /> STANDBY</div>
+        <p style={{ margin: '4px 0 8px' }}><FlagIcon code={open.reasonCode} /> <strong>{label(open.reasonCode)}</strong> since {siteTime(open.start, tz, true)} · {fmtHours(hoursSince(open.start, app.now))}</p>
         {open.note && <p className="small muted">{open.note}</p>}
         {allowed && (
           <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
@@ -111,7 +117,7 @@ function StandbyPanel({ asset, onDone }: { asset: Asset; onDone: () => void }) {
       <summary>Available but not in use? Start standby</summary>
       <div className="chips" role="group" aria-label="Standby reason" style={{ margin: '8px 0' }}>
         {app.standbyReasons.map((x) => (
-          <button key={x.code} type="button" className="chip" aria-pressed={reason === x.code} onClick={() => setReason(x.code)}>{x.label}</button>
+          <button key={x.code} type="button" className="chip" aria-pressed={reason === x.code} onClick={() => setReason(x.code)}><FlagIcon code={x.code} />{x.label}</button>
         ))}
       </div>
       <label className="field"><span>Started (site time, leave blank for now)</span>
@@ -121,6 +127,74 @@ function StandbyPanel({ asset, onDone }: { asset: Asset; onDone: () => void }) {
       {errors}
       <p className="small muted">Standby does not change PA. It counts against utilisation (time) while the unit is available.</p>
     </details>
+  );
+}
+
+// ---------- wait tags (docs/wait-tags.md) ----------
+
+function WaitPanel({ asset }: { asset: Asset }) {
+  const app = useApp();
+  const tz = app.ds.site.timeZone;
+  const open = openWaits(asset.id, app.waits);
+  const allowed = can(app.actor, 'set_waits', asset.fleet);
+  const [kind, setKind] = useState('');
+  const [start, setStart] = useState('');
+  const [note, setNote] = useState('');
+  const [voiding, setVoiding] = useState<string | null>(null);
+  const [voidWhy, setVoidWhy] = useState('');
+  const [r, setR] = useState<WaitResult | null>(null);
+  const label = (code: string) => app.waitKinds.find((k) => k.code === code)?.label ?? code;
+  const go = (x: WaitResult) => { setR(x); if (x.ok) { setKind(''); setStart(''); setNote(''); setVoiding(null); setVoidWhy(''); } };
+  const free = app.waitKinds.filter((k) => !open.some((w) => w.kind === k.code));
+  const needNote = app.waitKinds.find((k) => k.code === kind)?.noteRequired;
+  return (
+    <section className="wait-panel" aria-label="Waiting for">
+      <div className="wp-head">
+        <strong>Waiting for</strong>
+        <span className="small muted">Several can run at once. Each is timed on its own; the stage above stays as it is.</span>
+      </div>
+      {open.length === 0 ? <p className="small muted" style={{ margin: '4px 0' }}>Nothing marked.</p> : (
+        <ul className="wp-list">
+          {open.map((w) => (
+            <li key={w.id}>
+              <span className="wp-what"><FlagIcon code={w.kind} /> <strong>{label(w.kind)}</strong>{w.note && <span className="small muted"> · {w.note}</span>}<span className="small muted"> · since {siteTime(w.start, tz, true)}</span></span>
+              <span className="wp-time">{fmtHours(hoursSince(w.start, app.now))}</span>
+              {allowed && (
+                <span className="wp-act">
+                  <button type="button" className="btn" onClick={() => go(app.runWaits(asset, (c) => endWait(c, w.id, new Date().toISOString())))}>Done</button>
+                  <button type="button" className="linkish small" onClick={() => setVoiding(voiding === w.id ? null : w.id)}>Wrong?</button>
+                </span>
+              )}
+              {voiding === w.id && (
+                <span className="row wp-void">
+                  <input value={voidWhy} onChange={(e) => setVoidWhy(e.target.value)} placeholder="Why it was wrong" aria-label="Why it was wrong" />
+                  <button type="button" className="btn danger" onClick={() => go(app.runWaits(asset, (c) => voidWait(c, w.id, voidWhy)))}>Void</button>
+                </span>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+      {allowed ? (
+        <details className="wp-add">
+          <summary>Add what it is waiting for</summary>
+          <div className="chips" role="group" aria-label="Waiting for" style={{ margin: '8px 0' }}>
+            {free.map((k) => <button key={k.code} type="button" className="chip" aria-pressed={kind === k.code} onClick={() => setKind(k.code)}><FlagIcon code={k.code} />{k.label}</button>)}
+          </div>
+          <div className="row" style={{ gap: 8, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+            <label className="field"><span>Started (site time, blank for now)</span>
+              <input type="datetime-local" value={start} onChange={(e) => setStart(e.target.value)} max={toLocalInput(app.now, tz)} />
+            </label>
+            <label className="field" style={{ flex: '1 1 180px' }}><span>Note{needNote ? '' : ' (optional)'}</span>
+              <input value={note} onChange={(e) => setNote(e.target.value)} maxLength={300} placeholder={needNote ? 'What is it waiting for?' : 'Part number, who, ...'} />
+            </label>
+            <button type="button" className="btn primary" disabled={!kind || (needNote && !note.trim())}
+              onClick={() => go(app.runWaits(asset, (c) => startWait(c, { kind, note, start: start ? fromLocalInput(start, tz) : new Date().toISOString() })))}>Start timing</button>
+          </div>
+        </details>
+      ) : <p className="small muted">Technicians and supervisors in this area can mark what the unit is waiting for.</p>}
+      {r && !r.ok && <div className="errors" role="alert">{r.errors.map((e) => <div key={e}>{e}</div>)}</div>}
+    </section>
   );
 }
 
@@ -193,7 +267,7 @@ function FlagDownForm({ asset, onDone }: { asset: Asset; onDone: () => void }) {
         <div className="chips">
           {(['unscheduled', 'scheduled'] as const).map((t) => (
             <button key={t} className="chip" aria-pressed={type === t} onClick={() => { setType(t); setReason(''); }}>
-              {t === 'unscheduled' ? '■ Unscheduled' : '▲ Scheduled'}
+              <FlagIcon code={t} />{t === 'unscheduled' ? 'Unscheduled' : 'Scheduled'}
             </button>
           ))}
         </div>
@@ -213,7 +287,7 @@ function FlagDownForm({ asset, onDone }: { asset: Asset; onDone: () => void }) {
         <span>Where is it?</span>
         <div className="chips">
           {(['field', 'shop_yard', 'shop_line'] as const).map((k) => (
-            <button key={k} className="chip" aria-pressed={locKind === k} onClick={() => setLocKind(k)}>{LOCATION_LABELS[k]}</button>
+            <button key={k} className="chip" aria-pressed={locKind === k} onClick={() => setLocKind(k)}><FlagIcon code={k} />{LOCATION_LABELS[k]}</button>
           ))}
         </div>
       </div>
@@ -398,7 +472,7 @@ function OpenFlagPanel({ asset, flag, onDone }: { asset: Asset; flag: DownFlag; 
                     setR(app.run(asset, (ctx) => changeStage(ctx, flag, { stage: s, reason })));
                   }}
                 >
-                  {STAGE_LABELS[s]}
+                  <FlagIcon code={s} />{STAGE_LABELS[s]}
                 </button>
               ))}
             </div>
@@ -407,6 +481,8 @@ function OpenFlagPanel({ asset, flag, onDone }: { asset: Asset; flag: DownFlag; 
           )}
         </div>
       </div>
+
+      {asset.assetClass !== 'fixed_plant' && <WaitPanel asset={asset} />}
 
       <Result r={r} />
 
@@ -441,7 +517,7 @@ function MovePanel({ asset, flag, setR, done }: { asset: Asset; flag: DownFlag; 
       <h3>Move unit</h3>
       <div className="chips" style={{ marginBottom: 12 }}>
         {(['field', 'towing', 'shop_yard', 'shop_line'] as const).map((k) => (
-          <button key={k} className="chip" aria-pressed={kind === k} onClick={() => setKind(k)}>{LOCATION_LABELS[k]}</button>
+          <button key={k} className="chip" aria-pressed={kind === k} onClick={() => setKind(k)}><FlagIcon code={k} />{LOCATION_LABELS[k]}</button>
         ))}
       </div>
       {kind === 'field' && (

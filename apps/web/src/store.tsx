@@ -7,6 +7,12 @@ import {
   DEFAULT_FLAG_RULES,
   DEFAULT_STANDBY_REASONS,
   endStandbyForDown,
+  settleWaits,
+  DEFAULT_WAIT_KINDS,
+  type WaitContext,
+  type WaitResult,
+  type WaitTag,
+  type WaitKind,
   type StandbyContext,
   type StandbyFlag,
   type StandbyReason,
@@ -61,7 +67,8 @@ import {
 } from '@mr/core';
 import { demoImprovements } from './data/demo-improve';
 import { demoStandby } from './data/demo-standby';
-import { addSiteRemote, loadAccessRequests, decideAccessRemote, loadApiKeys, createApiKeyRemote, revokeApiKeyRemote, loadSnapshot, retireSiteRemote, savePlantNodes, saveShutdown, sendRound, saveProcessDelays, saveRunSignals, type PlantData, saveRcmModes, saveJobPlanVersion, saveCmResponse, saveOilSamples, saveComponentRecord, saveViewRecord, saveAnalysisRecord, loadPhoto, saveForms, sendInspection, sendPhoto, SendError, saveAlertAnswer, saveDecision, saveRequests, saveFlags, saveStandby, saveRecords, saveSetting, saveTarget, saveTaskStatus, type Loaded } from './data/remote';
+import { demoWaits } from './data/demo-waits';
+import { addSiteRemote, loadAccessRequests, decideAccessRemote, loadApiKeys, createApiKeyRemote, revokeApiKeyRemote, loadSnapshot, retireSiteRemote, savePlantNodes, saveShutdown, sendRound, saveProcessDelays, saveRunSignals, type PlantData, saveRcmModes, saveJobPlanVersion, saveCmResponse, saveOilSamples, saveComponentRecord, saveViewRecord, saveAnalysisRecord, loadPhoto, saveForms, sendInspection, sendPhoto, SendError, saveAlertAnswer, saveDecision, saveRequests, saveFlags, saveStandby, saveWaits, saveRecords, saveSetting, saveTarget, saveTaskStatus, type Loaded } from './data/remote';
 import { demoProjects } from './data/demo-projects';
 import { demoForms, demoInspections } from './data/demo-inspections';
 import { DEMO_SITES, demoFleet, type SiteChoice } from './data/sites';
@@ -216,6 +223,10 @@ export interface AppState {
   standby: StandbyFlag[];
   standbyReasons: StandbyReason[];
   runStandby: (asset: Asset, cmd: (ctx: StandbyContext) => StandbyResult) => StandbyResult;
+  /** Wait tags on down units (docs/wait-tags.md). */
+  waits: WaitTag[];
+  waitKinds: WaitKind[];
+  runWaits: (asset: Asset, cmd: (ctx: WaitContext) => WaitResult) => WaitResult;
   lastSync: string;
   theme: 'light' | 'dark';
   setTheme: (t: 'light' | 'dark') => void;
@@ -277,10 +288,15 @@ export function AppProvider({ children, live, onReload, onSignOut, sites = DEMO_
     ['reliability_engineer', 'Rae Reliability', 'reliability_engineer', 'days'], ['superintendent', 'Sol Superintendent', 'superintendent', 'days'], ['admin', 'Ada Admin', 'data_owner', undefined],
   ].map(([role, name, jobTitle, crew]) => ({ id: `demo-${role}`, name: name!, email: `${role}@example.com`, role: role as Role, scope: ['*'], addedAt: '2026-01-01T00:00:00.000Z', jobTitle, ...(crew ? { crew } : {}) })));
   const [flags, setFlags] = useState<DownFlag[]>(ds.flags);
+  const flagsRef = useRef(flags);
+  flagsRef.current = flags;
   const [standby, setStandbyState] = useState<StandbyFlag[]>(() => live?.standby ?? demoStandby(ds));
   // A ref as well, so a down flag can end the open standby in the same step.
   const standbyRef = useRef(standby);
   const setStandby = useCallback((next: StandbyFlag[]) => { standbyRef.current = next; setStandbyState(next); }, []);
+  const [waits, setWaitsState] = useState<WaitTag[]>(() => live?.waits ?? demoWaits(ds));
+  const waitsRef = useRef(waits);
+  const setWaits = useCallback((next: WaitTag[]) => { waitsRef.current = next; setWaitsState(next); }, []);
   // The demo plant, made once: its structure, flags and shutdowns, and its route forms, rounds and stop inspections.
   const [demoPlant] = useState(() => (live ? null : generatePlant({ seed: 42, days: 120, end: Date.parse(ds.generatedAt), timeZone: ds.site.timeZone, tenantId: ds.tenantId, siteId: ds.site.id, people: { technician: 'demo-technician', supervisor: 'demo-supervisor' } })));
   const [plant, setPlant] = useState<PlantData>(() => live?.plant ?? demoPlant!);
@@ -374,10 +390,41 @@ export function AppProvider({ children, live, onReload, onSignOut, sites = DEMO_
             if (saved) saved.then(() => saveStandby(siteId, changed, e.audit)).catch(failed);
           }
         }
+        // Released or voided with no flag left open: its wait tags end or are voided (docs/wait-tags.md).
+        if (asset.assetClass !== 'fixed_plant') {
+          const byId = new Map(r.flags.map((f) => [f.id, f]));
+          const unitFlags = [...flagsRef.current.filter((f) => f.unitId === asset.id).map((f) => byId.get(f.id) ?? f),
+            ...r.flags.filter((f) => f.unitId === asset.id && !flagsRef.current.some((x) => x.id === f.id))];
+          const w = settleWaits(waitsRef.current, unitFlags, { now: nowIso, actor });
+          if (w.audit.length) {
+            const changed = w.waits.filter((x, i) => x !== waitsRef.current[i]);
+            setWaits(w.waits);
+            setAudit((prev) => [...w.audit, ...prev]);
+            if (saved) saved.then(() => saveWaits(siteId, changed, w.audit)).catch(failed);
+          }
+        }
       }
       return r;
     },
-    [flagCtx, keepFlags, live, failed, actor, setStandby],
+    [flagCtx, keepFlags, live, failed, actor, setStandby, setWaits],
+  );
+
+  const runWaits = useCallback(
+    (asset: Asset, cmd: (ctx: WaitContext) => WaitResult): WaitResult => {
+      const nowIso = new Date().toISOString();
+      const all = waitsRef.current;
+      const mine = all.filter((x) => x.unitId === asset.id);
+      const r = cmd({ now: nowIso, actor, asset, unitWaits: mine, unitFlags: flagsRef.current.filter((f) => f.unitId === asset.id), kinds: DEFAULT_WAIT_KINDS, newId });
+      if (r.ok) {
+        const changed = r.waits.filter((x) => !mine.includes(x));
+        setWaits([...all.filter((x) => x.unitId !== asset.id), ...r.waits]);
+        setAudit((prev) => [...r.audit, ...prev]);
+        setNow(nowIso);
+        if (live) saveWaits(siteId, changed, r.audit).catch(failed);
+      }
+      return r;
+    },
+    [actor, live, failed, setWaits],
   );
 
   const runStandby = useCallback(
@@ -1202,7 +1249,7 @@ export function AppProvider({ children, live, onReload, onSignOut, sites = DEMO_
     return r;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [actor, ds, live, apiKeys, loadApiKeysCmd]);
-  const value: AppState = { accessSettings, runAccessSettings, accessRequests, loadAccessRequests: loadAccessRequestsCmd, decideAccess: decideAccessCmd, apiKeys, loadApiKeys: loadApiKeysCmd, createApiKey: createApiKeyCmd, revokeApiKey: revokeApiKeyCmd, importSource, importMapping, runImportSource, sites, switchSite: (id: string) => onSwitchSite?.(id), snapshot, addSite: addSiteCmd, retireSite: retireSiteCmd, ds, forms, runForms, inspections, drafts, saveDraft, discardDraft, runInspection, outbox, sendOutbox: () => void sendOutbox(true), dropOutboxItem, photo, workSettings, runWorkSettings, alertSettings, runAlertSettings, alertAnswers, runAlertAnswer, analyses, runAnalysis, views, runView, components, componentEvents, lifeTargets, runComponents, oilSamples, cmResponses, conditionSettings, runSamples, runResponse, runConditionSettings, rcmModes, jobPlanVersions, rcmSettings, runRcm, runJobPlan, runRcmSettings, sparesSettings, runSparesSettings, assistSettings, runAssistSettings, suggester, plant, plantSettings, runPlantSettings, runDelay, runClassify, addSignals, runNode, runShutdown, runShutdownFlow, rounds, roundDrafts, beginRound, saveRoundDraft, discardRound, runRound, ruleAlerts: ruleAlertList, requests, runRequest, decide, actions: improve.actions, rcas: improve.rcas, projects: improve.projects, runImprove, people, userName, targets, targetOf, targetList, users, codes, runConsole, mode: live ? 'live' : 'demo', syncError, clearSyncError: () => setSyncError(null), signOut: onSignOut, importRuns, applyImport, newId, flags, standby, standbyReasons: DEFAULT_STANDBY_REASONS, runStandby, audit, rules, now, actor, setRole, run, lastSync: ds.generatedAt, theme, setTheme };
+  const value: AppState = { accessSettings, runAccessSettings, accessRequests, loadAccessRequests: loadAccessRequestsCmd, decideAccess: decideAccessCmd, apiKeys, loadApiKeys: loadApiKeysCmd, createApiKey: createApiKeyCmd, revokeApiKey: revokeApiKeyCmd, importSource, importMapping, runImportSource, sites, switchSite: (id: string) => onSwitchSite?.(id), snapshot, addSite: addSiteCmd, retireSite: retireSiteCmd, ds, forms, runForms, inspections, drafts, saveDraft, discardDraft, runInspection, outbox, sendOutbox: () => void sendOutbox(true), dropOutboxItem, photo, workSettings, runWorkSettings, alertSettings, runAlertSettings, alertAnswers, runAlertAnswer, analyses, runAnalysis, views, runView, components, componentEvents, lifeTargets, runComponents, oilSamples, cmResponses, conditionSettings, runSamples, runResponse, runConditionSettings, rcmModes, jobPlanVersions, rcmSettings, runRcm, runJobPlan, runRcmSettings, sparesSettings, runSparesSettings, assistSettings, runAssistSettings, suggester, plant, plantSettings, runPlantSettings, runDelay, runClassify, addSignals, runNode, runShutdown, runShutdownFlow, rounds, roundDrafts, beginRound, saveRoundDraft, discardRound, runRound, ruleAlerts: ruleAlertList, requests, runRequest, decide, actions: improve.actions, rcas: improve.rcas, projects: improve.projects, runImprove, people, userName, targets, targetOf, targetList, users, codes, runConsole, mode: live ? 'live' : 'demo', syncError, clearSyncError: () => setSyncError(null), signOut: onSignOut, importRuns, applyImport, newId, flags, standby, standbyReasons: DEFAULT_STANDBY_REASONS, runStandby, waits, waitKinds: DEFAULT_WAIT_KINDS, runWaits, audit, rules, now, actor, setRole, run, lastSync: ds.generatedAt, theme, setTheme };
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
 

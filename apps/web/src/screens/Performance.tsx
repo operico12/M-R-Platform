@@ -2,7 +2,7 @@
 // MTBF, MTTR and mean downtime, trend against target, downtime by system,
 // where downtime goes by stage, bad actors. Weekly pack export.
 
-import { OPEN_A7_SETTINGS, rag as coreRag, STAGE_LABELS, computeKpis, downtimePareto, recentWeeks, standbyBreakdown, type KpiResult, type Stage } from '@mr/core';
+import { OPEN_A7_SETTINGS, rag as coreRag, STAGE_LABELS, computeKpis, downtimePareto, recentWeeks, standbyBreakdown, waitBreakdown, type KpiResult, type Stage } from '@mr/core';
 import { useMemo } from 'react';
 import { Bar, CartesianGrid, ComposedChart, Legend, Line, LineChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { fmtHours, fmtNum, fmtPct, siteTime } from '../format';
@@ -47,6 +47,9 @@ export function Performance() {
     [app.ds, app.standby, app.flags, app.now, p28.from, p28.to],
   );
   const sbRows = Object.entries(sb28.byReason).sort((x, y) => y[1] - x[1]).map(([code, h]) => ({ reason: app.standbyReasons.find((r) => r.code === code)?.label ?? code, hours: Math.round(h) }));
+  // KPI-046 (docs/wait-tags.md): each kind counts in full; down time waiting counts overlaps once.
+  const wt28 = useMemo(() => waitBreakdown(app.waits, p28, app.now), [app.waits, app.now, p28.from, p28.to]);
+  const wtRows = Object.entries(wt28.byKind).sort((x, y) => y[1] - x[1]).map(([code, h]) => ({ kind: app.waitKinds.find((k) => k.code === code)?.label ?? code, hours: Math.round(h) }));
   const unsettled = (key: string) => OPEN_A7_SETTINGS.find((s) => s.key === key);
 
   const trend = series.map(({ w, k }) => ({ week: w.label, PA: pct(k.pa), Utilisation: pct(k.utilisation), 'Utilisation (time)': pct(k.utilisationTime), MTBF: k.mtbf ? Math.round(k.mtbf) : null }));
@@ -143,6 +146,27 @@ export function Performance() {
             </div>
           )}
           <p className="small muted">Operating delays {fmtHours(sb28.byKind.operating_delay)}, standby {fmtHours(sb28.byKind.standby)}. Standby does not change PA.</p>
+        </section>
+
+        <section className="card">
+          <h3>Waiting for, last 4 weeks</h3>
+          {wtRows.length === 0 ? <p className="muted small">No wait tags in the last 4 weeks. Mark what a down unit is waiting for from its card on the status board.</p> : (
+            <div style={{ height: 240 }}>
+              <ResponsiveContainer>
+                <ComposedChart layout="vertical" data={wtRows} margin={{ top: 0, right: 16, bottom: 0, left: 40 }}>
+                  <CartesianGrid stroke="var(--border)" strokeDasharray="3 3" />
+                  <XAxis type="number" unit=" h" tick={{ fontSize: 12, fill: 'var(--text-2)' }} />
+                  <YAxis type="category" dataKey="kind" width={150} tick={{ fontSize: 12, fill: 'var(--text-2)' }} />
+                  <Tooltip />
+                  <Bar dataKey="hours" fill="var(--sched)" />
+                </ComposedChart>
+              </ResponsiveContainer>
+            </div>
+          )}
+          <p className="small muted">
+            Down time waiting {fmtHours(wt28.waiting)}{k28.downHours > 0 ? ` (${Math.round((wt28.waiting / k28.downHours) * 100)}% of down time)` : ''}.
+            Waits can overlap, so the kinds can add up to more than that. They never change PA.
+          </p>
         </section>
 
         <section className="card">
