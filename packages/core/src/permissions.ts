@@ -35,11 +35,11 @@ export type Action =
   | 'edit_life_targets'
   | 'record_condition'
   | 'edit_condition_settings'
+  | 'edit_plant_settings'
   | 'edit_rcm'
   | 'issue_job_plans'
   | 'edit_spares'
   | 'edit_assist'
-  | 'edit_plant_settings'
   | 'manage_imports'
   | 'manage_users';
 
@@ -81,6 +81,8 @@ const MATRIX: Record<Action, Partial<Record<Role, Permission>>> = {
   // docs/condition-monitoring.md: recording mirrors component events; settings mirror alert rules.
   record_condition: { supervisor: 'yes', reliability_engineer: 'yes', superintendent: 'yes' },
   edit_condition_settings: { reliability_engineer: 'yes', superintendent: 'yes', admin: 'yes' },
+  // docs/fixed-plant.md: plan 11.2 has no plant settings row; these follow the alert and condition settings.
+  edit_plant_settings: { reliability_engineer: 'yes', superintendent: 'yes', admin: 'yes' },
   // docs/rcm.md: plan 11.2 has no RCM row; these follow "Lead root cause analyses".
   edit_rcm: { reliability_engineer: 'yes', superintendent: 'yes' },
   issue_job_plans: { reliability_engineer: 'yes', superintendent: 'yes' },
@@ -88,8 +90,6 @@ const MATRIX: Record<Action, Partial<Record<Role, Permission>>> = {
   edit_spares: { reliability_engineer: 'yes', superintendent: 'yes' },
   // docs/ai-assist.md: plan 11.2 has no assist row; settings follow the RCM and spares settings.
   edit_assist: { reliability_engineer: 'yes', superintendent: 'yes' },
-  // docs/fixed-plant.md: plan 11.2 has no plant settings row; these follow the alert and condition settings.
-  edit_plant_settings: { reliability_engineer: 'yes', superintendent: 'yes', admin: 'yes' },
   // Field mapping, imports, data-quality rules: data owner only. In phase 1a the Admin role is the data owner (11.7).
   manage_imports: { admin: 'yes' },
   manage_users: { superintendent: 'approve', admin: 'yes' },
@@ -126,11 +126,11 @@ export const ACTION_LABELS: Record<Action, string> = {
   edit_life_targets: 'Set component target life',
   record_condition: 'Enter oil results and respond to them',
   edit_condition_settings: 'Change condition monitoring settings',
+  edit_plant_settings: 'Change plant stop detection settings and process delay codes',
   edit_rcm: 'Edit the RCM failure mode library',
   issue_job_plans: 'Issue PM job plan revisions',
   edit_spares: 'Change spares sizing settings',
   edit_assist: 'Change assist settings and switch code suggestions on',
-  edit_plant_settings: 'Change plant stop detection settings and process delay codes',
   manage_imports: 'Field mapping, imports and data-quality rules',
   manage_users: 'Manage users and roles',
 };
