@@ -1,4 +1,4 @@
-import { openAlerts, type Role } from '@mr/core';
+import { openAlerts, type Role, type SessionCheck } from '@mr/core';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { loadSite, mySites, remote, type Loaded, type RemoteSite } from './data/remote';
 import { Board } from './screens/Board';
@@ -26,6 +26,7 @@ import { Assist } from './screens/Assist';
 import { Plant } from './screens/Plant';
 import { Sites } from './screens/Sites';
 import { ApiAccess } from './screens/ApiAccess';
+import { Account, CodeCheck, MfaSetup, RequestAccess, mfaState, signedInAt, useSessionLimit } from './screens/Account';
 import { DEMO_SITES, rememberSite, rememberedSite, type SiteChoice } from './data/sites';
 import { switcherOrder } from '@mr/core';
 import { AppProvider, useApp } from './store';
@@ -66,6 +67,7 @@ const NAV: Array<[string, string]> = [
   ['#/console', 'Console'],
   ['#/sites', 'Sites'],
   ['#/api', 'API access'],
+  ['#/account', 'Account'],
 ];
 
 const ROLES: Array<[Role, string]> = [
@@ -121,6 +123,7 @@ function Shell() {
     case 'console': page = <Console tab={arg ?? 'users'} />; break;
     case 'sites': page = <Sites />; break;
     case 'api': page = <ApiAccess />; break;
+    case 'account': page = <Account />; break;
     default: page = <Board tv={false} />;
   }
 
@@ -210,6 +213,8 @@ type LiveState =
   | { step: 'checking' }
   | { step: 'signed_out' }
   | { step: 'no_access'; email: string }
+  | { step: 'mfa'; factorId: string }
+  | { step: 'mfa_setup'; siteName: string }
   | { step: 'loading' }
   | { step: 'ready'; data: Loaded; n: number }
   | { step: 'error'; message: string };
@@ -222,12 +227,20 @@ function Live() {
   // Who the loaded site belongs to. Supabase reports "signed in" again each time the tab comes back
   // into view; that must not reload the site (and lose what is on screen) for the same person.
   const loadedFor = useRef<string | null>(null);
+  // "Continue as Viewer" for this sign-in when a site asks Admins for two-step and none is set up.
+  const viewerOk = useRef(false);
+  const [who, setWho] = useState<{ uid: string; signedIn?: string } | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
       const { data } = await remote!.auth.getSession();
       if (!data.session) { loadedFor.current = null; return setSt({ step: 'signed_out' }); }
       loadedFor.current = data.session.user.id;
+      setWho({ uid: data.session.user.id, signedIn: signedInAt(data.session.access_token) ?? data.session.user.last_sign_in_at ?? undefined });
+      // Anyone who has two-step on passes the code check before anything loads.
+      const mfa = await mfaState().catch(() => ({ enrolled: false, factorId: undefined, current: 'aal1', next: 'aal1' }));
+      if (mfa.enrolled && mfa.current !== 'aal2' && mfa.factorId) return setSt({ step: 'mfa', factorId: mfa.factorId });
       setSt({ step: 'loading' });
       const list = await mySites();
       setSites(list);
@@ -238,6 +251,7 @@ function Live() {
       if (!chosen) return setSt({ step: 'no_access', email: data.session.user.email ?? '' });
       rememberSite(uid, chosen.site_id);
       setSite(chosen);
+      if (chosen.mfa_required && !viewerOk.current) return setSt({ step: 'mfa_setup', siteName: chosen.site_name });
       const loaded = await loadSite(chosen.site_id);
       setSt((prev) => ({ step: 'ready', data: loaded, n: prev.step === 'ready' ? prev.n + 1 : 0 }));
     } catch (e) {
@@ -254,6 +268,11 @@ function Live() {
   }, [load]);
 
   const signOut = () => void remote!.auth.signOut();
+  const expired = useCallback((why: SessionCheck) => {
+    setNotice(why === 'idle' ? 'You were signed out because this device was not used for a while. Sign in again.' : 'Your sign-in was older than the site allows. Sign in again.');
+    void remote!.auth.signOut();
+  }, []);
+  useSessionLimit(st.step === 'ready' ? who?.uid : undefined, who?.signedIn, st.step === 'ready' ? st.data.accessSettings : undefined, expired);
 
   if (st.step === 'ready') {
     return (
@@ -268,12 +287,30 @@ function Live() {
       <div className="card" style={{ maxWidth: 420, margin: '10vh auto', padding: 24 }}>
         <h1 style={{ fontSize: 22, marginTop: 0 }}>M&amp;R Platform</h1>
         {st.step === 'checking' || st.step === 'loading' ? <p className="muted">{st.step === 'loading' ? `Loading ${site?.site_name ?? 'your site'}…` : 'Checking sign-in…'}</p> : null}
+        {st.step === 'signed_out' && notice && <p className="small" role="status">{notice}</p>}
         {st.step === 'signed_out' && <SignIn />}
         {st.step === 'no_access' && (
           <>
-            <p>You are signed in as <strong>{st.email}</strong>, but you have not been given access to a site yet.</p>
-            <p className="small muted">Ask your site Admin to add this email address in Console, Users. Then sign in again.</p>
+            <p>You are signed in as <strong>{st.email}</strong>, but you do not have access to a site yet.</p>
+            <RequestAccess onApproved={() => void load()} />
+            <p className="small muted">Or ask your site Admin to invite this email address in Console, Users.</p>
             <button className="btn" onClick={signOut}>Sign out</button>
+          </>
+        )}
+        {st.step === 'mfa' && (
+          <>
+            <p>Two-step sign-in is on for your account.</p>
+            <CodeCheck factorId={st.factorId} onDone={() => void remote!.auth.refreshSession().then(() => load())} onSkip={signOut} skipLabel="Sign out" />
+          </>
+        )}
+        {st.step === 'mfa_setup' && (
+          <>
+            <p>{st.siteName} asks Admins to use two-step sign-in. Set up an authenticator app to act as Admin, or continue as a Viewer for now.</p>
+            <MfaSetup onDone={() => void remote!.auth.refreshSession().then(() => load())} />
+            <div className="row" style={{ gap: 8, marginTop: 8 }}>
+              <button className="btn" onClick={() => { viewerOk.current = true; void load(); }}>Continue as Viewer</button>
+              <button className="btn" onClick={signOut}>Sign out</button>
+            </div>
           </>
         )}
         {st.step === 'error' && (

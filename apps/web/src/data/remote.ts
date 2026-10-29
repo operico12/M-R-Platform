@@ -3,7 +3,7 @@
 // The anon key is public by design: row-level security decides what each
 // signed-in person can read and write. Never put the service_role key here.
 
-import { DEFAULT_FLAG_RULES, DEFAULT_WORK_SETTINGS, withAlertDefaults, type ApprovalRequest, type AuditRecord, type AlertAnswer, type AlertSettings, emptyFishbone, type WorkSettings, type ImprovementAction, type Project, type Rca, type AuditEntry, type Dataset, type DownFlag, type FlagRulesConfig, type ReasonCode, type Role, type ShiftCalendar, type SiteUser, type SmuReading, type Target, type WorkOrder, type Asset, type Inspection, type InspectionForm, type SavedAnalysis, type SavedView, type Component, type ComponentEvent, type LifeTarget, type OilSample, type CmResponse, type ConditionSettings, withConditionDefaults, type RcmMode, type JobPlanVersion, type RcmSettings, withRcmDefaults, type SparesSettings, withSparesDefaults, type AssistSettings, withAssistDefaults, type PlantNode, type ProcessDelay, type RunSignal, type PlantSettings, withPlantDefaults, type Shutdown, type ScopeItem, type Round, type SiteSnapshot, type SiteRecord, twelveHourCalendar, type ImportSource, withImportDefaults, type ApiKeyRecord, type ApiKeyInput, type ApiScope } from '@mr/core';
+import { DEFAULT_FLAG_RULES, DEFAULT_WORK_SETTINGS, withAlertDefaults, type ApprovalRequest, type AuditRecord, type AlertAnswer, type AlertSettings, emptyFishbone, type WorkSettings, type ImprovementAction, type Project, type Rca, type AuditEntry, type Dataset, type DownFlag, type FlagRulesConfig, type ReasonCode, type Role, type ShiftCalendar, type SiteUser, type SmuReading, type Target, type WorkOrder, type Asset, type Inspection, type InspectionForm, type SavedAnalysis, type SavedView, type Component, type ComponentEvent, type LifeTarget, type OilSample, type CmResponse, type ConditionSettings, withConditionDefaults, type RcmMode, type JobPlanVersion, type RcmSettings, withRcmDefaults, type SparesSettings, withSparesDefaults, type AssistSettings, withAssistDefaults, type PlantNode, type ProcessDelay, type RunSignal, type PlantSettings, withPlantDefaults, type Shutdown, type ScopeItem, type Round, type SiteSnapshot, type SiteRecord, twelveHourCalendar, type ImportSource, withImportDefaults, type ApiKeyRecord, type ApiKeyInput, type ApiScope, type AccessSettings, withAccessDefaults, type AccessRequest } from '@mr/core';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 
 const url = import.meta.env.VITE_SUPABASE_URL as string | undefined;
@@ -18,6 +18,8 @@ export interface RemoteSite {
   role: Role;
   /** From the multi-site migration; older databases leave it out. */
   tenant_id?: string;
+  /** The site wants the authenticator code check before this person acts as Admin (docs/access.md). */
+  mfa_required?: boolean;
 }
 
 export interface Loaded {
@@ -50,6 +52,7 @@ export interface Loaded {
   plantSettings: PlantSettings;
   /** Which ERP the site's files come from (docs/field-mapping.md). */
   importSource: ImportSource;
+  accessSettings: AccessSettings;
 }
 
 export interface PlantData {
@@ -105,6 +108,39 @@ export async function addSiteRemote(fromSite: string, s: SiteRecord): Promise<vo
 
 export async function retireSiteRemote(siteId: string, reason: string): Promise<void> {
   must(await remote!.rpc('app_retire_site', { p_site: siteId, p_reason: reason }));
+}
+
+// ---------- access (docs/access.md) ----------
+
+export interface MyRequest { id: string; site_id: string; site_name: string; status: AccessRequest['status']; role: Role | null; reason: string | null; created_at: string }
+
+/** Sites this signed-in person may ask for an account (their email domain is listed there). */
+export async function requestSites(): Promise<Array<{ site_id: string; site_name: string }>> {
+  return must(await remote!.rpc('app_request_sites')) as Array<{ site_id: string; site_name: string }>;
+}
+export async function myRequests(): Promise<MyRequest[]> {
+  return must(await remote!.rpc('app_my_access_requests')) as MyRequest[];
+}
+export async function requestAccess(siteId: string, name: string, note: string): Promise<void> {
+  must(await remote!.rpc('app_request_access', { p_site: siteId, p_name: name.trim(), p_note: note.trim() || null }));
+}
+export async function withdrawRequest(id: string): Promise<void> {
+  must(await remote!.rpc('app_withdraw_access', { p_id: id }));
+}
+/** The site's requests. Row-level security shows them to the site's Admin only. */
+export async function loadAccessRequests(siteId: string): Promise<AccessRequest[]> {
+  const rows = must(await remote!.from('access_requests').select('*').eq('site_id', siteId).order('created_at', { ascending: false }).limit(200)) as Array<{
+    id: string; site_id: string; user_id: string; email: string; name: string; note: string | null; status: AccessRequest['status']; role: Role | null;
+    decided_by: string | null; decided_at: string | null; reason: string | null; created_at: string;
+  }>;
+  const t = (x: string | null) => (x ? new Date(x).toISOString() : undefined);
+  return rows.map((r) => ({
+    id: r.id, siteId: r.site_id, userId: r.user_id, email: r.email, name: r.name, note: r.note ?? undefined, status: r.status, createdAt: t(r.created_at)!,
+    role: r.role ?? undefined, decidedBy: r.decided_by ?? undefined, decidedAt: t(r.decided_at), reason: r.reason ?? undefined,
+  }));
+}
+export async function decideAccessRemote(id: string, approve: boolean, role: Role | undefined, reason: string): Promise<void> {
+  must(await remote!.rpc('app_decide_access', { p_id: id, p_approve: approve, p_role: approve ? role : null, p_reason: reason.trim() || null }));
 }
 
 // ---------- public API keys (docs/public-api.md) ----------
@@ -166,7 +202,7 @@ export async function loadSite(siteId: string): Promise<Loaded> {
     remote!.rpc('app_load_shutdowns', { p_site: siteId }),
   ]);
   const insp = await loadInspections(siteId);
-  const work = iso(must(wk)) as { plans: Array<Partial<WorkOrder> & { id: string }>; settings: { work?: Partial<WorkSettings>; alerts?: Partial<AlertSettings>; condition?: Partial<ConditionSettings>; rcm?: Partial<RcmSettings>; spares?: Partial<SparesSettings>; assist?: Partial<AssistSettings>; plant?: Partial<PlantSettings>; imports?: Partial<ImportSource> } };
+  const work = iso(must(wk)) as { plans: Array<Partial<WorkOrder> & { id: string }>; settings: { work?: Partial<WorkSettings>; alerts?: Partial<AlertSettings>; condition?: Partial<ConditionSettings>; rcm?: Partial<RcmSettings>; spares?: Partial<SparesSettings>; assist?: Partial<AssistSettings>; plant?: Partial<PlantSettings>; imports?: Partial<ImportSource>; access?: Partial<AccessSettings> } };
   const plans = new Map(work.plans.map((x) => [x.id, x]));
   const num = (v: unknown) => (v === undefined || v === null ? undefined : Number(v));
   const projects = (iso(must(proj)) as Project[]).map((p) => ({
@@ -241,6 +277,7 @@ export async function loadSite(siteId: string): Promise<Loaded> {
     },
     plantSettings: withPlantDefaults(work.settings.plant),
     importSource: withImportDefaults(work.settings.imports),
+    accessSettings: withAccessDefaults(work.settings.access),
     alertAnswers: iso(must(ans)) as AlertAnswer[],
     requests: approvals.requests,
     forms: insp.forms,
@@ -276,7 +313,7 @@ export async function saveTaskStatus(siteId: string, projectId: string, taskId: 
   must(await remote!.rpc('app_set_task_status', { p_site: siteId, p_project: projectId, p_task: taskId, p_status: status, p_note: note ?? null }));
 }
 
-export async function saveSetting(siteId: string, key: 'work' | 'alerts' | 'condition' | 'rcm' | 'spares' | 'assist' | 'plant' | 'imports', value: object, reason: string, audit: AuditEntry[]): Promise<void> {
+export async function saveSetting(siteId: string, key: 'work' | 'alerts' | 'condition' | 'rcm' | 'spares' | 'assist' | 'plant' | 'imports' | 'access', value: object, reason: string, audit: AuditEntry[]): Promise<void> {
   must(await remote!.rpc('app_save_setting', { p_site: siteId, p_key: key, p_value: value, p_reason: reason }));
   if (audit.length) must(await remote!.rpc('app_log', { p_site: siteId, p_entries: audit }));
 }
