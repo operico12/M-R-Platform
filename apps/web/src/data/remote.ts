@@ -3,7 +3,7 @@
 // The anon key is public by design: row-level security decides what each
 // signed-in person can read and write. Never put the service_role key here.
 
-import { DEFAULT_FLAG_RULES, DEFAULT_WORK_SETTINGS, withAlertDefaults, type ApprovalRequest, type AuditRecord, type AlertAnswer, type AlertSettings, emptyFishbone, type WorkSettings, type ImprovementAction, type Project, type Rca, type AuditEntry, type Dataset, type DownFlag, type FlagRulesConfig, type ReasonCode, type Role, type ShiftCalendar, type SiteUser, type SmuReading, type Target, type WorkOrder, type Asset, type Inspection, type InspectionForm, type SavedAnalysis, type SavedView, type Component, type ComponentEvent, type LifeTarget, type OilSample, type CmResponse, type ConditionSettings, withConditionDefaults, type RcmMode, type JobPlanVersion, type RcmSettings, withRcmDefaults } from '@mr/core';
+import { DEFAULT_FLAG_RULES, DEFAULT_WORK_SETTINGS, withAlertDefaults, type ApprovalRequest, type AuditRecord, type AlertAnswer, type AlertSettings, emptyFishbone, type WorkSettings, type ImprovementAction, type Project, type Rca, type AuditEntry, type Dataset, type DownFlag, type FlagRulesConfig, type ReasonCode, type Role, type ShiftCalendar, type SiteUser, type SmuReading, type Target, type WorkOrder, type Asset, type Inspection, type InspectionForm, type SavedAnalysis, type SavedView, type Component, type ComponentEvent, type LifeTarget, type OilSample, type CmResponse, type ConditionSettings, withConditionDefaults, type RcmMode, type JobPlanVersion, type RcmSettings, withRcmDefaults, type SparesSettings, withSparesDefaults } from '@mr/core';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 
 const url = import.meta.env.VITE_SUPABASE_URL as string | undefined;
@@ -39,6 +39,7 @@ export interface Loaded {
   views: SavedView[];
   conditionSettings: ConditionSettings;
   rcmSettings: RcmSettings;
+  sparesSettings: SparesSettings;
 }
 
 /** Postgres returns "+00:00" offsets; the app compares ISO strings, so make them all "Z". */
@@ -88,7 +89,7 @@ export async function loadSite(siteId: string): Promise<Loaded> {
     remote!.rpc('app_load_rcm', { p_site: siteId }),
   ]);
   const insp = await loadInspections(siteId);
-  const work = iso(must(wk)) as { plans: Array<Partial<WorkOrder> & { id: string }>; settings: { work?: Partial<WorkSettings>; alerts?: Partial<AlertSettings>; condition?: Partial<ConditionSettings>; rcm?: Partial<RcmSettings> } };
+  const work = iso(must(wk)) as { plans: Array<Partial<WorkOrder> & { id: string }>; settings: { work?: Partial<WorkSettings>; alerts?: Partial<AlertSettings>; condition?: Partial<ConditionSettings>; rcm?: Partial<RcmSettings>; spares?: Partial<SparesSettings> } };
   const plans = new Map(work.plans.map((x) => [x.id, x]));
   const num = (v: unknown) => (v === undefined || v === null ? undefined : Number(v));
   const projects = (iso(must(proj)) as Project[]).map((p) => ({
@@ -146,6 +147,7 @@ export async function loadSite(siteId: string): Promise<Loaded> {
     alertSettings: withAlertDefaults(work.settings.alerts),
     conditionSettings: withConditionDefaults(work.settings.condition),
     rcmSettings: withRcmDefaults(work.settings.rcm),
+    sparesSettings: withSparesDefaults(work.settings.spares),
     alertAnswers: iso(must(ans)) as AlertAnswer[],
     requests: approvals.requests,
     forms: insp.forms,
@@ -180,7 +182,7 @@ export async function saveTaskStatus(siteId: string, projectId: string, taskId: 
   must(await remote!.rpc('app_set_task_status', { p_site: siteId, p_project: projectId, p_task: taskId, p_status: status, p_note: note ?? null }));
 }
 
-export async function saveSetting(siteId: string, key: 'work' | 'alerts' | 'condition' | 'rcm', value: object, reason: string, audit: AuditEntry[]): Promise<void> {
+export async function saveSetting(siteId: string, key: 'work' | 'alerts' | 'condition' | 'rcm' | 'spares', value: object, reason: string, audit: AuditEntry[]): Promise<void> {
   must(await remote!.rpc('app_save_setting', { p_site: siteId, p_key: key, p_value: value, p_reason: reason }));
   if (audit.length) must(await remote!.rpc('app_log', { p_site: siteId, p_entries: audit }));
 }

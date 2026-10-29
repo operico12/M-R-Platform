@@ -48,9 +48,14 @@ line says otherwise.
 | Maintenance strategy (phase 3) | Optimal replacement interval | Weibull fit from C-05 |
 | Maintenance strategy (phase 3) | Failure-finding interval | No |
 | Maintenance strategy (phase 3) | Strategy cost comparison | Weibull fit from C-05 |
+| Spares (phase 3) | Spares for a fill rate (Poisson) | PM part uses a year from RCM |
+| Spares (phase 3) | Rebuild pool | Change-outs and repair cycle from the component history |
+| Spares (phase 3) | Kit stocking | PM kits from RCM job plans |
+| Spares (phase 3) | Lifetime buy | No |
 
-Pareto and jack-knife are already on the downtime analysis page. The RCM interval calculators C-12 to C-15 came with RCM (docs/rcm.md). Later phases add Crow-AMSAA,
-spares, simulation and the rest of 7.2.
+Pareto and jack-knife are already on the downtime analysis page. The RCM interval calculators C-12 to C-15 came with RCM (docs/rcm.md), and the spares
+calculators C-16 to C-19 with spares sizing (docs/spares.md). Later parts add Crow-AMSAA, simulation
+and the rest of 7.2.
 
 ---
 
@@ -281,3 +286,98 @@ spares, simulation and the rest of 7.2.
   - Time-based costs $11.06 an hour, replacing at 5,542 h.
   - Condition-based costs $6.82 an hour, so it is the cheapest.
 - **Reference:** arithmetic, with C-13 for the time-based figure.
+
+## Spares calculators (phase 3)
+
+C-16 to C-18 use one model, set out in `docs/spares.md`: one-for-one reorder, Poisson demand, and
+N = the number on order or at rebuild, Poisson with mean m = demand a year × lead time in days ÷ 365.
+
+- Fill rate F(s) = P(N ≤ s − 1), the chance a part is on the shelf when one is needed.
+- No stock-out in a lead time = P(N ≤ s).
+- Expected backorders EBO(s) = Σ (n − s) P(N = n) for n > s.
+
+The Poisson probabilities are summed in log form, so they work for large means. Means above 100,000
+are refused.
+
+## C-16 Spares for a fill rate (Poisson)
+
+- **Formula:** the smallest stock s with F(s) ≥ the target fill rate.
+- **Inputs:** uses a year, lead time in days, target fill rate, and the unit cost (optional, for the
+  stock value).
+- **Assumptions:** the model above. Keep s on the shelf and on order, and order one each time one is
+  used.
+- **Worked example:**
+  - 6 a year with a 60 day lead time: m = 0.986.
+  - 95% target: s = 4, fill rate 98.18%, no stock-out in a lead time 99.65%, EBO 0.0041.
+  - s = 3 would give a fill rate of 92.2%, below the target.
+- **Reference:** Sherbrooke, *Optimal Inventory Modeling of Systems* (2nd ed.), chapter 2; checked
+  with SciPy 1.18 `stats.poisson`.
+- **Warning:** a mean below 0.05 in a lead time is a slow mover: keeping one is an insurance decision
+  (consequence of not having it), not a statistics one.
+
+## C-17 Rebuild pool
+
+- **Formulas:** the same model, with the repair cycle as the lead time.
+  - Pool for the target = the smallest s with F(s) ≥ target.
+  - Waiting = EBO(s) × 365 unit-days a year; down hours waiting = EBO(s) × 8,760.
+  - With costs: total a year = s × carrying cost of one spare a year + EBO(s) × 8,760 × cost per down
+    hour. The lowest-cost pool is the s with the lowest total.
+- **Inputs:** change-outs a year, repair cycle in days (removal to back in stores), target fill rate,
+  and optionally the carrying cost of one spare a year and the cost per down hour (C-03).
+- **Assumptions:** a unit waiting for a component is down all day. A scrapped component is replaced
+  within the repair cycle.
+- **Worked example:**
+  - 12 change-outs a year with a 75 day cycle: m = 2.466.
+  - 95% target: pool 6, fill rate 96.02%, EBO 0.0185, 6.8 unit-days (162 down hours) waiting a year.
+  - At $60,000 a year to carry a spare and $2,500 a down hour, the lowest-cost pool is 8, at $509,674
+    a year (pool 6 costs $765,771).
+- **Reference:** Sherbrooke chapter 2 (Palm's theorem); checked with SciPy 1.18 `stats.poisson`.
+
+## C-18 Kit stocking
+
+- **Problem:** a kit of several parts is used k times a year, taking q of each part. A kit can be used
+  only when every part is on the shelf. Each part has its own lead time.
+- **Formula:** stock part i in whole kits, S = q × k. Part i is short when Nᵢ ≥ k, with Nᵢ Poisson
+  with mean kit uses a year × its lead time ÷ 365, so its fill rate is Fᵢ(k) = P(Nᵢ ≤ k − 1).
+  - Kit fill rate ≥ the product of the part fill rates. The parts are short at the same times (the
+    same kit uses drive them), so the true rate is at least the product and at most the lowest part
+    fill rate. The page shows both.
+  - The stock is found by greedy marginal analysis: start at one kit of each part, then add one kit's
+    worth of the part that raises the log of the product most per dollar, until the product reaches
+    the target. Poisson is log-concave, so each step is the best value for money, and
+    the result lies on the cheapest cost and fill rate curve (Sherbrooke).
+- **Inputs:** kit uses a year, target kit fill rate, and the parts: item, quantity per kit, lead time
+  in days, unit cost. A blank cost counts as 1, so the parts are then treated alike.
+- **Assumptions:** the model above, and the parts are not used elsewhere. A part also used outside the
+  kit needs its own demand added in C-16.
+- **Worked example:**
+  - 24 kits a year, 95% target. Filter: 2 per kit, 14 days, $80. Seal kit: 1, 45 days, $350. Pump: 1,
+    90 days, $4,200.
+  - Stock 12 filters (6 kits), 9 seal kits and 11 pumps. Kit fill rate at least 95.70% and at most
+    96.07%. Stock value $50,310.
+- **Reference:** Sherbrooke chapter 2 (marginal analysis); Esary, Proschan and Walkup (1967) for the
+  lower bound on associated variables; checked with SciPy 1.18 and a simulation in the unit tests.
+
+## C-19 Lifetime buy
+
+- **Problem:** a part is being discontinued. How many to buy now to last the rest of the fleet's life?
+- **Formula:**
+  - Expected demand to the end D̄ = d × ((1 + g)^Y − 1) ÷ ln(1 + g), or d × Y when g = 0, where d is
+    uses a year now, Y the years left and g the yearly change in uses (negative as units retire).
+  - Total demand is Poisson with mean D̄. Total needed Q = the smallest Q with P(D ≤ Q) ≥ the
+    confidence. Buy = Q − on hand, and not below 0.
+  - Expected left over = E[(Q − D)⁺]; expected short = E[(D − Q)⁺].
+  - With a shortage cost: cost-balanced total = the smallest Q with P(D ≤ Q) ≥ Cs ÷ (Cs + Co), where
+    Cs = shortage cost − unit cost (the extra cost of being short of one) and Co = unit cost −
+    salvage (the cost of one left over).
+- **Inputs:** uses a year now, years left, yearly change in %, confidence, on hand, unit cost, and
+  optionally the salvage value and the cost of being short of one (getting one another way, plus
+  downtime).
+- **Assumptions:** demand is random around the trend; parts on hand do not wear out on the shelf.
+- **Worked example:**
+  - 10 a year now, 6 years left, −10% a year, 90% confidence, 5 on hand, $2,000 each.
+  - D̄ = 44.47. Q = 53, so buy 48 ($96,000). Expected left over 8.88, expected short 0.35.
+  - Salvage $200 and a shortage cost of $15,000: critical ratio 13,000 ÷ 14,800 = 0.878, so Q = 52
+    and buy 47.
+- **Reference:** newsvendor model (Silver, Pyke and Thomas, *Inventory and Production Management in
+  Supply Chains*, 4th ed., chapter 6); checked with SciPy 1.18 `stats.poisson`.

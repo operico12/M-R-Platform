@@ -21,6 +21,7 @@ const EXPECTED: Partial<Record<Action, Record<Role, string>>> = {
   edit_condition_settings: { viewer: 'no', technician: 'no', supervisor: 'no', reliability_engineer: 'yes', superintendent: 'yes', admin: 'yes' },
   edit_rcm: { viewer: 'no', technician: 'no', supervisor: 'no', reliability_engineer: 'yes', superintendent: 'yes', admin: 'no' },
   issue_job_plans: { viewer: 'no', technician: 'no', supervisor: 'no', reliability_engineer: 'yes', superintendent: 'yes', admin: 'no' },
+  edit_spares: { viewer: 'no', technician: 'no', supervisor: 'no', reliability_engineer: 'yes', superintendent: 'yes', admin: 'no' },
   manage_imports: { viewer: 'no', technician: 'no', supervisor: 'no', reliability_engineer: 'no', superintendent: 'no', admin: 'yes' },
 };
 

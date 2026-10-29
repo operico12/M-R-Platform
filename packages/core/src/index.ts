@@ -23,3 +23,4 @@ export * from './explorer.js';
 export * from './components.js';
 export * from './condition.js';
 export * from './rcm.js';
+export * from './spares.js';

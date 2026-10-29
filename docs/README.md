@@ -21,6 +21,6 @@ has not settled is a setting in code, not a hard-coded choice.
 
 Phase 2 rules: [reliability and threshold alerts](alert-rules.md), [approvals](approvals.md).
 
-Phase 3 rules: [component life and rebuilds](component-life.md), [condition monitoring](condition-monitoring.md), [RCM to PM job plans](rcm.md).
+Phase 3 rules: [component life and rebuilds](component-life.md), [condition monitoring](condition-monitoring.md), [RCM to PM job plans](rcm.md), [spares and rebuild pool sizing](spares.md).
 
 Setup: [connecting a Supabase project](setup-supabase.md).

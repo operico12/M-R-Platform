@@ -4,11 +4,11 @@
 
 import {
   CALCULATORS, CalcError, analyse, availabilityTarget, can, conditionalCurve, conditionalWeibull, costPerHour, downtimeCost, filterFromQuery, filterToQuery,
-  inherentAvailability, lifeData, mtbfConfidence, mtbfRate, rebuildOrReplace, pfInterval, optimalReplacement, failureFindingInterval, strategyCost, componentStates, allLives, meanLives, smuIndex, COMPONENT_KINDS, KIND_LABELS, type ComponentKind, repairBySystem, repairTimes, riskMatrix, saveAnalysis, searchCalculators, voidAnalysis, weibull,
+  inherentAvailability, lifeData, mtbfConfidence, mtbfRate, rebuildOrReplace, pfInterval, optimalReplacement, failureFindingInterval, strategyCost, poissonSpares, rebuildPool, kitStocking, lifetimeBuy, type KitPart, type KitPartResult, componentStates, allLives, meanLives, smuIndex, COMPONENT_KINDS, KIND_LABELS, type ComponentKind, repairBySystem, repairTimes, riskMatrix, saveAnalysis, searchCalculators, voidAnalysis, weibull,
   RISK_BANDS, type AnalyticsFilter, type CalcOutput, type CalculatorId, type CalculatorInfo, type LifeTime, type SavedAnalysis,
 } from '@mr/core';
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { Bar, BarChart, CartesianGrid, ComposedChart, Legend, Line, LineChart, ResponsiveContainer, Scatter, Tooltip, XAxis, YAxis } from 'recharts';
+import { Bar, BarChart, CartesianGrid, Cell, ComposedChart, Legend, Line, LineChart, ReferenceLine, ResponsiveContainer, Scatter, Tooltip, XAxis, YAxis } from 'recharts';
 import { FilterBar } from '../components/FilterBar';
 import { siteTime } from '../format';
 import { useApp } from '../store';
@@ -67,6 +67,29 @@ const FIELDS: Record<CalculatorId, Field[]> = {
     { key: 'inspectionCost', label: 'Cost of one inspection', unit: '$' }, { key: 'inspectionInterval', label: 'Inspection interval', unit: 'h' },
     { key: 'detection', label: 'Chance an inspection finds the warning in time', unit: '%' }, { key: 'repairCost', label: 'Cost of a planned repair after a warning', unit: '$' },
   ],
+  poisson_spares: [
+    { key: 'perYear', label: 'Uses a year' }, { key: 'leadDays', label: 'Lead time', unit: 'days', hint: 'From ordering one to having it on the shelf' },
+    { key: 'target', label: 'Target fill rate', unit: '%', hint: 'Share of the times one is needed that it is on the shelf' },
+    { key: 'unitCost', label: 'Unit cost (optional)', unit: '$' },
+  ],
+  rebuild_pool: [
+    { key: 'perYear', label: 'Change-outs a year' }, { key: 'cycleDays', label: 'Repair cycle', unit: 'days', hint: 'From removal to back in stores, ready to fit' },
+    { key: 'target', label: 'Target fill rate', unit: '%', hint: 'Share of change-outs with a spare ready' },
+    { key: 'carryingCost', label: 'Cost to carry one spare a year (optional)', unit: '$', hint: 'Capital and storage; for the lowest-cost pool' },
+    { key: 'costPerDownHour', label: 'Cost per down hour (optional)', unit: '$/h', hint: 'C-03 works this out' },
+  ],
+  kit_stocking: [
+    { key: 'perYear', label: 'Kit uses a year' }, { key: 'target', label: 'Target kit fill rate', unit: '%' },
+    { key: 'parts', label: 'Parts', kind: 'list', hint: 'One per line: item, quantity per kit, lead time in days, unit cost, description. Cost and description can be left blank.' },
+  ],
+  lifetime_buy: [
+    { key: 'perYear', label: 'Uses a year now' }, { key: 'years', label: 'Years left', hint: 'Until the last unit that uses it is retired' },
+    { key: 'change', label: 'Yearly change in uses', unit: '%', hint: 'Negative as units retire, for example −10' },
+    { key: 'confidence', label: 'Confidence', unit: '%', hint: 'Chance the buy lasts to the end' },
+    { key: 'onHand', label: 'On hand now' }, { key: 'unitCost', label: 'Unit cost', unit: '$' },
+    { key: 'salvage', label: 'Salvage value of one left over (optional)', unit: '$' },
+    { key: 'shortageCost', label: 'Cost of being short of one (optional)', unit: '$', hint: 'Getting one another way, plus the downtime' },
+  ],
 };
 
 /** The worked examples from docs/calculators.md; also the starting inputs. */
@@ -90,6 +113,10 @@ const EXAMPLE: Record<CalculatorId, { inputs: Inputs; text: string; assumptions:
   optimal_replacement: { inputs: { beta: '3', eta: '10000', plannedCost: '40000', failureCost: '160000' }, text: 'β 3, η 10,000 h, planned $40,000, failure $160,000: replace at 5,542 h for $11.06 an hour, against $17.92 an hour run to failure (checked with SciPy).', assumptions: 'The Weibull fit describes the item, a replacement makes it as good as new, and costs do not depend on age.' },
   failure_finding: { inputs: { mtbf: '20000', unavailability: '1' }, text: 'MTBF 20,000 h and 1% tolerated unavailability: FFI = 2 × 0.01 × 20,000 = 400 h; exact unavailability 0.993%.', assumptions: 'One protective device, random failures, and every check finds a failure that is then fixed. Moubray, RCM II chapter 8.' },
   strategy_cost: { inputs: { beta: '3', eta: '10000', failureCost: '160000', plannedCost: '40000', inspectionCost: '500', inspectionInterval: '500', detection: '90', repairCost: '40000' }, text: 'Run to failure $17.92/h, time-based $11.06/h at 5,542 h, condition-based $1.00 + (0.9 × $40,000 + 0.1 × $160,000) ÷ 8,930 h = $6.82/h: condition-based is cheapest.', assumptions: 'Failures start at the same rate under each strategy; a found warning becomes a planned repair and a missed one a failure.' },
+  poisson_spares: { inputs: { perYear: '6', leadDays: '60', target: '95', unitCost: '' }, text: '6 a year with a 60 day lead time (mean 0.986 on order): keep 4 for a 95% target; fill rate 98.18%, no stock-out in a lead time 99.65%. 3 would give 92.2% (checked with SciPy).', assumptions: 'One-for-one reorder and steady random (Poisson) demand. Fill rate = P(N ≤ s − 1), N the number on order (Palm). Sherbrooke, Optimal Inventory Modeling of Systems, chapter 2.' },
+  rebuild_pool: { inputs: { perYear: '12', cycleDays: '75', target: '95', carryingCost: '60000', costPerDownHour: '2500' }, text: '12 change-outs a year and a 75 day cycle: a pool of 6 gives 96.02% with 6.8 unit-days a year waiting. At $60,000 a year to carry a spare and $2,500 a down hour, the lowest-cost pool is 8, at $509,674 a year (checked with SciPy).', assumptions: 'Each removed component goes to rebuild and comes back to the pool (Palm\'s theorem). A unit waiting for a component is down all day. A scrapped component is replaced within the cycle.' },
+  kit_stocking: { inputs: { perYear: '24', target: '95', parts: 'FILTER, 2, 14, 80, Filter\nSEAL-KIT, 1, 45, 350, Seal kit\nPUMP, 1, 90, 4200, Pump' }, text: '24 kits a year, 95%: 12 filters, 9 seal kits and 11 pumps; a whole kit at least 95.70% of the time (at most 96.07%), $50,310 of stock (checked with SciPy and a simulation).', assumptions: 'Each part is stocked in whole kits with one-for-one reorder. The product of the part fill rates is a safe lower bound; the parts are short at the same times, so the true rate is a little higher. Parts used outside the kit need their own demand added.' },
+  lifetime_buy: { inputs: { perYear: '10', years: '6', change: '-10', confidence: '90', onHand: '5', unitCost: '2000', salvage: '200', shortageCost: '15000' }, text: '10 a year now, 6 years, −10% a year: expect 44.5 uses. 90% confidence needs 53, so buy 48 ($96,000). Balancing $1,800 per part left over against $13,000 per part short gives 52 (checked with SciPy).', assumptions: 'Demand is random around the trend and parts do not wear out on the shelf. Newsvendor critical ratio for the cost-balanced figure.' },
 };
 
 const VALUE_LABELS: Record<string, [string, (x: number) => string]> = {
@@ -137,6 +164,30 @@ const VALUE_LABELS: Record<string, [string, (x: number) => string]> = {
   timeBased: ['Time-based, per hour', (x) => `$${x.toFixed(2)}`],
   timeBasedAge: ['Time-based replaces at', (x) => `${Math.round(x).toLocaleString('en-CA')} h`],
   conditionBased: ['Condition-based, per hour', (x) => `$${x.toFixed(2)}`],
+  onOrderMean: ['Mean number on order', (x) => x.toFixed(3)],
+  demandMean: ['Expected uses to the end', (x) => x.toFixed(1)],
+  stock: ['Keep (on the shelf and on order)', (x) => String(x)],
+  fill: ['Fill rate', (x) => `${(x * 100).toFixed(2)}%`],
+  noStockout: ['No stock-out in a lead time', (x) => `${(x * 100).toFixed(2)}%`],
+  ebo: ['Expected backorders', (x) => x.toFixed(4)],
+  stockValue: ['Stock value', (x) => `$${Math.round(x).toLocaleString('en-CA')}`],
+  pool: ['Pool for the target', (x) => String(x)],
+  waitDays: ['Unit-days waiting a year', (x) => x.toFixed(1)],
+  downHours: ['Down hours waiting a year', (x) => Math.round(x).toLocaleString('en-CA')],
+  totalAtTarget: ['Total cost a year at that pool', (x) => `$${Math.round(x).toLocaleString('en-CA')}`],
+  bestPool: ['Lowest-cost pool', (x) => String(x)],
+  bestTotal: ['Lowest total cost a year', (x) => `$${Math.round(x).toLocaleString('en-CA')}`],
+  kitFillLower: ['Kit fill rate, at least', (x) => `${(x * 100).toFixed(2)}%`],
+  kitFillUpper: ['Kit fill rate, at most', (x) => `${(x * 100).toFixed(2)}%`],
+  partsCount: ['Parts', (x) => String(x)],
+  needTotal: ['Needed in all', (x) => Math.round(x).toLocaleString('en-CA')],
+  buy: ['Buy', (x) => Math.round(x).toLocaleString('en-CA')],
+  buyCost: ['Cost of the buy', (x) => `$${Math.round(x).toLocaleString('en-CA')}`],
+  leftover: ['Expected left over', (x) => x.toFixed(2)],
+  short: ['Expected short', (x) => x.toFixed(2)],
+  ratio: ['Critical ratio', (x) => x.toFixed(3)],
+  costTotal: ['Cost-balanced total', (x) => Math.round(x).toLocaleString('en-CA')],
+  costBuy: ['Cost-balanced buy', (x) => Math.round(x).toLocaleString('en-CA')],
 };
 
 const nums = (s: string | undefined) => (s ?? '').split(/[\s,;]+/).filter(Boolean).map(Number);
@@ -151,6 +202,7 @@ interface Run { out: CalcOutput; parsed: unknown }
 
 function compute(id: CalculatorId, i: Inputs): Run {
   const n = (k: string) => (i[k] === undefined || i[k]!.trim() === '' ? NaN : Number(i[k]));
+  const opt = (k: string) => (i[k] === undefined || i[k]!.trim() === '' ? undefined : Number(i[k]));
   switch (id) {
     case 'inherent_availability': { const p = { mtbf: n('mtbf'), mttr: n('mttr') }; return { out: inherentAvailability(p), parsed: p }; }
     case 'availability_target': {
@@ -176,8 +228,32 @@ function compute(id: CalculatorId, i: Inputs): Run {
       const p = { beta: n('beta'), eta: n('eta'), failureCost: n('failureCost'), plannedCost: n('plannedCost'), inspectionCost: n('inspectionCost'), inspectionInterval: n('inspectionInterval'), detection: n('detection') / 100, repairCost: n('repairCost') };
       return { out: strategyCost(p), parsed: p };
     }
+    case 'poisson_spares': { const p = { perYear: n('perYear'), leadDays: n('leadDays'), target: n('target') / 100, unitCost: opt('unitCost') }; return { out: poissonSpares(p), parsed: p }; }
+    case 'rebuild_pool': {
+      const p = { perYear: n('perYear'), cycleDays: n('cycleDays'), target: n('target') / 100, carryingCost: opt('carryingCost'), costPerDownHour: opt('costPerDownHour') };
+      if ((p.carryingCost === undefined) !== (p.costPerDownHour === undefined)) throw new CalcError(['Enter both costs for the lowest-cost pool, or neither.']);
+      return { out: rebuildPool(p), parsed: p };
+    }
+    case 'kit_stocking': { const p = { perYear: n('perYear'), target: n('target') / 100, parts: kitParts(i.parts) }; return { out: kitStocking(p), parsed: p }; }
+    case 'lifetime_buy': {
+      const p = { perYear: n('perYear'), years: n('years'), change: n('change') / 100, confidence: n('confidence') / 100, onHand: n('onHand'), unitCost: n('unitCost'), salvage: opt('salvage'), shortageCost: opt('shortageCost') };
+      return { out: lifetimeBuy(p), parsed: p };
+    }
   }
 }
+
+/** Kit parts typed one per line: item, quantity, lead days, unit cost, description. */
+function kitParts(text: string | undefined): KitPart[] {
+  return (text ?? '').split(/\n+/).map((l) => l.trim()).filter(Boolean).map((l, k) => {
+    const [item = '', qty = '', lead = '', cost = '', ...rest] = l.split(',').map((x) => x.trim());
+    const num = (x: string) => (x === '' ? NaN : Number(x));
+    if (!Number.isFinite(num(qty)) || !Number.isFinite(num(lead))) throw new CalcError([`Line ${k + 1}: write item, quantity per kit, lead time in days, then the unit cost and description if known.`]);
+    return { item, qty: num(qty), leadDays: num(lead), unitCost: cost === '' ? undefined : num(cost), description: rest.join(', ') || undefined };
+  });
+}
+
+/** Calculators filled from another page (component history, spares) rather than the fleet filter. */
+const FROM_PAGES: CalculatorId[] = ['rebuild_or_replace', 'rebuild_pool', 'kit_stocking'];
 
 const linkBtn = { display: 'inline-flex', alignItems: 'center', textDecoration: 'none' } as const;
 
@@ -259,8 +335,15 @@ function Calculator({ info, savedId, query }: { info: CalculatorInfo; savedId?: 
   const app = useApp();
   const tz = app.ds.site.timeZone;
   const saved = savedId ? app.analyses.find((a) => a.id === savedId) : undefined;
-  const [inputs, setInputs] = useState<Inputs>(() => ({ ...EXAMPLE[info.id].inputs, ...((saved?.inputs as { form?: Inputs } | undefined)?.form ?? {}) }));
-  const [dataNote, setDataNote] = useState(saved?.dataNote ?? 'Typed in');
+  // A link from another page can fill inputs: ?perYear=12&cycleDays=75&note=...
+  const filled = useMemo(() => {
+    if (saved) return null;
+    const q = new URLSearchParams(query);
+    const keys = FIELDS[info.id].map((f) => f.key).filter((k) => q.has(k));
+    return keys.length ? { inputs: Object.fromEntries(keys.map((k) => [k, q.get(k)!])) as Inputs, note: q.get('note') ?? 'Filled from a link' } : null;
+  }, [saved, query, info.id]);
+  const [inputs, setInputs] = useState<Inputs>(() => ({ ...EXAMPLE[info.id].inputs, ...(filled?.inputs ?? {}), ...((saved?.inputs as { form?: Inputs } | undefined)?.form ?? {}) }));
+  const [dataNote, setDataNote] = useState(saved?.dataNote ?? filled?.note ?? 'Typed in');
   const [dataMsg, setDataMsg] = useState<string | null>(null);
   const filter = useMemo(() => filterFromQuery(query), [query]);
   const setFilter = (f: AnalyticsFilter) => { const q = filterToQuery(f); window.location.hash = `#/calc/${info.id}${q ? `?${q}` : ''}`; };
@@ -271,7 +354,7 @@ function Calculator({ info, savedId, query }: { info: CalculatorInfo; savedId?: 
   }, [info.id, inputs]);
 
   const a = useMemo(
-    () => (info.usesData && info.id !== 'rebuild_or_replace' ? analyse({ assets: app.ds.assets, flags: app.flags, smu: app.ds.smu, lifecycle: app.ds.lifecycle, rules: app.rules, now: app.now, calendar: app.ds.calendar, timeZone: tz }, filter) : null),
+    () => (info.usesData && !FROM_PAGES.includes(info.id) ? analyse({ assets: app.ds.assets, flags: app.flags, smu: app.ds.smu, lifecycle: app.ds.lifecycle, rules: app.rules, now: app.now, calendar: app.ds.calendar, timeZone: tz }, filter) : null),
     [info.usesData, app.ds, app.flags, app.rules, app.now, filter],
   );
   const repairRows = useMemo(() => (a ? a.events.filter((e) => e.event.end).map((e) => ({ system: e.event.system ?? 'Not recorded', hours: e.hours })) : []), [a]);
@@ -319,6 +402,7 @@ function Calculator({ info, savedId, query }: { info: CalculatorInfo; savedId?: 
       { name: 'Formula', rows: [['Formula', info.formula], ['Assumptions', EXAMPLE[info.id].assumptions], ['Worked example', EXAMPLE[info.id].text], ['Reference', 'docs/calculators.md']] },
     ];
     if (info.id === 'weibull') sheets.push({ name: 'Lives', rows: [['Hours', 'Failed'], ...(ok.parsed as { data: LifeTime[] }).data.map((d) => [d.t, d.failed ? 'yes' : 'no (suspension)'])] });
+    if (info.id === 'kit_stocking') sheets.push({ name: 'Parts', rows: [['Item', 'Description', 'Per kit', 'Lead time (days)', "Kits' worth", 'Keep', 'Part fill rate', 'Unit cost', 'Value'], ...(ok.out as unknown as { parts: KitPartResult[] }).parts.map((p) => [p.item, p.description ?? '', p.qty, p.leadDays, p.kits, p.stock, p.fill, p.unitCost ?? '', p.value ?? ''])] });
     if (info.id === 'repair_times') sheets.push({ name: 'Repairs', rows: [['Hours'], ...(ok.parsed as { hours: number[] }).hours.map((h) => [h])] });
     const blob = await xlsxBlob(sheets);
     const url = URL.createObjectURL(blob);
@@ -350,6 +434,16 @@ function Calculator({ info, savedId, query }: { info: CalculatorInfo; savedId?: 
             extra={<button className="btn primary" onClick={useMyData}>Use my data</button>} />
           {dataMsg && <p className="small">{dataMsg} You can edit the values before running.</p>}
           {info.id === 'weibull' && <p className="small muted">Fleet lives assume each repair makes the unit as good as new. Filter to one system or component for a meaningful fit.</p>}
+        </section>
+      )}
+
+      {(info.id === 'rebuild_pool' || info.id === 'kit_stocking') && (
+        <section className="card">
+          <h3 style={{ marginTop: 0 }}>Use my data</h3>
+          <p className="small" style={{ margin: 0 }}>
+            {info.id === 'rebuild_pool' ? 'The Spares page works out change-outs and the repair cycle for each model and component from the component history.' : 'The Spares page lists a kit for each PM job plan from the RCM library, with its parts and uses a year.'}{' '}
+            <a href={`#/spares?tab=${info.id === 'rebuild_pool' ? 'pool' : 'kits'}`}>Open it</a> and follow a row's link to fill these inputs.
+          </p>
         </section>
       )}
 
@@ -546,6 +640,77 @@ function Chart({ id, run }: { id: CalculatorId; run: Run }) {
               <Tooltip formatter={(v: number) => [v, 'Repairs']} labelFormatter={(v: string) => `${v} h`} />
               <Bar dataKey="n" name="Repairs" fill="var(--brand)" radius={[4, 4, 0, 0]} isAnimationActive={false} />
             </BarChart>
+          </ResponsiveContainer>
+        </div>
+      </section>
+    );
+  }
+  if (id === 'poisson_spares' || id === 'rebuild_pool') {
+    const curve = (run.out as unknown as { curve: Array<{ s: number; fill: number; total?: number | null }> }).curve;
+    const target = (run.parsed as { target: number }).target;
+    const costs = curve.some((c) => c.total !== null && c.total !== undefined);
+    // Very small pools cost so much in downtime that they would flatten the line; leave them off it.
+    const least = Math.min(...curve.map((c) => c.total ?? Infinity));
+    const data = curve.map((c) => ({ s: c.s, fill: Math.round(c.fill * 1000) / 10, total: c.total !== null && c.total !== undefined && c.total <= least * 4 ? c.total : null }));
+    return (
+      <section className="card">
+        <h3 style={{ marginTop: 0 }}>Fill rate{costs ? ' and total cost' : ''} by {id === 'rebuild_pool' ? 'pool size' : 'stock level'}</h3>
+        <div style={{ height: 260 }}>
+          <ResponsiveContainer>
+            <ComposedChart data={data} margin={{ top: 8, right: costs ? 8 : 16, bottom: 20, left: 0 }}>
+              <CartesianGrid stroke="var(--border)" strokeDasharray="3 3" vertical={false} />
+              <XAxis dataKey="s" tick={axis} label={{ value: id === 'rebuild_pool' ? 'Spares in the pool' : 'Stock (on the shelf and on order)', position: 'insideBottom', offset: -12, fill: 'var(--text-2)', fontSize: 12 }} />
+              <YAxis yAxisId="f" unit="%" domain={[0, 100]} tick={axis} />
+              {costs && <YAxis yAxisId="c" orientation="right" tick={axis} tickFormatter={(v: number) => `$${Math.round(v / 1000).toLocaleString('en-CA')}k`} />}
+              <Tooltip formatter={(v: number, name: string) => (name === 'Fill rate' ? [`${v}%`, name] : [`$${Math.round(v).toLocaleString('en-CA')}`, name])} labelFormatter={(v: number) => `${v} ${id === 'rebuild_pool' ? 'in the pool' : 'in stock'}`} />
+              <Legend verticalAlign="top" height={24} />
+              <Bar yAxisId="f" dataKey="fill" name="Fill rate" fill="var(--brand)" isAnimationActive={false} radius={[4, 4, 0, 0]}>
+                {data.map((d) => <Cell key={d.s} fill={d.fill >= target * 100 ? 'var(--brand)' : 'color-mix(in srgb, var(--brand) 35%, var(--surface))'} />)}
+              </Bar>
+              {costs && <Line yAxisId="c" dataKey="total" name="Total cost a year" stroke="var(--down)" strokeWidth={2} dot={{ r: 3 }} isAnimationActive={false} />}
+            </ComposedChart>
+          </ResponsiveContainer>
+        </div>
+        <p className="small muted">Solid bars meet the {Math.round(target * 1000) / 10}% target.{costs ? ' Total cost = carrying the pool + down hours waiting × cost per down hour.' : ''}</p>
+      </section>
+    );
+  }
+  if (id === 'kit_stocking') {
+    const parts = (run.out as unknown as { parts: KitPartResult[] }).parts;
+    const money = (x: number) => `$${Math.round(x).toLocaleString('en-CA')}`;
+    return (
+      <section className="card">
+        <h3 style={{ marginTop: 0 }}>Stock for each part</h3>
+        <div className="table-wrap">
+          <table>
+            <thead><tr><th>Item</th><th>Description</th><th>Per kit</th><th>Lead time (days)</th><th>Mean kits on order</th><th>Kits' worth</th><th>Keep</th><th>Part fill rate</th><th>Value</th></tr></thead>
+            <tbody>
+              {parts.map((p) => (
+                <tr key={p.item}><td>{p.item}</td><td>{p.description ?? ''}</td><td>{p.qty}</td><td>{p.leadDays}</td><td>{p.mean.toFixed(2)}</td><td>{p.kits}</td><td><strong>{p.stock}</strong></td><td>{(p.fill * 100).toFixed(2)}%</td><td>{p.value === null ? '—' : money(p.value)}</td></tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <p className="small muted">Keep = quantity per kit × kits' worth, on the shelf and on order. Reorder one kit's worth each time a kit is used.</p>
+      </section>
+    );
+  }
+  if (id === 'lifetime_buy') {
+    const curve = (run.out as unknown as { curve: Array<{ q: number; cdf: number }> }).curve.map((c) => ({ q: c.q, p: Math.round(c.cdf * 1000) / 10 }));
+    const v = run.out.values;
+    return (
+      <section className="card">
+        <h3 style={{ marginTop: 0 }}>Chance the buy lasts to the end</h3>
+        <div style={{ height: 260 }}>
+          <ResponsiveContainer>
+            <LineChart data={curve} margin={{ top: 8, right: 16, bottom: 20, left: 0 }}>
+              <CartesianGrid stroke="var(--border)" strokeDasharray="3 3" />
+              <XAxis dataKey="q" type="number" domain={['dataMin', 'dataMax']} tick={axis} label={{ value: 'Total on hand and bought', position: 'insideBottom', offset: -12, fill: 'var(--text-2)', fontSize: 12 }} />
+              <YAxis unit="%" domain={[0, 100]} tick={axis} />
+              <Tooltip formatter={(x: number) => [`${x}%`, 'Lasts to the end']} labelFormatter={(x: number) => `${x} in all`} />
+              <Line dataKey="p" stroke="var(--brand)" strokeWidth={2} dot={false} isAnimationActive={false} />
+              {v.needTotal !== null && <ReferenceLine x={v.needTotal} stroke="var(--text-2)" strokeDasharray="4 4" label={{ value: `${v.needTotal}`, position: 'top', fill: 'var(--text-2)', fontSize: 12 }} />}
+            </LineChart>
           </ResponsiveContainer>
         </div>
       </section>

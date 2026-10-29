@@ -237,4 +237,4 @@ Otherwise you type them in.
 
 - Filling the history from the ERP's rotating item records (A3 mapping).
 - The oil analysis overlay and component condition (phase 3, condition monitoring).
-- Rebuild pool sizing from the forecast (phase 3, spares).
+- Rebuild pool sizing is on the Spares page (docs/spares.md).
