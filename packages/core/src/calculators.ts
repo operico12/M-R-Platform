@@ -494,9 +494,169 @@ export function strategyCost(i: { beta: number; eta: number; failureCost: number
   };
 }
 
+// ---------- C-16 to C-19 spares (docs/spares.md) ----------
+
+/** Poisson probabilities for a mean m, summed in log form so large means work. */
+export interface PoissonTable { mean: number; pmf: number[]; cdf: (k: number) => number; fill: (s: number) => number; ebo: (s: number) => number; leftover: (q: number) => number; quantile: (p: number) => number }
+
+export function poisson(mean: number): PoissonTable {
+  if (!(Number.isFinite(mean) && mean >= 0)) bad('The mean demand must be 0 or more.');
+  if (mean > 100_000) bad('The mean demand is above 100,000: too large to size one part at a time.');
+  const top = Math.ceil(mean + 12 * Math.sqrt(mean) + 30);
+  const pmf: number[] = [];
+  for (let n = 0; n <= top; n++) pmf.push(mean === 0 ? (n === 0 ? 1 : 0) : Math.exp(n * Math.log(mean) - mean - logGamma(n + 1)));
+  const cum: number[] = [];
+  pmf.reduce((a, p, n) => (cum[n] = a + p), 0);
+  const cdf = (k: number) => (k < 0 ? 0 : k >= top ? 1 : Math.min(1, cum[Math.floor(k)]!));
+  const ebo = (s: number) => { let e = 0; for (let n = Math.max(0, Math.floor(s) + 1); n <= top; n++) e += (n - s) * pmf[n]!; return e; };
+  const leftover = (q: number) => { let e = 0; for (let n = 0; n <= Math.min(q, top); n++) e += (q - n) * pmf[n]!; return e; };
+  const quantile = (p: number) => { let k = 0; while (cdf(k) < p && k <= top) k++; return k; };
+  return { mean, pmf, cdf, fill: (s: number) => (s <= 0 ? 0 : cdf(s - 1)), ebo, leftover, quantile };
+}
+
+/** The smallest stock s with a fill rate P(N ≤ s − 1) at or above the target. */
+export const stockForFill = (t: PoissonTable, target: number) => t.quantile(target) + 1;
+
+const fillTarget = (x: number, name = 'Target fill rate') => { if (!(x > 0 && x < 1)) bad(`${name} must be between 0% and 100%.`); };
+
+export interface StockCurveRow { s: number; fill: number; noStockout: number; ebo: number }
+const stockCurve = (t: PoissonTable, upto: number): StockCurveRow[] => Array.from({ length: upto + 1 }, (_, s) => ({ s, fill: t.fill(s), noStockout: t.cdf(s), ebo: t.ebo(s) }));
+
+export function poissonSpares(i: { perYear: number; leadDays: number; target: number; unitCost?: number }): CalcOutput & { curve: StockCurveRow[] } {
+  if (!(Number.isFinite(i.perYear) && i.perYear >= 0)) bad('Uses a year must be 0 or more.');
+  positive(i.leadDays, 'Lead time');
+  fillTarget(i.target);
+  if (i.unitCost !== undefined && !(Number.isFinite(i.unitCost) && i.unitCost >= 0)) bad('Unit cost must be 0 or more.');
+  const t = poisson((i.perYear * i.leadDays) / 365);
+  const s = i.perYear === 0 ? 0 : stockForFill(t, i.target);
+  const value = i.unitCost === undefined ? null : s * i.unitCost;
+  const warnings: string[] = [];
+  if (i.perYear === 0) warnings.push('No uses expected: stock nothing unless it is an insurance spare.');
+  else if (t.mean < 0.05) warnings.push('Fewer than 0.05 uses in a lead time: a slow mover. Keeping one is an insurance decision, from the consequence of not having it.');
+  return {
+    values: { onOrderMean: t.mean, stock: s, fill: s ? t.fill(s) : null, noStockout: t.cdf(s), ebo: t.ebo(s), stockValue: value },
+    sentence: i.perYear === 0 ? 'No uses expected, so no stock is needed for demand.' : `Keep ${s} on the shelf and on order, and order one each time one is used. A part is then on the shelf ${pct(t.fill(s), 1)} of the times one is needed${value !== null ? `, for ${money(value)} of stock` : ''}.`,
+    warnings,
+    curve: stockCurve(t, Math.max(s + 3, Math.ceil(t.mean + 3 * Math.sqrt(t.mean)) + 1)),
+  };
+}
+
+export function rebuildPool(i: { perYear: number; cycleDays: number; target: number; carryingCost?: number; costPerDownHour?: number }): CalcOutput & { curve: Array<StockCurveRow & { downHours: number; total: number | null }> } {
+  positive(i.perYear, 'Change-outs a year');
+  positive(i.cycleDays, 'Repair cycle');
+  fillTarget(i.target);
+  const costs = i.carryingCost !== undefined && i.costPerDownHour !== undefined;
+  if (costs && !([i.carryingCost!, i.costPerDownHour!].every((x) => Number.isFinite(x) && x >= 0))) bad('Costs must be 0 or more.');
+  const t = poisson((i.perYear * i.cycleDays) / 365);
+  const s = stockForFill(t, i.target);
+  const upto = Math.max(s + 3, Math.ceil(t.mean + 4 * Math.sqrt(t.mean)) + 2);
+  const curve = stockCurve(t, upto).map((r) => ({ ...r, downHours: r.ebo * 8760, total: costs ? r.s * i.carryingCost! + r.ebo * 8760 * i.costPerDownHour! : null }));
+  let best: (typeof curve)[number] | null = null;
+  if (costs) {
+    // Total cost is convex in s (EBO is convex), so walk up until it rises.
+    let k = 0;
+    const total = (x: number) => x * i.carryingCost! + t.ebo(x) * 8760 * i.costPerDownHour!;
+    while (total(k + 1) < total(k)) k++;
+    best = { s: k, fill: t.fill(k), noStockout: t.cdf(k), ebo: t.ebo(k), downHours: t.ebo(k) * 8760, total: total(k) };
+    if (!curve.some((r) => r.s === k)) curve.push(best);
+  }
+  const at = curve.find((r) => r.s === s)!;
+  return {
+    values: { onOrderMean: t.mean, pool: s, fill: t.fill(s), ebo: t.ebo(s), waitDays: t.ebo(s) * 365, downHours: t.ebo(s) * 8760, totalAtTarget: at.total, bestPool: best?.s ?? null, bestTotal: best?.total ?? null },
+    sentence: `A pool of ${s} has a spare ready for ${pct(t.fill(s))} of change-outs, with about ${n1(t.ebo(s) * 365)} unit-days a year waiting.${best ? ` The lowest total cost is a pool of ${best.s}, at ${money(best.total!)} a year.` : ''}`,
+    warnings: t.mean > 0 && i.cycleDays > 365 ? ['The repair cycle is over a year: check the dates in the component history.'] : [],
+    curve,
+  };
+}
+
+export interface KitPart { item: string; qty: number; leadDays: number; unitCost?: number; description?: string }
+export interface KitPartResult extends KitPart { mean: number; kits: number; stock: number; fill: number; value: number | null }
+
+export function kitStocking(i: { perYear: number; target: number; parts: KitPart[] }): CalcOutput & { parts: KitPartResult[] } {
+  positive(i.perYear, 'Kit uses a year');
+  fillTarget(i.target, 'Target kit fill rate');
+  if (!i.parts.length) bad('Add at least one part.');
+  if (i.parts.length > 60) bad('A kit can have up to 60 parts.');
+  const seen = new Set<string>();
+  i.parts.forEach((p, n) => {
+    const name = p.item.trim() || `Part ${n + 1}`;
+    if (!p.item.trim()) bad(`Part ${n + 1} needs an item number.`);
+    if (seen.has(p.item.trim().toUpperCase())) bad(`${name} is listed twice: add the quantities into one line.`);
+    seen.add(p.item.trim().toUpperCase());
+    if (!(Number.isFinite(p.qty) && p.qty > 0)) bad(`${name}: quantity per kit must be above 0.`);
+    if (!(Number.isFinite(p.leadDays) && p.leadDays > 0)) bad(`${name}: lead time must be above 0 days.`);
+    if (p.unitCost !== undefined && !(Number.isFinite(p.unitCost) && p.unitCost >= 0)) bad(`${name}: unit cost must be 0 or more.`);
+  });
+  const tabs = i.parts.map((p) => poisson((i.perYear * p.leadDays) / 365));
+  const price = i.parts.map((p) => p.qty * (p.unitCost === undefined || p.unitCost === 0 ? 1 : p.unitCost));
+  const k = i.parts.map(() => 1);
+  const logF = (j: number, x: number) => Math.log(Math.max(tabs[j]!.fill(x), 1e-300));
+  let logProd = k.reduce((a, x, j) => a + logF(j, x), 0);
+  const goal = Math.log(i.target);
+  for (let step = 0; logProd < goal - 1e-12; step++) {
+    if (step > 100_000) bad('Could not reach the target: check the inputs.');
+    let best = 0;
+    let bestGain = -Infinity;
+    k.forEach((x, j) => {
+      const g = (logF(j, x + 1) - logF(j, x)) / price[j]!;
+      if (g > bestGain) { bestGain = g; best = j; }
+    });
+    logProd += logF(best, k[best]! + 1) - logF(best, k[best]!);
+    k[best]! += 1;
+  }
+  const parts: KitPartResult[] = i.parts.map((p, j) => ({ ...p, mean: tabs[j]!.mean, kits: k[j]!, stock: k[j]! * p.qty, fill: tabs[j]!.fill(k[j]!), value: p.unitCost === undefined ? null : k[j]! * p.qty * p.unitCost }));
+  const lower = parts.reduce((a, p) => a * p.fill, 1);
+  const upper = Math.min(...parts.map((p) => p.fill));
+  const costed = parts.every((p) => p.value !== null);
+  const value = costed ? parts.reduce((a, p) => a + p.value!, 0) : null;
+  const warnings = costed ? [] : ['Some parts have no unit cost: they are sized as if every part cost the same, and the stock value is left out.'];
+  return {
+    values: { kitFillLower: lower, kitFillUpper: upper, stockValue: value, partsCount: parts.length },
+    sentence: `With this stock a whole kit is on the shelf for at least ${pct(lower)} of uses (at most ${pct(upper)})${value !== null ? `, for ${money(value)} of stock` : ''}.`,
+    warnings,
+    parts,
+  };
+}
+
+/** Expected total uses over the years left, with a steady yearly change g. */
+export const lifetimeDemand = (perYear: number, years: number, change: number) => (Math.abs(change) < 1e-12 ? perYear * years : (perYear * ((1 + change) ** years - 1)) / Math.log(1 + change));
+
+export function lifetimeBuy(i: { perYear: number; years: number; change: number; confidence: number; onHand: number; unitCost: number; salvage?: number; shortageCost?: number }): CalcOutput & { curve: Array<{ q: number; cdf: number }> } {
+  positive(i.perYear, 'Uses a year now');
+  positive(i.years, 'Years left');
+  if (!(Number.isFinite(i.change) && i.change > -1 && i.change <= 1)) bad('The yearly change must be between −100% and +100%.');
+  fillTarget(i.confidence, 'Confidence');
+  if (!(Number.isFinite(i.onHand) && i.onHand >= 0)) bad('On hand must be 0 or more.');
+  if (!(Number.isFinite(i.unitCost) && i.unitCost >= 0)) bad('Unit cost must be 0 or more.');
+  const mean = lifetimeDemand(i.perYear, i.years, i.change);
+  const t = poisson(mean);
+  const q = t.quantile(i.confidence);
+  const buy = Math.max(0, q - Math.floor(i.onHand));
+  let costQ: number | null = null;
+  let ratio: number | null = null;
+  const warnings: string[] = [];
+  if (i.shortageCost !== undefined) {
+    const salvage = i.salvage ?? 0;
+    if (!(Number.isFinite(i.shortageCost) && i.shortageCost > i.unitCost)) bad('The cost of being short of one must be more than the unit cost.');
+    if (!(Number.isFinite(salvage) && salvage >= 0 && salvage < i.unitCost)) bad('Salvage must be 0 or more and below the unit cost.');
+    const under = i.shortageCost - i.unitCost;
+    const over = i.unitCost - salvage;
+    ratio = under / (under + over);
+    costQ = t.quantile(ratio);
+  }
+  if (i.onHand > q) warnings.push(`On hand (${n0(i.onHand)}) is already more than the ${n0(q)} needed.`);
+  const top = Math.max(q, costQ ?? 0) + Math.ceil(3 * Math.sqrt(mean)) + 2;
+  return {
+    values: { demandMean: mean, needTotal: q, buy, buyCost: buy * i.unitCost, leftover: t.leftover(q), short: t.ebo(q), ratio, costTotal: costQ, costBuy: costQ === null ? null : Math.max(0, costQ - Math.floor(i.onHand)) },
+    sentence: `Expect ${n1(mean)} uses to the end. Buy ${n0(buy)} (${money(buy * i.unitCost)}) for ${n0(q)} in all, enough ${pct(t.cdf(q))} of the time.${costQ !== null ? ` Balancing the costs of too many and too few gives ${n0(costQ)} in all.` : ''}`,
+    warnings,
+    curve: Array.from({ length: Math.max(0, top - Math.max(0, Math.floor(mean - 3 * Math.sqrt(mean)) - 2)) + 1 }, (_, j) => { const x = Math.max(0, Math.floor(mean - 3 * Math.sqrt(mean)) - 2) + j; return { q: x, cdf: t.cdf(x) }; }),
+  };
+}
+
 // ---------- catalogue ----------
 
-export type CalculatorId = 'inherent_availability' | 'availability_target' | 'downtime_cost' | 'mtbf_confidence' | 'weibull' | 'conditional_weibull' | 'repair_times' | 'risk_matrix' | 'cost_per_hour' | 'mtbf_rate' | 'rebuild_or_replace' | 'pf_interval' | 'optimal_replacement' | 'failure_finding' | 'strategy_cost';
+export type CalculatorId = 'inherent_availability' | 'availability_target' | 'downtime_cost' | 'mtbf_confidence' | 'weibull' | 'conditional_weibull' | 'repair_times' | 'risk_matrix' | 'cost_per_hour' | 'mtbf_rate' | 'rebuild_or_replace' | 'pf_interval' | 'optimal_replacement' | 'failure_finding' | 'strategy_cost' | 'poisson_spares' | 'rebuild_pool' | 'kit_stocking' | 'lifetime_buy';
 
 export interface CalculatorInfo { id: CalculatorId; code: string; group: string; name: string; question: string; usesData: boolean; formula: string; version: number }
 
@@ -517,6 +677,10 @@ export const CALCULATORS: CalculatorInfo[] = [
   { id: 'optimal_replacement', code: 'C-13', group: 'Maintenance strategy', name: 'Optimal replacement interval', question: 'At what age is it cheapest to replace before it fails?', usesData: true, formula: 'C(T) = (Cp R(T) + Cu (1 − R(T))) ÷ ∫₀ᵀ R(t) dt, lowest C(T)', version: 1 },
   { id: 'failure_finding', code: 'C-14', group: 'Maintenance strategy', name: 'Failure-finding interval', question: 'How often should we test a protective device?', usesData: false, formula: 'FFI = 2 × U × MTBF', version: 1 },
   { id: 'strategy_cost', code: 'C-15', group: 'Maintenance strategy', name: 'Strategy cost comparison', question: 'Is run to failure, time-based or condition-based maintenance cheapest?', usesData: true, formula: 'RTF = Cu ÷ MTBF;  TBM = C(T*);  CBM = Ci ÷ I + (p Cc + (1 − p) Cu) ÷ MTBF', version: 1 },
+  { id: 'poisson_spares', code: 'C-16', group: 'Spares', name: 'Spares for a fill rate (Poisson)', question: 'How many of a part should we keep on the shelf?', usesData: false, formula: 'smallest s with P(N ≤ s − 1) ≥ target, N ~ Poisson(uses a year × lead days ÷ 365)', version: 1 },
+  { id: 'rebuild_pool', code: 'C-17', group: 'Spares', name: 'Rebuild pool', question: 'How many spare components do we need in the rebuild pool?', usesData: true, formula: 'N ~ Poisson(change-outs a year × repair cycle days ÷ 365); total = s × carrying + EBO(s) × 8,760 × cost per down h', version: 1 },
+  { id: 'kit_stocking', code: 'C-18', group: 'Spares', name: 'Kit stocking', question: 'How much of each part do we keep so a whole kit is there when needed?', usesData: true, formula: 'kit fill ≥ Π P(Nᵢ ≤ kᵢ − 1); stock qᵢ × kᵢ by greedy marginal analysis', version: 1 },
+  { id: 'lifetime_buy', code: 'C-19', group: 'Spares', name: 'Lifetime buy', question: 'How many should we buy before a part is discontinued?', usesData: false, formula: 'D ~ Poisson(d × ((1 + g)^Y − 1) ÷ ln(1 + g)); smallest Q with P(D ≤ Q) ≥ confidence', version: 1 },
 ];
 
 /** Search by name, code, group or question; every word must match. */
