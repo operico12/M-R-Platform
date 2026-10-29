@@ -7,20 +7,23 @@
 import {
   CODE_FIELDS, CODE_FIELD_LABELS, CODING_CHECK_LABELS, STARTER_CODES, can, codedRows, codingIssues, duplicateWorkOrders, flagText, holdoutCheck, liveSuggestion,
   passes, setAssistSettings, suggestCodes, workOrderIndex, type AssistSettings, type FieldScore,
+  askContext, recentWeeks, weeklyPack,
 } from '@mr/core';
+import dictionary from '../../../../docs/kpi-dictionary.md?raw';
+import { askAssist, type AskReply } from '../data/remote';
 import { useMemo, useState } from 'react';
 import { siteTime } from '../format';
 import { useApp } from '../store';
 
-type Tab = 'check' | 'review' | 'duplicates' | 'settings';
-const TABS: Array<[Tab, string]> = [['check', 'Code suggestions'], ['review', 'Coding review'], ['duplicates', 'Duplicate work orders'], ['settings', 'Settings']];
+type Tab = 'ask' | 'check' | 'review' | 'duplicates' | 'settings';
+const TABS: Array<[Tab, string]> = [['ask', 'Ask'], ['check', 'Code suggestions'], ['review', 'Coding review'], ['duplicates', 'Duplicate work orders'], ['settings', 'Settings']];
 
 const pct = (x: number | null) => (x === null ? '—' : `${(x * 100).toFixed(1)}%`);
 
 export function Assist({ query }: { query: string }) {
   const app = useApp();
   const q = new URLSearchParams(query);
-  const tab = (TABS.find(([k]) => k === q.get('tab'))?.[0] ?? 'check') as Tab;
+  const tab = (TABS.find(([k]) => k === q.get('tab'))?.[0] ?? (app.mode === 'live' ? 'ask' : 'check')) as Tab;
   const { check, live } = app.suggester;
   const dups = useMemo(() => duplicateWorkOrders(app.ds.workOrders, app.assistSettings), [app.ds.workOrders, app.assistSettings]);
   return (
@@ -37,6 +40,7 @@ export function Assist({ query }: { query: string }) {
       <div className="chips" role="tablist">
         {TABS.map(([k, l]) => <a key={k} role="tab" className="chip" aria-pressed={tab === k} aria-selected={tab === k} href={`#/assist?tab=${k}`} style={{ minHeight: 40, display: 'inline-flex', alignItems: 'center', textDecoration: 'none' }}>{l}</a>)}
       </div>
+      {tab === 'ask' && <AskTab />}
       {tab === 'check' && <CheckTab />}
       {tab === 'review' && <ReviewTab />}
       {tab === 'duplicates' && <DuplicatesTab />}
@@ -212,6 +216,64 @@ function SettingsTab() {
         )}
       </fieldset>
       {msg && <div className={msg.ok ? 'card' : 'errors'} role="status" style={{ marginTop: 10 }}>{msg.text}</div>}
+    </section>
+  );
+}
+
+const EXAMPLES = ['Why was PA below target last week?', 'Which system cost the most downtime, and is it getting worse?', 'What is the difference between MTTR and mean downtime?'];
+
+/** AI-5: a question about the latest complete week, answered by Claude from the KPI dictionary and the pack numbers (docs/ai-assist.md). */
+function AskTab() {
+  const app = useApp();
+  const tz = app.ds.site.timeZone;
+  const allowed = can(app.actor, 'ask_assist');
+  const [q, setQ] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [res, setRes] = useState<{ q: string; r: AskReply } | null>(null);
+  const weeks = useMemo(() => recentWeeks(tz, app.now, 12), [tz, app.now]);
+  const week = weeks[weeks.length - 2]!;
+  const ctx = useMemo(() => askContext(weeklyPack({
+    assets: app.ds.assets, flags: app.flags, smu: app.ds.smu, lifecycle: app.ds.lifecycle, rules: app.rules, now: app.now,
+    timeZone: tz, siteName: app.ds.site.name, fleetName: 'Haul trucks', shopLines: app.ds.shopLines, closures: app.ds.closures,
+    targets: app.targets, weekOf: week.from,
+  }), dictionary), [app.ds, app.flags, app.rules, app.now, week.from, app.targets, tz]);
+  const live = app.mode === 'live';
+  const ask = async () => {
+    const question = q.trim();
+    if (!question || busy) return;
+    setBusy(true);
+    try { setRes({ q: question, r: await askAssist(app.ds.site.id, question, ctx) }); } finally { setBusy(false); }
+  };
+  return (
+    <section className="card" style={{ maxWidth: 860 }}>
+      <h3>Ask about the week of {ctx.week}</h3>
+      <p className="small muted">
+        Claude answers from the KPI dictionary and this week's pack numbers only, and every line names its source. It is sent the question and those
+        numbers, with no names and no costs. Answers that cite anything else are not shown. 20 questions a day each.
+      </p>
+      {!live && <p className="small warns">Questions need the live site: the Anthropic key is kept on the server, so the demo cannot ask.</p>}
+      {live && !allowed && <p className="small muted">Supervisors, reliability engineers and superintendents can ask.</p>}
+      <fieldset disabled={!live || !allowed || busy} style={{ border: 0, padding: 0, margin: 0 }}>
+        <label className="field"><span>Your question</span>
+          <textarea rows={2} maxLength={500} value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) void ask(); }} />
+        </label>
+        <div className="row" style={{ marginTop: 8 }}>
+          <button className="btn primary" onClick={() => void ask()} disabled={!q.trim()}>{busy ? 'Asking…' : 'Ask'}</button>
+          {EXAMPLES.map((x) => <button key={x} className="chip" onClick={() => setQ(x)}>{x}</button>)}
+        </div>
+      </fieldset>
+      {res && (
+        <div className="card" role="status" style={{ marginTop: 12 }}>
+          <p className="small muted" style={{ marginTop: 0 }}>{res.q}</p>
+          {'lines' in res.r ? (
+            <>
+              {res.r.outcome === 'cannot_answer' && <p className="small warns">The numbers it was given cannot fully answer this.</p>}
+              <ul style={{ margin: 0, paddingLeft: 20, overflowWrap: 'anywhere' }}>{res.r.lines.map((l, i) => <li key={i}>{l}</li>)}</ul>
+              <p className="small muted" style={{ marginBottom: 0 }}>Check it against the pack before you use it.</p>
+            </>
+          ) : <p className={res.r.outcome === 'error' ? 'errors' : 'small'} style={{ margin: 0 }}>{res.r.message}</p>}
+        </div>
+      )}
     </section>
   );
 }

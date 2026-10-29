@@ -1,8 +1,8 @@
 # Assist: the first AI features
 
-Phase 3, plan section 9. The code is in `packages/core/src/assist.ts`. This first part is
-"guardrails first": every feature works on the platform itself, with no outside language model. A
-language model can be added later behind the same guardrails (see "Later").
+Phase 3, plan section 9. The code is in `packages/core/src/assist.ts` and the Edge Function
+`supabase/functions/assist-ask`. AI-1 to AI-4 run on the platform itself, with no outside language
+model. AI-5 (questions) calls Claude through a server-side function, behind the same guardrails.
 
 ## Guardrails (plan 9)
 
@@ -21,8 +21,9 @@ These hold for every assist feature, now and later:
    own records).
 5. **No write-back to the ERP.** Duplicate work orders are shown for a planner to check in Maximo.
 6. **Site data stays with the site.** The code suggester learns in the browser from the site's own
-   released flags each time the page loads. Nothing is sent outside the platform, and nothing is
-   learned across sites.
+   released flags each time the page loads, and nothing is learned across sites. Only AI-5 sends
+   anything outside the platform: the question and the pack numbers listed there, to Anthropic's
+   API, which does not train on them. The key stays on the server.
 7. **Abstain when unsure.** When the best suggestion is less likely than `minConfidence`, assist
    says "no suggestion" rather than guess.
 
@@ -127,11 +128,55 @@ flags are linked to the RCA, the latest 5 events on its slice are used, and the 
 Each line cites its record, like `[flag:…]`, `[wo:…]`, `[component:…]` or `[oil:…]`. The draft is
 checked the same way as AI-3. The person copies it into the problem statement or a why.
 
-## AI-5 Questions in plain language
+## AI-5 Questions in plain language (Claude)
 
-Not in this part. Answering questions needs a language model to read the question; it is the first
-feature for the model (see "Later"). The answer must use the definitions in `docs/kpi-dictionary.md`
-and cite the records it used, and pass `checkCitations`.
+**Where:** the Assist page, "Ask". Only on the live site, not the demo, because the key is kept on
+the server.
+
+This is the first feature that uses a language model. Ope chose Claude (Anthropic) on 29 Oct 2026.
+The model is `claude-opus-5-5`.
+
+**How a question goes:**
+
+1. The person types a question of up to 500 characters, for example "Why was PA down last week?".
+2. The app sends the question, the KPI dictionary (`docs/kpi-dictionary.md`) and the numbers the
+   person already sees on the weekly pack for the latest complete week (`askContext`):
+   - the KPIs for that week and the week before,
+   - the 8-week trend,
+   - the downtime Pareto by system,
+   - the top bad actors,
+   - the units down now.
+
+   It sends no names of people, no costs and no free text from flags.
+3. The Supabase Edge Function `assist-ask`:
+   - checks the person is signed in and has `ask_assist` at the site;
+   - checks the daily limit: 20 questions per person per site day;
+   - logs the question;
+   - calls Claude with the Anthropic key, which is kept as the Supabase secret `ANTHROPIC_API_KEY`
+     and never sent to the browser or put in the repository.
+4. Claude must answer as a list of short lines. Each line ends with the records it used: `[KPI-001]`,
+   `[week:12 Oct]`, `[unit:HT104]` or `[system:Hydraulics]`. It must use the dictionary's
+   definitions, and it must say so when the numbers it was given cannot answer the question.
+5. The function checks every line (`checkCitations`, the same rule as AI-3). Records are only
+   allowed when they are:
+   - KPI numbers in the dictionary,
+   - weeks in the trend,
+   - units in the bad actors or down now,
+   - systems in the Pareto.
+
+   An answer that fails the check is not shown. The person sees "No answer: it cited something it
+   was not given".
+6. The answer, the records it cited and the token counts are added to the question's log row. Rows
+   are never deleted.
+
+**What leaves the platform:** the question and the pack numbers above go to Anthropic's API. Under
+Anthropic's commercial terms, API inputs and outputs are not used to train models (plan 9
+guardrail). The request is processed outside Canada, while the platform's own data stays in Supabase
+Canada Central. Until a site agrees to that, use it on synthetic data only (CLAUDE.md rule 9).
+
+**When Claude declines** (stop reason `refusal`), the request has server-side fallbacks switched on
+(`fallbacks: "default"`), so another model may answer. If none does, the person sees "No answer" and
+the log row says refused.
 
 ## Settings
 
@@ -154,15 +199,17 @@ Site setting `assist`, changed by people with `edit_assist`, with a reason and a
 | See suggestions and drafts | Anyone who can see the page they are on |
 | Use a suggestion on a release | Whoever can release the flag (`set_clear_flag`) |
 | Change assist settings, switch suggestions on | Reliability engineer, superintendent (`edit_assist`) |
+| Ask a question (AI-5), 20 a day | Supervisor, reliability engineer, superintendent (`ask_assist`) |
+| Read the question log | Your own questions; reliability engineers and superintendents read all at the site |
 
-Plan 11.2 has no row for assist. Settings follow the RCM and spares settings.
+Plan 11.2 has no row for assist. Settings follow the RCM and spares settings. Asking follows
+"Run analyses": each question costs money, so viewers and technicians cannot ask.
 
 ## Later
 
-- **A language model** for AI-5 and for better drafts, called from a Supabase Edge Function with the
-  key kept as a Supabase secret, never in the app or the repository. It gets only the records the
-  person can see, and its answer must pass `checkCitations`. Plan 9 prefers a local model for
-  sensitive data; the choice is Ope's.
+- **Better drafts from Claude** for the pack summary and the RCA timeline, through the same function
+  and the same citation check.
+- **More context for questions**: another week, a filtered slice, or the work order numbers.
 - **Recoding a released flag** from a suggestion on the coding quality list. A7 has no rule for
   changing failure codes after release (T9 locks them; R5 locks closed periods). Until A7 says, the
   list shows the suggestion and the person recodes in Maximo.
