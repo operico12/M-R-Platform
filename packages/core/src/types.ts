@@ -41,7 +41,7 @@ export interface AssetLifecycleInterval {
 export type FlagType = 'scheduled' | 'unscheduled';
 
 /** A7 section 3.1. */
-export type FlagState = 'proposed' | 'open' | 'released' | 'voided' | 'process_delay';
+export type FlagState = 'proposed' | 'open' | 'released' | 'voided' | 'process_delay' | 'plant_node' | 'shutdown' | 'round';
 
 /** A7 section 4. */
 export type Stage =
@@ -215,7 +215,7 @@ export interface AuditEntry {
   at: Iso;
   userId: string;
   action: string;
-  entity: 'down_flag' | 'import_run' | 'target' | 'user' | 'code' | 'action' | 'rca' | 'project' | 'settings' | 'alert' | 'approval' | 'inspection' | 'inspection_form' | 'analysis' | 'view' | 'component' | 'life_target' | 'oil_sample' | 'rcm_mode' | 'job_plan' | 'process_delay';
+  entity: 'down_flag' | 'import_run' | 'target' | 'user' | 'code' | 'action' | 'rca' | 'project' | 'settings' | 'alert' | 'approval' | 'inspection' | 'inspection_form' | 'analysis' | 'view' | 'component' | 'life_target' | 'oil_sample' | 'rcm_mode' | 'job_plan' | 'process_delay' | 'plant_node' | 'shutdown' | 'round';
   entityId: string;
   before: unknown;
   after: unknown;

@@ -215,9 +215,11 @@ export interface PlantSettings {
   /** Propose or skip stops of a group member while the group still had enough running. */
   coveredStops: 'propose' | 'skip';
   delayCodes: DelayCode[];
+  /** Default scope freeze for a new shutdown, in days before its planned start. */
+  scopeFreezeDays: number;
 }
 
-export const DEFAULT_PLANT_SETTINGS: PlantSettings = { minStopMinutes: 1, changeoverMinutes: 5, coveredStops: 'propose', delayCodes: STARTER_DELAY_CODES };
+export const DEFAULT_PLANT_SETTINGS: PlantSettings = { minStopMinutes: 1, changeoverMinutes: 5, coveredStops: 'propose', delayCodes: STARTER_DELAY_CODES, scopeFreezeDays: 7 };
 
 export function withPlantDefaults(v: Partial<PlantSettings> | undefined): PlantSettings {
   const d = DEFAULT_PLANT_SETTINGS;
@@ -231,6 +233,7 @@ export function withPlantDefaults(v: Partial<PlantSettings> | undefined): PlantS
     changeoverMinutes: n(o.changeoverMinutes, d.changeoverMinutes),
     coveredStops: o.coveredStops === 'skip' || o.coveredStops === 'propose' ? o.coveredStops : d.coveredStops,
     delayCodes: codes.length ? codes : d.delayCodes,
+    scopeFreezeDays: n(o.scopeFreezeDays, d.scopeFreezeDays),
   };
 }
 
@@ -242,6 +245,7 @@ export function setPlantSettings(ctx: ConsoleContext, current: PlantSettings, ne
   const num = (x: number, lo: number, hi: number) => Number.isFinite(x) && x >= lo && x <= hi;
   if (!num(next.minStopMinutes, 0, 60)) e.push('Shortest stop must be from 0 to 60 minutes.');
   if (!num(next.changeoverMinutes, 0, 60)) e.push('Changeover gap must be from 0 to 60 minutes.');
+  if (!num(next.scopeFreezeDays, 0, 90) || !Number.isInteger(next.scopeFreezeDays)) e.push('Scope freeze must be a whole number of days from 0 to 90.');
   const names = next.delayCodes.map((c) => c.code.trim().toLowerCase());
   if (names.some((c) => !c)) e.push('A delay code needs a name.');
   if (new Set(names).size !== names.length) e.push('Delay codes must be different.');

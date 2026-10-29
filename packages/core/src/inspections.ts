@@ -8,7 +8,7 @@ import { can, permission } from './permissions.js';
 import { ms } from './time.js';
 import type { Asset, AssetClass, AuditEntry, Iso, SmuReading } from './types.js';
 
-export type ItemKind = 'pass_fail' | 'rating' | 'reading' | 'note';
+export type ItemKind = 'pass_fail' | 'rating' | 'reading' | 'note' | 'task';
 
 export interface FormItem {
   id: string;
@@ -24,6 +24,20 @@ export interface FormItem {
   min?: number;
   max?: number;
   unit?: string;
+  /** Plant routes: the equipment (stop) this item is checked at. */
+  stopId?: string;
+}
+
+export type RouteKind = 'operator_round' | 'lube_route';
+
+export const ROUTE_KIND_LABELS: Record<RouteKind, string> = { operator_round: 'Operator round', lube_route: 'Lube route' };
+
+/** A plant route (docs/fixed-plant.md "Operator rounds and lube routes"). */
+export interface Route {
+  kind: RouteKind;
+  nodeId: string;
+  /** Equipment ids in walking order. */
+  stops: string[];
 }
 
 export interface InspectionForm {
@@ -34,8 +48,10 @@ export interface InspectionForm {
   assetClass: AssetClass;
   /** Empty: every model of the class. */
   models: string[];
-  every: { n: number; unit: 'days' | 'smu_hours' };
+  every: { n: number; unit: 'days' | 'smu_hours' | 'shifts' };
   items: FormItem[];
+  /** Set for plant routes only. */
+  route?: Route;
   createdBy: string;
   createdAt: Iso;
   reason: string;
@@ -44,7 +60,7 @@ export interface InspectionForm {
 }
 
 export interface Answer {
-  /** pass_fail: 'pass' | 'fail'; rating: 1 to 5; reading: number; note: text. null = N/A. */
+  /** pass_fail: 'pass' | 'fail'; rating: 1 to 5; reading: number; note: text; task: 'done' | 'missed'. null = N/A. */
   value: string | number | null;
   note?: string;
   /** Photo ids. */
@@ -75,6 +91,8 @@ export interface Inspection {
   formId: string;
   formVersion: number;
   unitId: string;
+  /** Set when the inspection is one stop of a plant round. */
+  roundId?: string;
   smu?: number;
   status: InspectionStatus;
   answers: Record<string, Answer>;
@@ -111,12 +129,23 @@ export const latestForms = (forms: InspectionForm[]): InspectionForm[] => {
 export const formVersion = (forms: InspectionForm[], id: string, version: number) => forms.find((f) => f.id === id && f.version === version);
 export const appliesTo = (f: InspectionForm, a: Asset) => f.assetClass === a.assetClass && (!f.models.length || f.models.includes(a.model));
 
-export type FormInput = Pick<InspectionForm, 'name' | 'assetClass' | 'models' | 'every' | 'items'>;
+export type FormInput = Pick<InspectionForm, 'name' | 'assetClass' | 'models' | 'every' | 'items'> & { route?: Route };
 
 function checkForm(input: FormInput): string[] {
   const e: string[] = [];
   if (!input.name.trim()) e.push('Name the form.');
-  if (!Number.isInteger(input.every.n) || input.every.n < 1 || input.every.n > (input.every.unit === 'days' ? 366 : 20000)) e.push('Set how often it is due.');
+  const maxN = input.every.unit === 'days' ? 366 : input.every.unit === 'shifts' ? 60 : 20000;
+  if (!Number.isInteger(input.every.n) || input.every.n < 1 || input.every.n > maxN) e.push('Set how often it is due.');
+  const r = input.route;
+  if (r) {
+    if (input.assetClass !== 'fixed_plant') e.push('A route is for fixed plant.');
+    if (r.kind !== 'operator_round' && r.kind !== 'lube_route') e.push('Pick operator round or lube route.');
+    if (!r.nodeId) e.push('Pick where the route is.');
+    if (!r.stops.length) e.push('Add at least one stop.');
+    if (new Set(r.stops).size !== r.stops.length) e.push('A stop is listed twice.');
+    if (input.every.unit === 'smu_hours') e.push('A route is due every so many shifts or days.');
+    for (const st of r.stops) if (!input.items.some((it) => it.stopId === st)) e.push('Every stop needs at least one item.');
+  } else if (input.every.unit === 'shifts') e.push('Only plant routes are due by shift.');
   if (!input.items.length) e.push('Add at least one item.');
   const ids = new Set<string>();
   input.items.forEach((it, i) => {
@@ -128,6 +157,8 @@ function checkForm(input: FormInput): string[] {
     if (it.kind === 'reading' && it.min === undefined && it.max === undefined) e.push(`${at}: a reading needs a lower or upper limit.`);
     if (it.kind === 'reading' && it.min !== undefined && it.max !== undefined && it.min > it.max) e.push(`${at}: the lower limit is above the upper limit.`);
     if (it.kind === 'note' && it.critical) e.push(`${at}: a note cannot be critical.`);
+    if (r && (!it.stopId || !r.stops.includes(it.stopId))) e.push(`${at}: pick its stop.`);
+    if (!r && it.stopId) e.push(`${at}: only route items have a stop.`);
   });
   return e;
 }
@@ -144,6 +175,7 @@ export function saveForm(ctx: ConsoleContext, forms: InspectionForm[], id: strin
   const f: InspectionForm = {
     id: prev?.id ?? ctx.newId(), version: (prev?.version ?? 0) + 1, name: input.name.trim(), assetClass: input.assetClass, models: input.models,
     every: input.every, items: input.items.map((it) => ({ ...it, text: it.text.trim(), section: it.section.trim() || 'General', weight: it.weight || 1 })),
+    ...(input.route ? { route: { kind: input.route.kind, nodeId: input.route.nodeId, stops: [...input.route.stops] } } : {}),
     createdBy: ctx.actor.userId, createdAt: ctx.now, reason: reason.trim(),
   };
   return { ok: true, records: [...forms, f], audit: [log(ctx, prev ? 'new_form_version' : 'add_form', 'inspection_form', f.id, prev ?? null, f, f.reason)], warnings: [] };
@@ -163,6 +195,7 @@ export function retireForm(ctx: ConsoleContext, forms: InspectionForm[], id: str
 export function itemFailed(it: FormItem, a: Answer | undefined): boolean {
   if (!a || a.value === null || a.value === undefined || a.value === '') return false;
   if (it.kind === 'pass_fail') return a.value === 'fail';
+  if (it.kind === 'task') return a.value === 'missed';
   if (it.kind === 'rating') return Number(a.value) <= 2;
   if (it.kind === 'reading') {
     const v = Number(a.value);
@@ -174,6 +207,7 @@ export function itemFailed(it: FormItem, a: Answer | undefined): boolean {
 function itemScore(it: FormItem, a: Answer): number | null {
   if (a.value === null || a.value === '' || it.kind === 'note') return null;
   if (it.kind === 'pass_fail') return a.value === 'pass' ? 1 : 0;
+  if (it.kind === 'task') return a.value === 'done' ? 1 : 0;
   if (it.kind === 'rating') return (Number(a.value) - 1) / 4;
   return itemFailed(it, a) ? 0 : 1;
 }
@@ -204,6 +238,8 @@ export function submitProblems(form: InspectionForm, answers: Record<string, Ans
     if (it.critical && a && a.value === null) { e.push(`${at}: critical, so it cannot be N/A.`); return; }
     if (it.kind === 'rating' && a && a.value !== null && ![1, 2, 3, 4, 5].includes(Number(a.value))) e.push(`${at}: rate 1 to 5.`);
     if (it.kind === 'reading' && a && a.value !== null && !Number.isFinite(Number(a.value))) e.push(`${at}: enter a number.`);
+    if (it.kind === 'task' && a && a.value !== null && a.value !== 'done' && a.value !== 'missed') e.push(`${at}: done or missed.`);
+    if (it.kind === 'pass_fail' && a && a.value !== null && a.value !== 'pass' && a.value !== 'fail') e.push(`${at}: pass or fail.`);
     if (itemFailed(it, a)) {
       if (!a!.note?.trim()) e.push(`${at}: failed, so add a note.`);
       if (it.photoOnFail && !a!.photos?.length) e.push(`${at}: failed, so add a photo.`);
@@ -217,6 +253,7 @@ export function submitProblems(form: InspectionForm, answers: Record<string, Ans
 export function startInspection(ctx: ConsoleContext, list: Inspection[], form: InspectionForm, unit: Asset, smu?: number): Ok<Inspection> | No {
   if (!can(ctx.actor, 'add_notes')) return no('Your role cannot do inspections.');
   if (form.retiredAt) return no('That form is retired.');
+  if (form.route) return no('A route is done as a round, from the Plant page.');
   if (!appliesTo(form, unit)) return no(`${form.name} does not apply to ${unit.unitNumber}.`);
   if (smu !== undefined && !(smu >= 0)) return no('The SMU reading must be a number.');
   const i: Inspection = { id: ctx.newId(), formId: form.id, formVersion: form.version, unitId: unit.id, smu, status: 'draft', answers: {}, defects: [], startedBy: ctx.actor.userId, startedAt: ctx.now };
@@ -310,7 +347,8 @@ export function smuNow(smu: SmuReading[], unitId: string, now: Iso): number | un
 export function dueList(forms: InspectionForm[], assets: Asset[], list: Inspection[], smu: SmuReading[], now: Iso, tz: string): DueRow[] {
   const today = siteToday(now, tz);
   const rows: DueRow[] = [];
-  for (const form of latestForms(forms).filter((f) => !f.retiredAt)) {
+  // Plant routes have their own due list (routeDue in rounds.ts).
+  for (const form of latestForms(forms).filter((f) => !f.retiredAt && !f.route)) {
     for (const unit of assets.filter((a) => appliesTo(form, a))) {
       const done = list.filter((i) => i.formId === form.id && i.unitId === unit.id && (i.status === 'submitted' || i.status === 'signed_off'))
         .sort((a, b) => ms(b.submittedAt!) - ms(a.submittedAt!));

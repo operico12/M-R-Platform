@@ -13,9 +13,13 @@
 
 import { DateTime } from 'luxon';
 import { DEFAULT_FLAG_RULES } from '../config.js';
+import { normaliseWoNumber } from '../imports.js';
+import { scoreInspection, type Answer, type FormItem, type Inspection, type InspectionForm } from '../inspections.js';
 import { proposeStop, detectStops, DEFAULT_PLANT_SETTINGS, PLANT_SYSTEMS, equipmentUnder, plantTree, type PlantNode, type ProcessDelay, type RunSignal, type TreeNode } from '../plant.js';
-import { HOUR_MS, toIso, twelveHourCalendar } from '../time.js';
-import type { Asset, DownFlag, LocationInterval, Stage, StageInterval } from '../types.js';
+import { stopForm, type Round } from '../rounds.js';
+import type { Shutdown, ScopeItem } from '../shutdowns.js';
+import { HOUR_MS, shiftsBetween, toIso, twelveHourCalendar, type ShiftCalendar } from '../time.js';
+import type { Asset, DownFlag, LocationInterval, Stage, StageInterval, WorkOrder } from '../types.js';
 
 export interface PlantDataset {
   nodes: PlantNode[];
@@ -23,6 +27,12 @@ export interface PlantDataset {
   flags: DownFlag[];
   delays: ProcessDelay[];
   signals: RunSignal[];
+  /** Part 2: shutdowns with their scope, the work orders they name, and operator rounds and lube routes. */
+  shutdowns: Shutdown[];
+  workOrders: WorkOrder[];
+  forms: InspectionForm[];
+  rounds: Round[];
+  inspections: Inspection[];
 }
 
 export interface PlantSynthOptions {
@@ -33,6 +43,8 @@ export interface PlantSynthOptions {
   timeZone?: string;
   tenantId?: string;
   siteId?: string;
+  /** User ids for rounds and shutdowns. */
+  people?: { technician: string; supervisor: string };
 }
 
 function rng(seed: number) {
@@ -375,7 +387,197 @@ export function generatePlant(opts: PlantSynthOptions): PlantDataset {
     if (Date.parse(s.start) < cutoff) all.push({ ...f, state: 'voided', voidReason: s.covered ? 'Duty and standby changeover' : 'Not a stop', enteredAt: s.start });
     else all.push({ ...f, enteredAt: s.start });
   }
-  return { nodes, equipment, flags: all.sort((x, y) => Date.parse(x.start) - Date.parse(y.start)), delays: keptDelays, signals };
+  const work = plantWork({ r, tz, tenantId, siteId, start, end, days, equipment, flags: all, calendar, people: opts.people ?? { technician: 'user-technician', supervisor: sup } });
+  return { nodes, equipment, flags: all.sort((x, y) => Date.parse(x.start) - Date.parse(y.start)), delays: keptDelays, signals, ...work };
+}
+
+// ---------- part 2: shutdowns, work orders, rounds ----------
+
+const SD_WORK: Record<string, string[]> = {
+  CV02: ['Replace head pulley lagging', 'Change belt scraper blades', 'Inspect idlers and replace seized'],
+  SAG01: ['Replace feed chute liners', 'Inspect shell liner bolts', 'Change lube oil filters', 'Inspect trunnion bearings'],
+  BM01: ['Inspect girth gear and pinion', 'Change lube oil filters', 'Replace discharge trommel panels'],
+  RG01: ['Replace mill liners', 'Inspect gearbox'],
+  TH01: ['Inspect rake drive gearbox', 'Clear feedwell'],
+  TH02: ['Inspect rake drive gearbox', 'Replace underflow valve'],
+};
+
+interface WorkIn {
+  r: () => number; tz: string; tenantId: string; siteId: string; start: number; end: number; days: number;
+  equipment: Asset[]; flags: DownFlag[]; calendar: ShiftCalendar; people: { technician: string; supervisor: string };
+}
+
+function plantWork(w: WorkIn): Pick<PlantDataset, 'shutdowns' | 'workOrders' | 'forms' | 'rounds' | 'inspections'> {
+  const { r, tz, tenantId, siteId, start, end, equipment, flags, people } = w;
+  const byNum = new Map(equipment.map((a) => [a.unitNumber, a]));
+  const localAt = (t: number, hour: number) => DateTime.fromMillis(t, { zone: tz }).startOf('day').set({ hour }).toMillis();
+  const workOrders: WorkOrder[] = [];
+  const shutdowns: Shutdown[] = [];
+  let woSeq = 410000;
+  let n = 0;
+  const wo = (a: Asset, text: string, open: boolean, target: number, done?: number): WorkOrder => {
+    const number = `WO-${++woSeq}`;
+    const x: WorkOrder = {
+      id: `pwo-${woSeq}`, tenantId, siteId, assetId: a.id, sourceSystem: 'maximo', sourceId: String(woSeq), number, numberNormalised: normaliseWoNumber(number),
+      externalAssetId: a.externalAssetId, woType: 'PM', workClass: 'pm', status: open ? 'WPCOND' : 'COMP', open, priority: '2', description: `${a.unitNumber} ${text.toLowerCase()}`,
+      reportedAt: toIso(target - 20 * 24 * HOUR_MS), targetStart: toIso(target), estimatedHours: Math.round(2 + r() * 10),
+      ...(done ? { completedAt: toIso(done), actualLabourHours: Math.round(2 + r() * 12) } : {}),
+    };
+    workOrders.push(x);
+    return x;
+  };
+  const scope = (x: WorkOrder, at: number, late: boolean, reason?: string): ScopeItem =>
+    ({ id: `sds-${++n}`, workOrder: x.numberNormalised, addedAt: toIso(at), addedBy: people.supervisor, late, ...(reason ? { reason } : {}) });
+  const parts = ['CV02', 'SAG01', 'BM01', 'RG01', 'TH01', 'TH02'];
+  const ids = parts.map((p) => byNum.get(p)!.id);
+  // The wet plant shutdowns the simulation ran, every 28 days from day 10, and the next one, planned.
+  for (let d = 10; ; d += 28) {
+    const s = localAt(start + d * 24 * HOUR_MS, 6);
+    const past = s < end;
+    const plannedEnd = s + 12 * HOUR_MS;
+    const freeze = s - 7 * 24 * HOUR_MS;
+    const master = `WO-${++woSeq}`;
+    const sdFlags = flags.filter((f) => ids.includes(f.unitId) && f.type === 'scheduled' && Date.parse(f.start) === s);
+    const items: ScopeItem[] = [];
+    for (const p of parts) {
+      for (const text of SD_WORK[p]!) {
+        if (r() < 0.25) continue;
+        const done = past && r() < 0.9;
+        const x = wo(byNum.get(p)!, text, !done, s, done ? s + 10 * HOUR_MS : undefined);
+        items.push(scope(x, freeze - (2 + r() * 10) * 24 * HOUR_MS, false));
+      }
+    }
+    // Work found late, and one job deferred.
+    const lateN = Math.floor(r() * 3);
+    for (let i = 0; i < lateN; i++) {
+      const a = byNum.get(parts[Math.floor(r() * parts.length)]!)!;
+      const done = past && r() < 0.7;
+      const x = wo(a, pick(r, ['Replace leaking hydraulic hose', 'Repair worn chute', 'Change failed limit switch']), !done, s, done ? s + 11 * HOUR_MS : undefined);
+      items.push(scope(x, Math.min(end - HOUR_MS, freeze + (1 + r() * 5) * 24 * HOUR_MS), true, 'Found on inspection after the freeze'));
+    }
+    if (items.length > 4 && r() < 0.6) {
+      const k = items[Math.floor(r() * items.length)]!;
+      Object.assign(k, { removedAt: toIso(Math.min(end - HOUR_MS, freeze + 24 * HOUR_MS)), removedBy: people.supervisor, removedReason: 'Parts not on site; moved to the next shutdown' });
+    }
+    const actualEnd = sdFlags.length ? (sdFlags.some((f) => !f.end) ? Infinity : Math.max(...sdFlags.map((f) => Date.parse(f.end!)))) : plannedEnd;
+    const sd: Shutdown = {
+      id: `sd-${d}`, tenantId, siteId, nodeId: 'pn-con', name: `Wet plant shutdown ${DateTime.fromMillis(s, { zone: tz }).toFormat('d LLL')}`,
+      workOrder: master, plannedStart: toIso(s), plannedEnd: toIso(plannedEnd), freezeAt: toIso(freeze), equipmentIds: ids, scope: items,
+      flagIds: past ? sdFlags.map((f) => f.id) : [], createdBy: people.supervisor, createdAt: toIso(freeze - 21 * 24 * HOUR_MS),
+      ...(past ? { actualStart: toIso(s), ...(actualEnd && actualEnd <= end ? { actualEnd: toIso(actualEnd), findings: 'Liners at 40% remaining; next change in two shutdowns.' } : {}) } : {}),
+    };
+    // The flags the shutdown raised carry its master work order and reason code.
+    for (const f of sdFlags) {
+      f.reasonCode = 'SHUTDOWN';
+      f.workOrders = [master];
+      f.notes = `Shutdown: ${sd.name}`;
+      if (f.release) f.release = { ...f.release, pmOrWorkOrder: master, repairSummary: `Shutdown ${sd.name} complete` };
+    }
+    shutdowns.push(sd);
+    if (!past) break;
+  }
+
+  // ---- routes ----
+  const it = (stop: string, id: string, text: string, kind: FormItem['kind'], over: Partial<FormItem> = {}): FormItem =>
+    ({ id: `${stop.toLowerCase()}-${id}`, section: stop, text, kind, critical: false, weight: 1, photoOnFail: false, stopId: byNum.get(stop)!.id, ...over });
+  const pump = (p: string) => [
+    it(p, 'seal', 'Gland or seal not leaking', 'pass_fail', { photoOnFail: true }),
+    it(p, 'brg', 'Bearing temperature', 'reading', { max: 80, unit: '°C' }),
+    it(p, 'noise', 'No unusual noise or vibration', 'pass_fail'),
+  ];
+  const created = toIso(start);
+  const base = { version: 1, assetClass: 'fixed_plant' as const, models: [], createdBy: people.supervisor, createdAt: created, reason: 'First version' };
+  const grd = ['SAG01', 'BM01', 'PP01', 'PP02'];
+  const fld = ['FC01', 'FC02', 'FC03', 'FC04', 'TH02', 'PP05', 'PP06'];
+  const lube = ['SAG01', 'BM01', 'PP01', 'PP02', 'PP03', 'PP04', 'PP05', 'PP06'];
+  const forms: InspectionForm[] = [
+    {
+      ...base, id: 'rt-grd', name: 'Grinding operator round', every: { n: 1, unit: 'shifts' },
+      route: { kind: 'operator_round', nodeId: 'pn-grd', stops: grd.map((x) => byNum.get(x)!.id) },
+      items: [
+        it('SAG01', 'oil', 'Lube oil pressure', 'reading', { min: 1.5, max: 3, unit: 'bar', critical: true, weight: 2 }),
+        it('SAG01', 'brg', 'Trunnion bearing temperature', 'reading', { max: 65, unit: '°C', weight: 2 }),
+        it('SAG01', 'bolts', 'No leaks at liner bolts or feed chute', 'pass_fail', { photoOnFail: true }),
+        it('BM01', 'oil', 'Lube oil pressure', 'reading', { min: 1.5, max: 3, unit: 'bar', critical: true, weight: 2 }),
+        it('BM01', 'brg', 'Pinion bearing temperature', 'reading', { max: 70, unit: '°C' }),
+        ...pump('PP01'), ...pump('PP02'),
+      ],
+    },
+    {
+      ...base, id: 'rt-fld', name: 'Flotation and tailings round', every: { n: 1, unit: 'shifts' },
+      route: { kind: 'operator_round', nodeId: 'pn-fld', stops: fld.map((x) => byNum.get(x)!.id) },
+      items: [
+        ...['FC01', 'FC02', 'FC03', 'FC04'].flatMap((c) => [it(c, 'air', 'Air flow steady', 'pass_fail'), it(c, 'froth', 'Froth level in range', 'pass_fail')]),
+        it('TH02', 'torque', 'Rake torque', 'reading', { max: 60, unit: '%', critical: true }),
+        ...pump('PP05'), ...pump('PP06'),
+      ],
+    },
+    {
+      ...base, id: 'rt-lube', name: 'Mill and pump lube route', every: { n: 7, unit: 'days' },
+      route: { kind: 'lube_route', nodeId: 'pn-con', stops: lube.map((x) => byNum.get(x)!.id) },
+      items: lube.flatMap((x) => x === 'SAG01' || x === 'BM01'
+        ? [it(x, 'de', 'Grease drive-end bearing', 'task'), it(x, 'nde', 'Grease non-drive-end bearing', 'task'), it(x, 'gb', 'Gearbox oil level correct', 'pass_fail')]
+        : [it(x, 'de', 'Grease drive-end bearing', 'task'), it(x, 'nde', 'Grease non-drive-end bearing', 'task')]),
+    },
+  ];
+
+  const rounds: Round[] = [];
+  const inspections: Inspection[] = [];
+  const downAt = (id: string, t: number) => flags.some((f) => f.unitId === id && (f.state === 'open' || f.state === 'released') && Date.parse(f.start) <= t && (f.end === null || Date.parse(f.end) > t));
+  const answer = (x: FormItem): Answer => {
+    const bad = r() < 0.025;
+    if (x.kind === 'pass_fail') return bad ? { value: 'fail', note: 'Seen on round' } : { value: 'pass' };
+    if (x.kind === 'task') return bad ? { value: 'missed', note: 'Grease line blocked' } : { value: 'done' };
+    if (x.kind === 'reading') {
+      const hi = x.max ?? 100;
+      const lo = x.min ?? 0;
+      const v = bad ? (x.max !== undefined ? hi * 1.08 : lo * 0.8) : lo + (hi - lo) * (0.45 + r() * 0.35);
+      return bad ? { value: Math.round(v * 10) / 10, note: x.max !== undefined ? 'Running hot' : 'Low' } : { value: Math.round(v * 10) / 10 };
+    }
+    return { value: 3 };
+  };
+  const doRound = (form: InspectionForm, at: number) => {
+    const id = `rd-${++n}`;
+    const skipped: Round['skipped'] = [];
+    for (const stop of form.route!.stops) {
+      if (downAt(stop, at)) { skipped.push({ stopId: stop, reason: 'Equipment down' }); continue; }
+      const sf = stopForm(form, stop);
+      const answers: Record<string, Answer> = {};
+      for (const x of sf.items) answers[x.id] = answer(x);
+      const { score, result, failed } = scoreInspection(sf, answers);
+      const sub = at + 30 * 60_000;
+      const old = end - sub > 24 * HOUR_MS;
+      const iid = `${id}-${stop}`;
+      inspections.push({
+        id: iid, formId: form.id, formVersion: 1, unitId: stop, roundId: id, status: old ? 'signed_off' : 'submitted', answers, startedBy: people.technician,
+        startedAt: toIso(at), submittedAt: toIso(sub), score, result,
+        defects: failed.map((f, k) => ({
+          id: `${iid}-d${k}`, itemId: f.id, text: `${f.text}${answers[f.id]?.note ? `: ${answers[f.id]!.note}` : ''}`, severity: f.critical ? 'high' : 'medium',
+          ...(end - sub > 3 * 24 * HOUR_MS ? { status: 'closed' as const, closeNote: 'Fixed on the next shift', updatedBy: people.supervisor, updatedAt: toIso(sub + 12 * HOUR_MS) } : { status: 'open' as const }),
+        })),
+        ...(old ? { signedOffBy: people.supervisor, signedOffAt: toIso(sub + 6 * HOUR_MS) } : {}),
+      });
+    }
+    if (skipped.length === form.route!.stops.length) return;
+    rounds.push({ id, formId: form.id, formVersion: 1, nodeId: form.route!.nodeId, status: 'submitted', startedBy: people.technician, startedAt: toIso(at), submittedAt: toIso(at + 30 * 60_000), skipped });
+  };
+  const shifts = shiftsBetween(w.calendar, toIso(end - 14 * 24 * HOUR_MS), toIso(end)).filter((x) => Date.parse(x.start) >= end - 14 * 24 * HOUR_MS);
+  for (const sh of shifts) {
+    const at = Date.parse(sh.start) + (1.5 + r()) * HOUR_MS;
+    const current = Date.parse(sh.end) > end;
+    for (const form of forms.slice(0, 2)) {
+      // The grinding round is not done yet this shift, so the due list shows it.
+      if (current && (form.id === 'rt-grd' || at > end)) continue;
+      if (!current && r() < 0.07) continue;
+      doRound(form, at);
+    }
+  }
+  for (let t = localAt(end - 56 * 24 * HOUR_MS, 9); t < end - 24 * HOUR_MS; t += 7 * 24 * HOUR_MS) doRound(forms[2]!, t + (r() < 0.2 ? 24 * HOUR_MS : 0));
+  return { shutdowns, workOrders, forms, rounds, inspections };
+}
+
+function pick<T>(r: () => number, xs: T[]): T {
+  return xs[Math.floor(r() * xs.length)]!;
 }
 
 function hash(s: string): number {

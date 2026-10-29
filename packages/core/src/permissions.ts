@@ -36,6 +36,7 @@ export type Action =
   | 'record_condition'
   | 'edit_condition_settings'
   | 'edit_plant_settings'
+  | 'run_shutdowns'
   | 'edit_rcm'
   | 'issue_job_plans'
   | 'edit_spares'
@@ -84,6 +85,8 @@ const MATRIX: Record<Action, Partial<Record<Role, Permission>>> = {
   edit_condition_settings: { reliability_engineer: 'yes', superintendent: 'yes', admin: 'yes' },
   // docs/fixed-plant.md: plan 11.2 has no plant settings row; these follow the alert and condition settings.
   edit_plant_settings: { reliability_engineer: 'yes', superintendent: 'yes', admin: 'yes' },
+  // docs/fixed-plant.md "Shutdowns": plan 11.2 has no shutdown row; follows "Set or clear down flags" without the area limit.
+  run_shutdowns: { supervisor: 'yes', reliability_engineer: 'yes', superintendent: 'yes' },
   // docs/rcm.md: plan 11.2 has no RCM row; these follow "Lead root cause analyses".
   edit_rcm: { reliability_engineer: 'yes', superintendent: 'yes' },
   issue_job_plans: { reliability_engineer: 'yes', superintendent: 'yes' },
@@ -118,7 +121,7 @@ export const ACTION_LABELS: Record<Action, string> = {
   export_reports: 'Export reports and data',
   edit_codes: 'Edit reason codes',
   open_close_line: 'Open or close a shop line',
-  edit_shop_structure: 'Edit shops, lines and field locations',
+  edit_shop_structure: 'Edit shops, lines, field locations and plant structure',
   change_flag_rules: 'Change flag rules',
   change_targets: 'Change KPI targets',
   edit_alert_rules: 'Edit alert rules and thresholds',
@@ -130,6 +133,7 @@ export const ACTION_LABELS: Record<Action, string> = {
   record_condition: 'Enter oil results and respond to them',
   edit_condition_settings: 'Change condition monitoring settings',
   edit_plant_settings: 'Change plant stop detection settings and process delay codes',
+  run_shutdowns: 'Plan, start and end plant shutdowns',
   edit_rcm: 'Edit the RCM failure mode library',
   issue_job_plans: 'Issue PM job plan revisions',
   edit_spares: 'Change spares sizing settings',
