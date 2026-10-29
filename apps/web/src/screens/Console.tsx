@@ -4,6 +4,15 @@
 // governed role changes go through approvals (docs/approvals.md).
 
 import {
+  JOB_TITLES,
+  accessEndFromLastDay,
+  accessEnded,
+  crewLabel,
+  crewShiftAt,
+  jobTitle,
+  lastDayOfAccess,
+  siteCrews,
+  titleLabel,
   ASSIGNABLE_ROLES,
   GOVERNED_ROLES,
   ROLE_LABELS,
@@ -95,7 +104,7 @@ function Users() {
   return (
     <>
       <div className="row" style={{ justifyContent: 'space-between' }}>
-        <p className="small muted" style={{ margin: 0 }}>Roles: Viewer, Supervisor, Reliability engineer, Superintendent and Admin. Giving the Admin or Superintendent role, and acting roles, need a superintendent's approval{hasSuperintendent(app.users, app.now) ? '' : ' once the site has one'}. Technician and kiosk accounts come later.</p>
+        <p className="small muted" style={{ margin: 0 }}>The job title is what someone does; the access role is what the app lets them do. Roles: Viewer, Technician, Supervisor, Reliability engineer, Superintendent and Admin. Giving the Admin or Superintendent role, and acting roles, need a superintendent's approval{hasSuperintendent(app.users, app.now) ? '' : ' once the site has one'}.</p>
         <button className="btn primary" disabled={!allowed} onClick={() => setEdit('new')}>Add user</button>
       </div>
       {!allowed && <p className="small muted">Only the Admin can change users. You can see who has access.</p>}
@@ -109,11 +118,12 @@ function Users() {
       )}
       <div className="table-wrap">
         <table>
-          <thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Scope</th><th /></tr></thead>
+          <thead><tr><th>Name</th><th>Job title and crew</th><th>Access role</th><th>Scope</th><th /></tr></thead>
           <tbody>
             {live.map((u) => (
               <tr key={u.id}>
-                <td>{u.name}{u.id === app.actor.userId ? ' (you)' : ''}</td><td>{u.email}</td>
+                <td>{u.name}{u.id === app.actor.userId ? ' (you)' : ''}<div className="small muted">{u.email}</div></td>
+                <td><PersonCell u={u} /></td>
                 <td>{ROLE_LABELS[u.role]}{ASSIGNABLE_ROLES.includes(u.role) ? '' : ' · demo only'}
                   {u.actingRole && u.actingUntil && Date.parse(u.actingUntil) > Date.parse(app.now) && <div className="small">Acting {ROLE_LABELS[u.actingRole]} to the end of {siteToday(new Date(Date.parse(u.actingUntil) - 60000).toISOString(), app.ds.site.timeZone)}</div>}
                   {pendingFor(u.id).map((r) => <div key={r.id} className="small muted">Waiting for approval: {r.title}</div>)}</td>
@@ -146,15 +156,33 @@ function UserForm({ user, onDone }: { user: SiteUser | null; onDone: () => void 
   const [asked, setAsked] = useState(false);
   const [whole, setWhole] = useState(user ? user.scope.includes('*') : true);
   const [areas, setAreas] = useState(user && !user.scope.includes('*') ? user.scope.join(', ') : '');
+  const [title, setTitle] = useState(user?.jobTitle ?? '');
+  const [titleOther, setTitleOther] = useState(user?.jobTitleOther ?? '');
+  const [crew, setCrew] = useState(user?.crew ?? '');
+  const tz = app.ds.site.timeZone;
+  const [lastDay, setLastDay] = useState(user?.accessUntil ? lastDayOfAccess(user.accessUntil, tz) : '');
   const [reason, setReason] = useState('');
   const [errors, setErrors] = useState<string[] | null>(null);
-  const input = { name, email, role, scope: whole ? ['*'] : areas.split(',').map((x) => x.trim()).filter(Boolean) };
+  const t = jobTitle(title);
+  // A blank or unreadable last day is passed through as text so the core check names the problem.
+  const accessUntil = lastDay ? accessEndFromLastDay(lastDay, tz) ?? lastDay : undefined;
+  const input = {
+    name, email, role, scope: whole ? ['*'] : areas.split(',').map((x) => x.trim()).filter(Boolean),
+    jobTitle: title || undefined, jobTitleOther: title === 'other' ? titleOther : undefined, crew: crew || undefined, accessUntil,
+  };
+  const pickTitle = (id: string) => {
+    setTitle(id);
+    const s = jobTitle(id)?.suggestedRole;
+    // Suggest the role for a new person; a change of title never changes an existing person's access by itself.
+    if (!user && s && ASSIGNABLE_ROLES.includes(s)) setRole(s);
+  };
 
   const save = () => {
     if (user && needsApproval) {
       // Other changes apply now; the role waits for a superintendent.
       const other = { ...input, role: user.role };
-      const changed = other.name.trim() !== user.name || other.email.trim().toLowerCase() !== user.email || other.scope.join() !== user.scope.join();
+      const changed = other.name.trim() !== user.name || other.email.trim().toLowerCase() !== user.email || other.scope.join() !== user.scope.join()
+        || (other.jobTitle ?? '') !== (user.jobTitle ?? '') || (other.jobTitleOther ?? '') !== (user.jobTitleOther ?? '') || (other.crew ?? '') !== (user.crew ?? '') || (other.accessUntil ?? '') !== (user.accessUntil ?? '');
       if (changed) {
         const c = app.runConsole('users', (x) => changeUser(x, app.users, user.id, other, reason));
         if (!c.ok) { setErrors(c.errors); return; }
@@ -184,7 +212,23 @@ function UserForm({ user, onDone }: { user: SiteUser | null; onDone: () => void 
       <div className="grid two">
         <label className="field"><span>Name</span><input value={name} onChange={(e) => setName(e.target.value)} /></label>
         <label className="field"><span>Email</span><input type="email" value={email} onChange={(e) => setEmail(e.target.value)} /></label>
-        <label className="field"><span>Role</span>
+        <label className="field"><span>Job title</span>
+          <select value={title} onChange={(e) => pickTitle(e.target.value)}>
+            <option value="">Not set</option>
+            {JOB_TITLES.map((j) => <option key={j.id} value={j.id}>{j.label}</option>)}
+          </select>
+        </label>
+        {title === 'other' && <label className="field"><span>Job title (Other)</span><input value={titleOther} maxLength={60} onChange={(e) => setTitleOther(e.target.value)} placeholder="e.g. Tyre fitter" /></label>}
+        <label className="field"><span>Crew</span>
+          <select value={crew} onChange={(e) => setCrew(e.target.value)}>
+            <option value="">Not set</option>
+            {siteCrews(app.ds.calendar).map((c) => <option key={c} value={c}>{crewLabel(c)}</option>)}
+          </select>
+        </label>
+        <label className="field"><span>Last day of access{t?.external ? '' : ' (optional)'}</span>
+          <input type="date" value={lastDay} onChange={(e) => setLastDay(e.target.value)} />
+        </label>
+        <label className="field"><span>Access role{t && !user ? ` (suggested for ${t.label.toLowerCase()})` : ''}</span>
           <select value={role} onChange={(e) => setRole(e.target.value as Role)}>{ASSIGNABLE_ROLES.map((r) => <option key={r} value={r}>{ROLE_LABELS[r]}{GOVERNED_ROLES.includes(r) && r !== user?.role && hasSuperintendent(app.users, app.now) ? ' (needs approval)' : ''}</option>)}</select>
         </label>
         <div className="field"><span>Scope</span>
@@ -192,6 +236,7 @@ function UserForm({ user, onDone }: { user: SiteUser | null; onDone: () => void 
           {!whole && <input placeholder="Areas or fleets, comma separated" value={areas} onChange={(e) => setAreas(e.target.value)} />}
         </div>
         {user && <label className="field"><span>Reason for the change</span><input value={reason} onChange={(e) => setReason(e.target.value)} /></label>}
+        {t?.external && <p className="small muted">{t.label}s are from outside the company: access stops at midnight site time after the last day (up to a year; extend it later if needed).</p>}
         {!user && needsApproval && <p className="small muted">Add them as a viewer first, then ask for the {ROLE_LABELS[role]} role.</p>}
       </div>
       <p className="small muted">They will be able to: {permissionsFor(role).map((p) => `${p.label.toLowerCase()} (${PERM_WORD[p.permission]!.toLowerCase()})`).join('; ')}.</p>
@@ -202,6 +247,24 @@ function UserForm({ user, onDone }: { user: SiteUser | null; onDone: () => void 
       </div>
       {user && <p className="small muted">Removing access keeps the person's records and history. Nothing is deleted.</p>}
     </Panel>
+  );
+}
+
+function PersonCell({ u }: { u: SiteUser }) {
+  const app = useApp();
+  const tz = app.ds.site.timeZone;
+  const on = crewShiftAt(app.ds.calendar, u.crew, app.now);
+  const title = titleLabel(u);
+  return (
+    <>
+      {title || <span className="muted">—</span>}
+      {u.crew && <div className="small">{crewLabel(u.crew)}{on ? (on.onShift ? ` · on ${on.shift} shift now` : ' · off shift now') : ''}</div>}
+      {u.accessUntil && (
+        <div className={`small ${accessEnded(u, app.now) ? 'status down' : 'muted'}`}>
+          {accessEnded(u, app.now) ? 'Access ended ' : 'Access to the end of '}{lastDayOfAccess(u.accessUntil, tz)}
+        </div>
+      )}
+    </>
   );
 }
 

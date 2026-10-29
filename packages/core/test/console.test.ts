@@ -61,10 +61,10 @@ describe('users', () => {
   const admin = ctx('admin', 'a1');
   const seed: SiteUser[] = [{ id: 'a1', name: 'Admin', email: 'admin@example.com', role: 'admin', scope: ['*'], addedAt: admin.now }];
 
-  it('only the Admin manages users, and only the four phase 1a roles', () => {
+  it('only the Admin manages users; technician can be given since job titles', () => {
     const u = { name: 'Sam', email: 'sam@example.com', role: 'supervisor' as Role, scope: ['Truck shop'] };
     expect(addUser(ctx('reliability_engineer'), seed, u).ok).toBe(false);
-    expect(addUser(admin, seed, { ...u, role: 'technician' }).ok).toBe(false);
+    expect(addUser(admin, seed, { ...u, role: 'technician' }).ok).toBe(true);
     expect(addUser(admin, seed, { ...u, email: 'ADMIN@example.com' }).ok).toBe(false);
     const r = addUser(admin, seed, u);
     expect(r.ok && r.audit[0]!.action).toBe('add_user');

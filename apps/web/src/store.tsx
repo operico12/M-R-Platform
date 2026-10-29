@@ -262,9 +262,9 @@ export function AppProvider({ children, live, onReload, onSignOut, sites = DEMO_
   const [codes, setCodes] = useState<ReasonCode[]>(() => (live?.codes.length ? live.codes : defaultReasonCodes()));
   // Demo people, one per role, so "Viewing as" acts as a real user. Names are fictional.
   const [users, setUsers] = useState<SiteUser[]>(() => live?.users ?? [
-    ['viewer', 'Vic Viewer'], ['technician', 'Tia Technician'], ['supervisor', 'Sam Supervisor'],
-    ['reliability_engineer', 'Rae Reliability'], ['superintendent', 'Sol Superintendent'], ['admin', 'Ada Admin'],
-  ].map(([role, name]) => ({ id: `demo-${role}`, name: name!, email: `${role}@example.com`, role: role as Role, scope: ['*'], addedAt: '2026-01-01T00:00:00.000Z' })));
+    ['viewer', 'Vic Viewer', 'planner', 'days'], ['technician', 'Tia Technician', 'hd_technician', 'A'], ['supervisor', 'Sam Supervisor', 'maintenance_supervisor', 'A'],
+    ['reliability_engineer', 'Rae Reliability', 'reliability_engineer', 'days'], ['superintendent', 'Sol Superintendent', 'superintendent', 'days'], ['admin', 'Ada Admin', 'data_owner', undefined],
+  ].map(([role, name, jobTitle, crew]) => ({ id: `demo-${role}`, name: name!, email: `${role}@example.com`, role: role as Role, scope: ['*'], addedAt: '2026-01-01T00:00:00.000Z', jobTitle, ...(crew ? { crew } : {}) })));
   const [flags, setFlags] = useState<DownFlag[]>(ds.flags);
   // The demo plant, made once: its structure, flags and shutdowns, and its route forms, rounds and stop inspections.
   const [demoPlant] = useState(() => (live ? null : generatePlant({ seed: 42, days: 120, end: Date.parse(ds.generatedAt), timeZone: ds.site.timeZone, tenantId: ds.tenantId, siteId: ds.site.id, people: { technician: 'demo-technician', supervisor: 'demo-supervisor' } })));

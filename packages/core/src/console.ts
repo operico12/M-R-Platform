@@ -6,6 +6,7 @@
 import { DateTime } from 'luxon';
 import { SYSTEMS } from './synth/generate.js';
 import { can, permission } from './permissions.js';
+import { checkPerson, type PersonDetails } from './people.js';
 import { ms, shiftAt, type ShiftCalendar } from './time.js';
 import type { Actor, AuditEntry, FlagType, Iso, Role } from './types.js';
 
@@ -181,6 +182,12 @@ export interface SiteUser {
   /** A temporary higher role until a date, approved by a superintendent (plan 11.3). */
   actingRole?: Role;
   actingUntil?: Iso;
+  /** Job title, crew and access end date (docs/people.md). */
+  jobTitle?: string;
+  jobTitleOther?: string;
+  crew?: string;
+  /** After this time the person cannot sign in to the site; the database enforces it. */
+  accessUntil?: Iso;
 }
 
 /** The role a person has now: their acting role until it ends, then their own. */
@@ -193,10 +200,10 @@ export const hasSuperintendent = (users: SiteUser[], now: Iso) => users.some((u)
 /** Roles that need a superintendent's approval to give (plan 11.3), once the site has one. */
 export const GOVERNED_ROLES: Role[] = ['admin', 'superintendent'];
 
-/** Roles the console can give. Phase 2 adds superintendent; technician and kiosk come with phase 1b. */
-export const ASSIGNABLE_ROLES: Role[] = ['viewer', 'supervisor', 'reliability_engineer', 'superintendent', 'admin'];
+/** Roles the console can give. Technician was added with job titles (docs/people.md); kiosk comes with phase 1b. */
+export const ASSIGNABLE_ROLES: Role[] = ['viewer', 'technician', 'supervisor', 'reliability_engineer', 'superintendent', 'admin'];
 
-export interface UserInput {
+export interface UserInput extends PersonDetails {
   name: string;
   email: string;
   role: Role;
@@ -207,6 +214,7 @@ const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 function checkUser(users: SiteUser[], input: UserInput, selfId?: string): string[] {
   const e: string[] = [];
+  if (input.name.trim().length > 80) e.push('The name is up to 80 characters.');
   if (!input.name.trim()) e.push('Enter a name.');
   if (!EMAIL.test(input.email.trim())) e.push('Enter a valid email address.');
   else if (users.some((u) => u.id !== selfId && !u.retiredAt && u.email.toLowerCase() === input.email.trim().toLowerCase())) e.push('Someone at this site already has that email address.');
@@ -216,6 +224,9 @@ function checkUser(users: SiteUser[], input: UserInput, selfId?: string): string
 }
 
 const activeAdmins = (users: SiteUser[]) => users.filter((u) => !u.retiredAt && u.role === 'admin');
+
+/** Drops keys set to undefined, so a cleared title or end date does not linger. */
+const strip = (u: SiteUser): SiteUser => Object.fromEntries(Object.entries(u).filter(([, v]) => v !== undefined)) as unknown as SiteUser;
 
 /**
  * Once a site has a superintendent it keeps one; otherwise removing them would
@@ -238,10 +249,12 @@ function governedGrant(users: SiteUser[], role: Role, before: Role | undefined, 
 export function addUser(ctx: ConsoleContext, users: SiteUser[], input: UserInput): ConsoleResult<SiteUser> {
   if (!can(ctx.actor, 'manage_users')) return refuse('Only the Admin can add users.');
   const errors = checkUser(users, input);
+  const p = checkPerson(input, ctx.calendar, ctx.now, true);
+  errors.push(...p.errors);
   const g = governedGrant(users, input.role, undefined, ctx.now);
   if (g.refuse) errors.push(`${g.refuse} Add them as a viewer first.`);
   if (errors.length) return refuse(...errors);
-  const u: SiteUser = { id: ctx.newId(), name: input.name.trim(), email: input.email.trim().toLowerCase(), role: input.role, scope: input.scope, addedAt: ctx.now };
+  const u: SiteUser = strip({ id: ctx.newId(), name: input.name.trim(), email: input.email.trim().toLowerCase(), role: input.role, scope: input.scope, addedAt: ctx.now, ...p.clean });
   return { ok: true, records: [...users, u], audit: [entry(ctx, 'user', 'add_user', u.id, null, u, g.warning)], warnings: g.warning ? [g.warning] : [] };
 }
 
@@ -250,10 +263,13 @@ export function changeUser(ctx: ConsoleContext, users: SiteUser[], id: string, i
   const before = users.find((u) => u.id === id);
   if (!before || before.retiredAt) return refuse('That user is not active.');
   const errors = checkUser(users, input, id);
+  // A new end date must be in the future; an unchanged one may already have passed.
+  const p = checkPerson(input, ctx.calendar, ctx.now, input.accessUntil !== before.accessUntil);
+  errors.push(...p.errors);
   if (!reason.trim()) errors.push('Give a reason for the change.');
   const g = governedGrant(users, input.role, before.role, ctx.now);
   if (g.refuse) errors.push(g.refuse);
-  const after: SiteUser = { ...before, name: input.name.trim(), email: input.email.trim().toLowerCase(), role: input.role, scope: input.scope };
+  const after: SiteUser = strip({ ...before, name: input.name.trim(), email: input.email.trim().toLowerCase(), role: input.role, scope: input.scope, ...p.clean });
   const next = users.map((u) => (u.id === id ? after : u));
   if (activeAdmins(next).length === 0) errors.push('The site must keep at least one Admin.');
   if (losesLastSuperintendent(users, next, ctx.now)) errors.push(KEEP_SUPER);

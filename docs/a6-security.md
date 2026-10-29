@@ -80,6 +80,7 @@ The app writes no raw HTML. React escapes all text.
 | S-9 | Supabase Auth lets anyone sign up with an email link. A new account sees nothing until an Admin invites that email or approves its request. | Accepted | Requests only reach sites that list the person's email domain (docs/access.md) |
 | S-10 | The style policy allows inline styles (React style attributes). Scripts stay blocked. | Accepted | Low risk |
 | S-11 | Read rules called `is_site_member(site_id)` once per row, so loading a site sometimes passed Supabase's 8-second limit (found 29 Oct 2026). | Bug | Fixed: `site_id in (select my_site_ids())`, checked once per query (`20261117000001_rls_speed.sql`); the security audit refuses the old form |
+| S-12 | People from outside the company (consultants, contractors, OEM reps) kept access until someone remembered to remove them (found 29 Oct 2026). | Gap | Fixed: their access must have an end date, up to a year; from it `my_site_ids`, `is_site_member` and `site_role` treat them as not a member, and an invite past its end date is not used (`20261118000001_people.sql`, `tests/people_api.sql`) |
 
 ## 7. Incidents
 
