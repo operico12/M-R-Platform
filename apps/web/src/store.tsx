@@ -463,7 +463,9 @@ export function AppProvider({ children, live, onReload, onSignOut, sites = DEMO_
       setAudit((prev) => [entry, ...prev]);
       if (live) {
         const changed = [...r.inserted, ...r.updated.map((u) => u.after)];
-        saveRecords(siteId, r.kind, changed, [entry]).catch(failed);
+        // New assets record the ERP they came from (docs/field-mapping.md).
+        const src = r.raw[0]?.sourceSystem;
+        saveRecords(siteId, r.kind, r.kind === 'assets' && src ? changed.map((x) => ({ ...(x as object), sourceSystem: src })) : changed, [entry]).catch(failed);
       }
     },
     [actor, live, failed],
