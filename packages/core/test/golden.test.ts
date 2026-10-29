@@ -7,6 +7,7 @@ import { DEFAULT_FLAG_RULES } from '../src/config.js';
 import { changeStage, flagDown, moveLocation, release, setEta } from '../src/flags.js';
 import { buildEvents, computeKpis, fieldRepairShare, locationHours, shopReleaseVsPlan, splitFlag, stageHours, timeToFirstWrench } from '../src/kpis.js';
 import { L, Store, cal, fixtureFlag, minutes, round, truck } from './helpers.js';
+import { standbyBreakdown, type StandbyFlag } from '../src/standby.js';
 
 describe('Plan 3.2 worked example: one 12-hour shift', () => {
   const t = truck('ht101');
@@ -34,6 +35,41 @@ describe('Plan 3.2 worked example: one 12-hour shift', () => {
   it('PA × utilisation = effective utilisation = 56.7%', () => {
     expect(round(k.effectiveUtilisation, 3)).toBe(0.567);
     expect(round(k.pa! * k.utilisation!, 6)).toBe(round(k.effectiveUtilisation, 6));
+  });
+});
+
+describe('KPI-044 and KPI-045 worked example: the plan 3.2 shift with standby flags', () => {
+  const t = truck('ht101');
+  const flags = [
+    fixtureFlag({ id: 'u', unitId: 'ht101', type: 'unscheduled', start: L('2026-10-26 06:10'), end: L('2026-10-26 08:40') }),
+    fixtureFlag({ id: 's', unitId: 'ht101', type: 'scheduled', start: L('2026-10-26 14:00'), end: L('2026-10-26 16:00') }),
+  ];
+  const sb = (id: string, reasonCode: string, kind: StandbyFlag['kind'], start: string, end: string, state: StandbyFlag['state'] = 'ended'): StandbyFlag =>
+    ({ id, tenantId: 't1', siteId: 's1', unitId: 'ht101', reasonCode, kind, start: L(start), end: L(end), state, setBy: 'x', enteredAt: L(start) });
+  const standby = [
+    sb('a', 'SHIFT_CHANGE', 'operating_delay', '2026-10-26 06:00', '2026-10-26 06:30'),
+    sb('b', 'CRIB', 'operating_delay', '2026-10-26 12:00', '2026-10-26 12:30'),
+    sb('c', 'NO_OPERATOR', 'standby', '2026-10-26 15:00', '2026-10-26 17:00'),
+    sb('v', 'WEATHER', 'standby', '2026-10-26 09:00', '2026-10-26 10:00', 'voided'),
+    sb('d', 'CRIB', 'operating_delay', '2026-10-26 12:10', '2026-10-26 12:20'),
+  ];
+  const p = { from: L('2026-10-26 06:00'), to: L('2026-10-26 18:00') };
+  const now = L('2026-10-27 00:00');
+  const k = computeKpis({ assets: [t], flags, smu: [], standby, rules: DEFAULT_FLAG_RULES, now }, p);
+
+  it('standby 1 h 40: 10 min after the stop, 30 min crib, 1 h after the PM', () => expect(minutes(k.recordedStandbyHours)).toBe(100));
+  it('utilisation (time) = (7.5 − 1.667) ÷ 7.5 = 77.8%, and PA is unchanged at 62.5%', () => {
+    expect(round(k.utilisationTime, 3)).toBe(0.778);
+    expect(round(k.pa, 4)).toBe(0.625);
+  });
+  it('by kind: operating delay 40 min, standby 1 h', () => {
+    const b = standbyBreakdown(['ht101'], standby, flags, [], p, now);
+    expect(minutes(b.byKind.operating_delay)).toBe(40);
+    expect(minutes(b.byKind.standby)).toBe(60);
+    expect(b.byReason.WEATHER).toBeUndefined();
+  });
+  it('no standby flags: utilisation (time) is 100% of available time', () => {
+    expect(computeKpis({ assets: [t], flags, smu: [], rules: DEFAULT_FLAG_RULES, now }, p).utilisationTime).toBe(1);
   });
 });
 

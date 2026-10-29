@@ -398,3 +398,10 @@ a.chip[aria-pressed='true'] { color: var(--brand-ink); }
   .bcount { min-width: 0; flex: 1 1 30%; }
   .bsearch { max-width: none; }
 }
+/* Standby (docs/standby.md): available but not in use. */
+.fb-standby { background: var(--standby); }
+.bc-standby { border-top-color: var(--standby); }
+.bc-standby .bc-w { color: var(--standby); }
+.bu-standby { border-left-color: var(--standby); }
+.standby-panel { margin: var(--s2) 0 var(--s3); padding: var(--s2) var(--s3); border: 1px solid var(--border); border-left: 4px solid var(--standby); border-radius: var(--radius); background: var(--surface); }
+.standby-panel summary { cursor: pointer; font-weight: 600; min-height: 32px; display: flex; align-items: center; }

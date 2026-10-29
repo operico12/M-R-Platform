@@ -2,7 +2,7 @@
 // MTBF, MTTR and mean downtime, trend against target, downtime by system,
 // where downtime goes by stage, bad actors. Weekly pack export.
 
-import { OPEN_A7_SETTINGS, rag as coreRag, STAGE_LABELS, computeKpis, downtimePareto, recentWeeks, type KpiResult, type Stage } from '@mr/core';
+import { OPEN_A7_SETTINGS, rag as coreRag, STAGE_LABELS, computeKpis, downtimePareto, recentWeeks, standbyBreakdown, type KpiResult, type Stage } from '@mr/core';
 import { useMemo } from 'react';
 import { Bar, CartesianGrid, ComposedChart, Legend, Line, LineChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { fmtHours, fmtNum, fmtPct, siteTime } from '../format';
@@ -12,6 +12,7 @@ import { useApp } from '../store';
 const FORMULAS: Record<string, string> = {
   pa: 'PA = (calendar h − maintenance downtime h) ÷ calendar h. Standby is not deducted.',
   util: 'Utilisation = operating h (SMU) ÷ available h. SMU includes idle time.',
+  utilTime: 'Utilisation (time) = (available h − standby h) ÷ available h, from standby flags (KPI-044). In use unless a flag says otherwise.',
   mtbf: 'MTBF = operating h ÷ failures. A failure is an unscheduled event of at least 15 min (A7 R9, D1).',
   mttr: 'MTTR = time In repair ÷ repairs.',
   mdt: 'Mean downtime = unscheduled downtime h ÷ failures. Includes waiting for parts, labour or a line.',
@@ -23,8 +24,8 @@ export function Performance() {
   const tz = app.ds.site.timeZone;
   const weeks = useMemo(() => recentWeeks(tz, app.now, 12), [tz, app.now]);
   const input = useMemo(
-    () => ({ assets: app.ds.assets, flags: app.flags, smu: app.ds.smu, lifecycle: app.ds.lifecycle, rules: app.rules, now: app.now }),
-    [app.ds, app.flags, app.rules, app.now],
+    () => ({ assets: app.ds.assets, flags: app.flags, smu: app.ds.smu, lifecycle: app.ds.lifecycle, rules: app.rules, now: app.now, standby: app.standby }),
+    [app.ds, app.flags, app.rules, app.now, app.standby],
   );
   const series = useMemo(() => weeks.map((w) => ({ w, k: computeKpis(input, w) })), [weeks, input]);
   // Headline: last complete week.
@@ -41,9 +42,14 @@ export function Performance() {
         .slice(0, 10),
     [app.ds.assets, input, p28.from, p28.to],
   );
+  const sb28 = useMemo(
+    () => standbyBreakdown(app.ds.assets.map((a) => a.id), app.standby, app.flags, app.ds.lifecycle, p28, app.now),
+    [app.ds, app.standby, app.flags, app.now, p28.from, p28.to],
+  );
+  const sbRows = Object.entries(sb28.byReason).sort((x, y) => y[1] - x[1]).map(([code, h]) => ({ reason: app.standbyReasons.find((r) => r.code === code)?.label ?? code, hours: Math.round(h) }));
   const unsettled = (key: string) => OPEN_A7_SETTINGS.find((s) => s.key === key);
 
-  const trend = series.map(({ w, k }) => ({ week: w.label, PA: pct(k.pa), Utilisation: pct(k.utilisation), MTBF: k.mtbf ? Math.round(k.mtbf) : null }));
+  const trend = series.map(({ w, k }) => ({ week: w.label, PA: pct(k.pa), Utilisation: pct(k.utilisation), 'Utilisation (time)': pct(k.utilisationTime), MTBF: k.mtbf ? Math.round(k.mtbf) : null }));
   const stages = (Object.keys(k28.stageHours) as Stage[]).map((s) => ({ stage: STAGE_LABELS[s], hours: Math.round(k28.stageHours[s]) })).filter((x) => x.hours > 0);
 
   const exportPack = () => downloadCsv(`weekly-pack-${last.w.label.replace(' ', '-')}.csv`, packRows(series, app.ds.assets.length));
@@ -61,6 +67,7 @@ export function Performance() {
       <div className="grid kpis">
         <Kpi id="pa" label="Physical availability" v={fmtPct(last.k.pa)} d={delta(last.k.pa, prev.k.pa)} rag={coreRag('pa', last.k.pa, app.targetOf('pa'))} target={`Target ${fmtPct(TARGETS.pa, 0)}`} />
         <Kpi id="util" label="Utilisation" v={fmtPct(last.k.utilisation)} d={delta(last.k.utilisation, prev.k.utilisation)} rag={coreRag('utilisation', last.k.utilisation, app.targetOf('utilisation'))} target={`Target ${fmtPct(TARGETS.utilisation, 0)}`} />
+        <Kpi id="utilTime" label="Utilisation (time)" v={fmtPct(last.k.utilisationTime)} d={`${delta(last.k.utilisationTime, prev.k.utilisationTime)} · standby ${fmtHours(last.k.recordedStandbyHours)}`} />
         <Kpi id="mtbf" label="MTBF (op. h)" v={fmtNum(last.k.mtbf, 0)} d={`${last.k.failures} failures, ${last.k.minorStops} minor stops`} />
         <Kpi id="mttr" label="MTTR" v={fmtHours(last.k.mttr)} d={`${last.k.repairs} repairs`} flag={unsettled('mttrDenominator')?.question} />
         <Kpi id="mdt" label="Mean downtime" v={fmtHours(last.k.meanDowntime)} d={`Gap to MTTR = logistics: ${fmtHours((last.k.meanDowntime ?? 0) - (last.k.mttr ?? 0))}`} flag={unsettled('meanDowntime')?.question} />
@@ -80,6 +87,7 @@ export function Performance() {
                 <ReferenceLine y={TARGETS.pa * 100} stroke="var(--brand)" strokeDasharray="6 4" label={{ value: 'PA target', fontSize: 11, fill: 'var(--text-2)', position: 'insideTopLeft' }} />
                 <Line type="monotone" dataKey="PA" stroke="var(--brand)" strokeWidth={2.5} dot />
                 <Line type="monotone" dataKey="Utilisation" stroke="var(--standby)" strokeWidth={2} dot />
+                <Line type="monotone" dataKey="Utilisation (time)" stroke="var(--sched)" strokeWidth={2} strokeDasharray="5 3" dot />
               </LineChart>
             </ResponsiveContainer>
           </div>
@@ -117,6 +125,24 @@ export function Performance() {
             </ResponsiveContainer>
           </div>
           <p className="small muted">In repair is wrench time; every other stage is waiting.</p>
+        </section>
+
+        <section className="card">
+          <h3>Standby by reason, last 4 weeks</h3>
+          {sbRows.length === 0 ? <p className="muted small">No standby flags in the last 4 weeks. Raise one from a unit on the status board.</p> : (
+            <div style={{ height: 240 }}>
+              <ResponsiveContainer>
+                <ComposedChart layout="vertical" data={sbRows} margin={{ top: 0, right: 16, bottom: 0, left: 40 }}>
+                  <CartesianGrid stroke="var(--border)" strokeDasharray="3 3" />
+                  <XAxis type="number" unit=" h" tick={{ fontSize: 12, fill: 'var(--text-2)' }} />
+                  <YAxis type="category" dataKey="reason" width={150} tick={{ fontSize: 12, fill: 'var(--text-2)' }} />
+                  <Tooltip />
+                  <Bar dataKey="hours" fill="var(--standby)" />
+                </ComposedChart>
+              </ResponsiveContainer>
+            </div>
+          )}
+          <p className="small muted">Operating delays {fmtHours(sb28.byKind.operating_delay)}, standby {fmtHours(sb28.byKind.standby)}. Standby does not change PA.</p>
         </section>
 
         <section className="card">
@@ -160,13 +186,13 @@ function Kpi({ id, label, v, d, rag: r, target, flag }: { id: string; label: str
 }
 
 function packRows(series: Array<{ w: { label: string; from: string; to: string }; k: KpiResult }>, units: number): string[][] {
-  const head = ['Week', 'Units', 'Calendar h', 'Sched down h', 'Unsched down h', 'Operating h', 'Standby h', 'PA', 'Utilisation', 'Failures', 'Minor stops', 'MTBF h', 'MTTR h', 'Mean downtime h', 'Waiting for a line h', 'Waiting parts h'];
+  const head = ['Week', 'Units', 'Calendar h', 'Sched down h', 'Unsched down h', 'Operating h', 'Standby h', 'PA', 'Utilisation', 'Failures', 'Minor stops', 'MTBF h', 'MTTR h', 'Mean downtime h', 'Waiting for a line h', 'Waiting parts h', 'Standby flags h', 'Utilisation (time)'];
   return [
     head,
     ...series.map(({ w, k }) => [
       w.label, String(units), k.calendarHours.toFixed(1), k.scheduledDownHours.toFixed(1), k.unscheduledDownHours.toFixed(1), k.operatingHours.toFixed(1), k.standbyHours.toFixed(1),
       fmtPct(k.pa, 2), fmtPct(k.utilisation, 2), String(k.failures), String(k.minorStops), fmtNum(k.mtbf, 1), fmtNum(k.mttr, 2), fmtNum(k.meanDowntime, 2),
-      k.stageHours.waiting_line.toFixed(1), k.stageHours.waiting_parts.toFixed(1),
+      k.stageHours.waiting_line.toFixed(1), k.stageHours.waiting_parts.toFixed(1), k.recordedStandbyHours.toFixed(1), fmtPct(k.utilisationTime, 2),
     ]),
   ];
 }

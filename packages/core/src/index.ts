@@ -35,3 +35,4 @@ export * from './api.js';
 export * from './access.js';
 export * from './menu.js';
 export * from './board.js';
+export * from './standby.js';

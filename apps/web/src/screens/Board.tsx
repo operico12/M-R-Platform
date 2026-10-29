@@ -3,7 +3,7 @@
 
 import {
   STAGE_LABELS, activeAlerts, boardCounts, boardFilterFromQuery, boardFilterToQuery, downSince, downlineQueue,
-  filterBoard, toggleIn, upSince, type Asset, type BoardFilter, type BoardStatus, type DownFlag,
+  currentStandby, filterBoard, toggleIn, upSince, type Asset, type StandbyFlag, type BoardFilter, type BoardStatus, type DownFlag,
 } from '@mr/core';
 import { useMemo, useState } from 'react';
 import { FlagSheet } from '../components/FlagSheet';
@@ -14,6 +14,7 @@ import { useApp } from '../store';
 // reading does not make it "no update"; it only leaves those hours out of utilisation.
 const CARDS: { status: BoardStatus; word: string }[] = [
   { status: 'run', word: 'Up' },
+  { status: 'standby', word: 'Standby' },
   { status: 'sched', word: 'Scheduled down' },
   { status: 'down', word: 'Down' },
   { status: 'parked', word: 'Parked' },
@@ -22,7 +23,7 @@ const NO_READING_HOURS = 14;
 
 interface Row {
   unitId: string; unitNumber: string; model: string; status: BoardStatus; text?: string;
-  a: Asset; flag?: DownFlag; since?: string; lastReading?: string; noReading: boolean;
+  a: Asset; flag?: DownFlag; standby?: StandbyFlag; since?: string; lastReading?: string; noReading: boolean;
 }
 
 export function Board({ tv, query = '' }: { tv: boolean; query?: string }) {
@@ -39,14 +40,17 @@ export function Board({ tv, query = '' }: { tv: boolean; query?: string }) {
 
   const rows = useMemo<Row[]>(() => app.ds.assets.map((a) => {
     const u = unitStatus(a.id, app.flags, app.ds, app.now);
-    const status: BoardStatus = u.status === 'stale' ? 'run' : u.status;
     const flag = u.flag;
+    // Down wins over standby; standby wins over up (docs/standby.md).
+    const sb = !flag && u.status !== 'parked' ? currentStandby(a.id, app.standby) : undefined;
+    const status: BoardStatus = sb ? 'standby' : u.status === 'stale' ? 'run' : u.status;
     const lastReading = app.ds.smu.filter((r) => r.unitId === a.id).at(-1)?.at;
     const noReading = status === 'run' && (!lastReading || hoursSince(lastReading, app.now) > NO_READING_HOURS);
-    const since = flag ? downSince(flag, app.flags) : status === 'run' ? upSince(a.id, app.flags, app.now) : undefined;
-    const text = flag ? `${flag.reasonCode} ${locationLabel(flag, app.ds)} ${stageLabel(flag)}` : undefined;
-    return { unitId: a.id, unitNumber: a.unitNumber, model: a.model, status, text, a, flag, since, lastReading, noReading };
-  }), [app.ds, app.flags, app.now]);
+    const since = flag ? downSince(flag, app.flags) : sb ? sb.start : status === 'run' ? upSince(a.id, app.flags, app.now, app.standby) : undefined;
+    const reason = sb ? app.standbyReasons.find((x) => x.code === sb.reasonCode)?.label ?? sb.reasonCode : '';
+    const text = flag ? `${flag.reasonCode} ${locationLabel(flag, app.ds)} ${stageLabel(flag)}` : sb ? `standby ${reason}` : undefined;
+    return { unitId: a.id, unitNumber: a.unitNumber, model: a.model, status, text, a, flag, standby: sb, since, lastReading, noReading };
+  }), [app.ds, app.flags, app.now, app.standby, app.standbyReasons]);
 
   const counts = boardCounts(rows, filter);
   const total = Object.values(counts).reduce((s, n) => s + n, 0);
@@ -72,6 +76,8 @@ export function Board({ tv, query = '' }: { tv: boolean; query?: string }) {
     .sort((x, y) => Date.parse(x.since ?? x.flag!.start) - Date.parse(y.since ?? y.flag!.start));
   const noReading = shown.filter((r) => r.noReading).length;
   const running = shown.filter((r) => r.status === 'run').sort(byNumber);
+  const onStandby = shown.filter((r) => r.status === 'standby').sort((x, y) => Date.parse(x.since!) - Date.parse(y.since!));
+  const sbLabel = (code: string) => app.standbyReasons.find((x) => x.code === code)?.label ?? code;
   const parked = shown.filter((r) => r.status === 'parked').sort(byNumber);
   const pick = (a: Asset) => { if (!tv) setOpen(a); };
   const hrs = (iso?: string) => (iso ? fmtHours(hoursSince(iso, app.now)) : '');
@@ -174,6 +180,21 @@ export function Board({ tv, query = '' }: { tv: boolean; query?: string }) {
                 </button>
               );
             })}
+          </div>
+        </section>
+      )}
+
+      {onStandby.length > 0 && (
+        <section>
+          <h3 className="bhead">Standby · {onStandby.length}, longest first</h3>
+          <p className="small muted bnote">Available but not in use. Standby does not change PA; it counts against utilisation (time).</p>
+          <div className="bchips">
+            {onStandby.map((r) => (
+              <button key={r.unitId} type="button" className="bunit bu-standby" onClick={() => pick(r.a)} title={`Standby since ${siteTime(r.since!, tz, true)}`}>
+                <strong>{r.unitNumber}</strong>
+                <span>{sbLabel(r.standby!.reasonCode)} · {hrs(r.since)}</span>
+              </button>
+            ))}
           </div>
         </section>
       )}

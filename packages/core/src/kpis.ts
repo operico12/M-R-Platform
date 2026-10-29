@@ -6,6 +6,7 @@
 
 import type { FlagRulesConfig } from './config.js';
 import { HOUR_MS, ms, overlapHours, splitForReporting, toIso, type ShiftCalendar } from './time.js';
+import { standbyHoursFor, type StandbyFlag } from './standby.js';
 import type { Asset, AssetLifecycleInterval, DownFlag, Iso, LocationKind, ShopLine, ShopLineClosure, SmuReading, Stage } from './types.js';
 
 export interface Period {
@@ -180,6 +181,10 @@ export interface KpiResult {
   /** Physical availability, 0–1. */
   pa: number | null;
   utilisation: number | null;
+  /** KPI-045: standby h from standby flags, while available. */
+  recordedStandbyHours: number;
+  /** KPI-044: (available h − standby h) ÷ available h. */
+  utilisationTime: number | null;
   effectiveUtilisation: number | null;
   mechanicalAvailability: number | null;
   failures: number;
@@ -201,6 +206,8 @@ export interface KpiInput {
   lifecycle?: AssetLifecycleInterval[];
   rules: FlagRulesConfig;
   now: Iso;
+  /** Standby flags (docs/standby.md). Without them, utilisation (time) is 100% of available time. */
+  standby?: StandbyFlag[];
 }
 
 function emptyStages(): Record<Stage, number> {
@@ -254,6 +261,13 @@ export function computeKpis(input: KpiInput, p: Period): KpiResult {
   }
   const down = sched + unsched;
   const avail = Math.max(0, cal - down);
+  let recStandby = 0;
+  if (input.standby?.length) {
+    // Group once: a fleet has many standby flags (two or more a shift per unit).
+    const sbBy = groupByUnit(input.standby.filter((x) => unitIds.has(x.unitId) && x.state !== 'voided' && ms(x.start) < ms(effP.to) && (!x.end || ms(x.end) > ms(effP.from))));
+    const flBy = groupByUnit(flags);
+    for (const [id, list] of sbBy) recStandby += standbyHoursFor(id, list, flBy.get(id) ?? [], lifecycle, effP, now);
+  }
 
   // Events and failures are counted in the period where the event starts.
   const events = buildEvents(input.flags.filter((f) => unitIds.has(f.unitId)), rules, now).filter(
@@ -302,6 +316,8 @@ export function computeKpis(input: KpiInput, p: Period): KpiResult {
     standbyHours: Math.max(0, smuAvail - op),
     pa: ratio(avail, cal),
     utilisation: ratio(op, smuAvail),
+    recordedStandbyHours: recStandby,
+    utilisationTime: ratio(Math.max(0, avail - recStandby), avail),
     effectiveUtilisation: ratio(op, smuCal),
     mechanicalAvailability: ratio(op, op + down),
     failures: failures.length,
@@ -315,6 +331,12 @@ export function computeKpis(input: KpiInput, p: Period): KpiResult {
     stageHours: stages,
     locationHours: locs,
   };
+}
+
+function groupByUnit<T extends { unitId: string }>(xs: T[]): Map<string, T[]> {
+  const m = new Map<string, T[]>();
+  for (const x of xs) { const l = m.get(x.unitId); if (l) l.push(x); else m.set(x.unitId, [x]); }
+  return m;
 }
 
 // ---------- downtime by category (Pareto) ----------

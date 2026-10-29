@@ -23,6 +23,11 @@ import {
   shiftAt,
   switchType,
   voidFlag,
+  currentStandby,
+  endStandby,
+  startStandby,
+  voidStandby,
+  type StandbyResult,
   type Asset,
   type CommandResult,
   type DownFlag,
@@ -49,6 +54,7 @@ export function FlagSheet({ asset, onClose }: { asset: Asset; onClose: () => voi
         <h3>
           {asset.unitNumber} <span className="muted small">{asset.model} · {asset.fleet}</span>
         </h3>
+        {!flag && !plant && <StandbyPanel asset={asset} onDone={onClose} />}
         {!flag && <FlagDownForm asset={asset} onDone={onClose} />}
         {flag?.state === 'proposed' && (plant ? <PlantProposalPanel asset={asset} flag={flag} /> : <ProposalPanel asset={asset} flag={flag} />)}
         {flag?.state === 'open' && <OpenFlagPanel asset={asset} flag={flag} onDone={onClose} />}
@@ -57,6 +63,64 @@ export function FlagSheet({ asset, onClose }: { asset: Asset; onClose: () => voi
         </p>
       </aside>
     </>
+  );
+}
+
+// ---------- standby (docs/standby.md) ----------
+
+function StandbyPanel({ asset, onDone }: { asset: Asset; onDone: () => void }) {
+  const app = useApp();
+  const tz = app.ds.site.timeZone;
+  const open = currentStandby(asset.id, app.standby);
+  const allowed = can(app.actor, 'set_standby', asset.fleet);
+  const [reason, setReason] = useState('');
+  const [start, setStart] = useState('');
+  const [voidWhy, setVoidWhy] = useState('');
+  const [showVoid, setShowVoid] = useState(false);
+  const [r, setR] = useState<StandbyResult | null>(null);
+  const label = (code: string) => app.standbyReasons.find((x) => x.code === code)?.label ?? code;
+  const done = (x: StandbyResult) => { setR(x); if (x.ok) onDone(); };
+  const errors = r && !r.ok ? <div className="errors" role="alert">{r.errors.map((e) => <div key={e}>{e}</div>)}</div> : null;
+
+  if (open) {
+    return (
+      <section className="standby-panel">
+        <div className="status standby">‖ STANDBY</div>
+        <p style={{ margin: '4px 0 8px' }}><strong>{label(open.reasonCode)}</strong> since {siteTime(open.start, tz, true)} · {fmtHours(hoursSince(open.start, app.now))}</p>
+        {open.note && <p className="small muted">{open.note}</p>}
+        {allowed && (
+          <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+            <button className="btn primary big" onClick={() => done(app.runStandby(asset, (c) => endStandby(c, open.id, new Date().toISOString())))}>Back in use now</button>
+            <button className="btn" onClick={() => setShowVoid((v) => !v)}>Raised by mistake?</button>
+          </div>
+        )}
+        {showVoid && (
+          <div className="row" style={{ gap: 8, marginTop: 8 }}>
+            <input value={voidWhy} onChange={(e) => setVoidWhy(e.target.value)} placeholder="Why it was wrong" aria-label="Why it was wrong" />
+            <button className="btn danger" onClick={() => done(app.runStandby(asset, (c) => voidStandby(c, open.id, voidWhy)))}>Void standby</button>
+          </div>
+        )}
+        {errors}
+        <p className="small muted">If the unit is now broken or going in for work, flag it down below. That ends the standby at the down time.</p>
+      </section>
+    );
+  }
+  if (!allowed) return null;
+  return (
+    <details className="standby-panel">
+      <summary>Available but not in use? Start standby</summary>
+      <div className="chips" role="group" aria-label="Standby reason" style={{ margin: '8px 0' }}>
+        {app.standbyReasons.map((x) => (
+          <button key={x.code} type="button" className="chip" aria-pressed={reason === x.code} onClick={() => setReason(x.code)}>{x.label}</button>
+        ))}
+      </div>
+      <label className="field"><span>Started (site time, leave blank for now)</span>
+        <input type="datetime-local" value={start} onChange={(e) => setStart(e.target.value)} max={toLocalInput(app.now, tz)} />
+      </label>
+      <button className="btn primary" disabled={!reason} onClick={() => done(app.runStandby(asset, (c) => startStandby(c, { reasonCode: reason, start: start ? fromLocalInput(start, tz) : new Date().toISOString() })))}>Start standby</button>
+      {errors}
+      <p className="small muted">Standby does not change PA. It counts against utilisation (time) while the unit is available.</p>
+    </details>
   );
 }
 
