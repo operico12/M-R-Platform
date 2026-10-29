@@ -23,4 +23,6 @@ Phase 2 rules: [reliability and threshold alerts](alert-rules.md), [approvals](a
 
 Phase 3 rules: [component life and rebuilds](component-life.md), [condition monitoring](condition-monitoring.md), [RCM to PM job plans](rcm.md), [spares and rebuild pool sizing](spares.md), [assist: the first AI features](ai-assist.md).
 
+Phase 3b and 4 rules: [fixed plant](fixed-plant.md), [multi-site](multi-site.md).
+
 Setup: [connecting a Supabase project](setup-supabase.md).
