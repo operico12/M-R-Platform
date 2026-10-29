@@ -31,7 +31,7 @@ import {
   type ReleaseDetails,
   type Stage,
 } from '@mr/core';
-import { flagText, liveSuggestion, suggestCodes, workOrderIndex, type Ranked } from '@mr/core';
+import { flagText, liveSuggestion, suggestCodes, workOrderIndex, type Ranked, PLANT_SYSTEMS, classifyAsMaintenance, classifyNotAStop, resumeAfter } from '@mr/core';
 import { useMemo, useState } from 'react';
 import { fmtHours, fromLocalInput, hoursSince, locationLabel, siteTime, stageLabel, toLocalInput } from '../format';
 import { useApp } from '../store';
@@ -39,7 +39,8 @@ import { useApp } from '../store';
 
 export function FlagSheet({ asset, onClose }: { asset: Asset; onClose: () => void }) {
   const app = useApp();
-  const flag = app.flags.find((f) => f.unitId === asset.id && (f.state === 'open' || f.state === 'proposed'));
+  const plant = asset.assetClass === 'fixed_plant';
+  const flag = (plant ? app.plant.flags : app.flags).find((f) => f.unitId === asset.id && (f.state === 'open' || f.state === 'proposed'));
   return (
     <>
       <div className="scrim" onClick={onClose} />
@@ -49,10 +50,10 @@ export function FlagSheet({ asset, onClose }: { asset: Asset; onClose: () => voi
           {asset.unitNumber} <span className="muted small">{asset.model} · {asset.fleet}</span>
         </h3>
         {!flag && <FlagDownForm asset={asset} onDone={onClose} />}
-        {flag?.state === 'proposed' && <ProposalPanel asset={asset} flag={flag} />}
+        {flag?.state === 'proposed' && (plant ? <PlantProposalPanel asset={asset} flag={flag} /> : <ProposalPanel asset={asset} flag={flag} />)}
         {flag?.state === 'open' && <OpenFlagPanel asset={asset} flag={flag} onDone={onClose} />}
         <p className="small muted" style={{ marginTop: 24 }}>
-          <a href={`#/unit/${asset.id}`} onClick={onClose}>Open unit page →</a>
+          {plant ? <a href="#/plant" onClick={onClose}>Open plant overview →</a> : <a href={`#/unit/${asset.id}`} onClick={onClose}>Open unit page →</a>}
         </p>
       </aside>
     </>
@@ -89,14 +90,15 @@ function FlagDownForm({ asset, onDone }: { asset: Asset; onDone: () => void }) {
   const [etaH, setEtaH] = useState<number | null>(null);
   const [r, setR] = useState<CommandResult | null>(null);
   const freeLines = useFreeLines(asset);
+  const plant = asset.assetClass === 'fixed_plant';
 
   if (!direct && !propose) return <Locked who="Supervisors, reliability engineers and superintendents" />;
-  // Active reason codes from the console; retired codes cannot be picked.
-  const reasons = activeCodes(app.codes, type).map((c) => c.label);
+  // Active reason codes from the console; retired codes cannot be picked. Plant systems for fixed plant (docs/fixed-plant.md).
+  const reasons = plant && type === 'unscheduled' ? Object.keys(PLANT_SYSTEMS) : activeCodes(app.codes, type).map((c) => c.label);
 
   const submit = () => {
     const startIso = earlier ? fromLocalInput(start, tz) : new Date().toISOString();
-    const location = {
+    const location = plant ? { kind: 'in_place' as const } : {
       kind: locKind,
       fieldLocation: locKind === 'field' ? fieldLoc : undefined,
       shopLineId: locKind === 'shop_line' ? lineId : undefined,
@@ -140,6 +142,9 @@ function FlagDownForm({ asset, onDone }: { asset: Asset; onDone: () => void }) {
           ))}
         </div>
       </div>
+      {plant ? (
+        <p className="small">In place at {asset.functionalLocation ?? <strong>no functional location</strong>}</p>
+      ) : (
       <div className="field">
         <span>Where is it?</span>
         <div className="chips">
@@ -148,7 +153,8 @@ function FlagDownForm({ asset, onDone }: { asset: Asset; onDone: () => void }) {
           ))}
         </div>
       </div>
-      {locKind === 'field' && (
+      )}
+      {!plant && locKind === 'field' && (
         <label className="field">
           <span>Field location</span>
           <select value={fieldLoc} onChange={(e) => setFieldLoc(e.target.value)}>
@@ -156,7 +162,7 @@ function FlagDownForm({ asset, onDone }: { asset: Asset; onDone: () => void }) {
           </select>
         </label>
       )}
-      {locKind === 'shop_line' && (
+      {!plant && locKind === 'shop_line' && (
         <LinePicker lines={freeLines} value={lineId} onChange={setLineId} override={override} setOverride={setOverride} />
       )}
       {!propose && (
@@ -251,6 +257,35 @@ function ProposalPanel({ asset, flag }: { asset: Asset; flag: DownFlag }) {
   );
 }
 
+/** A historian stop on plant equipment (docs/fixed-plant.md). Process delays are classified on the Plant page, where stops in one circuit are grouped. */
+function PlantProposalPanel({ asset, flag }: { asset: Asset; flag: DownFlag }) {
+  const app = useApp();
+  const [r, setR] = useState<CommandResult | null>(null);
+  const [why, setWhy] = useState('');
+  const [system, setSystem] = useState('');
+  const ok = can(app.actor, 'set_clear_flag', asset.fleet);
+  return (
+    <div>
+      <p><strong>Stopped</strong> at {siteTime(flag.start, app.ds.site.timeZone, true)}. {flag.notes}</p>
+      <p className="small muted">Was this maintenance or a process delay? It does not count until someone classifies it.</p>
+      <Result r={r} />
+      {ok ? (
+        <div className="stack">
+          <label className="field"><span>Maintenance: system</span>
+            <select value={system} onChange={(e) => setSystem(e.target.value)}><option value="">Choose…</option>{Object.keys(PLANT_SYSTEMS).map((s) => <option key={s}>{s}</option>)}</select>
+          </label>
+          <button className="btn primary" disabled={!system} onClick={() => setR(app.run(asset, (ctx) => classifyAsMaintenance(ctx, flag, system)))}>Maintenance</button>
+          <p className="small"><a href="#/plant">Process delay: classify on the Plant page →</a></p>
+          <label className="field"><span>Not a stop: reason</span><input value={why} onChange={(e) => setWhy(e.target.value)} placeholder="For example a duty and standby change" /></label>
+          <button className="btn" disabled={!why.trim()} onClick={() => setR(app.run(asset, (ctx) => classifyNotAStop(ctx, flag, why)))}>Not a stop</button>
+        </div>
+      ) : (
+        <Locked who="Supervisors, reliability engineers and superintendents" />
+      )}
+    </div>
+  );
+}
+
 // ---------- open flag ----------
 
 function OpenFlagPanel({ asset, flag, onDone }: { asset: Asset; flag: DownFlag; onDone: () => void }) {
@@ -312,7 +347,7 @@ function OpenFlagPanel({ asset, flag, onDone }: { asset: Asset; flag: DownFlag; 
       <Result r={r} />
 
       <div className="row">
-        <button className="btn" disabled={!canMove} onClick={() => setMode('move')}>Move</button>
+        {asset.assetClass !== 'fixed_plant' && <button className="btn" disabled={!canMove} onClick={() => setMode('move')}>Move</button>}
         <button className="btn" disabled={!canFlag} onClick={() => setMode('eta')}>ETA</button>
         <button className="btn" disabled={!can(app.actor, 'reclassify_flag', asset.fleet)} onClick={() => setMode('switch')}>Switch type</button>
         <button className="btn primary" disabled={!canFlag} onClick={() => setMode('release')}>Release</button>
@@ -396,11 +431,16 @@ function ReasonPanel({ label, hint, onGo }: { label: string; hint: string; onGo:
 
 function ReleasePanel({ asset, flag, setR, onDone }: { asset: Asset; flag: DownFlag; setR: (r: CommandResult) => void; onDone: () => void }) {
   const app = useApp();
-  const sys = flag.system && SYSTEMS[flag.system] ? flag.system : '';
+  const plant = asset.assetClass === 'fixed_plant';
+  const codes: Record<string, { components: string[]; modes: string[] }> = plant ? PLANT_SYSTEMS : SYSTEMS;
+  const sys = flag.system && codes[flag.system] ? flag.system : '';
   const [d, setD] = useState<ReleaseDetails>({ system: sys, failureModes: [], workOrder: flag.workOrders[0], pmOrWorkOrder: flag.workOrders[0] });
   const [reason, setReason] = useState('');
+  // Fixed plant: the historian may already show it running again; offer that as the release time.
+  const resumed = plant ? resumeAfter(app.plant.signals, asset.id, flag.start) : null;
+  const [atResume, setAtResume] = useState(!!resumed);
   const missing = releaseChecklist(flag, d);
-  const def = d.system ? SYSTEMS[d.system] : undefined;
+  const def = d.system ? codes[d.system] : undefined;
   const u = flag.type === 'unscheduled';
   return (
     <div className="card">
@@ -409,10 +449,10 @@ function ReleasePanel({ asset, flag, setR, onDone }: { asset: Asset; flag: DownF
         <>
           <label className="field"><span>Repair summary</span><textarea rows={2} value={d.repairSummary ?? ''} onChange={(e) => setD({ ...d, repairSummary: e.target.value })} /></label>
           <label className="field"><span>Findings (optional)</span><input value={d.findings ?? ''} onChange={(e) => setD({ ...d, findings: e.target.value || undefined })} /></label>
-          <CodeSuggestions flag={flag} d={d} setD={setD} />
+          {!plant && <CodeSuggestions flag={flag} d={d} setD={setD} />}
           <label className="field"><span>System</span>
             <select value={d.system ?? ''} onChange={(e) => setD({ ...d, system: e.target.value, component: undefined, failureModes: [] })}>
-              <option value="">Choose…</option>{Object.keys(SYSTEMS).map((s) => <option key={s}>{s}</option>)}
+              <option value="">Choose…</option>{Object.keys(codes).map((s) => <option key={s}>{s}</option>)}
             </select>
           </label>
           {def && (
@@ -449,12 +489,17 @@ function ReleasePanel({ asset, flag, setR, onDone }: { asset: Asset; flag: DownF
       {currentLocation(flag)?.kind === 'shop_yard' && (
         <label className="field"><span>Reason for releasing from the yard</span><input value={reason} onChange={(e) => setReason(e.target.value)} /></label>
       )}
+      {resumed && (
+        <label className="row small">
+          <input type="checkbox" checked={atResume} onChange={(e) => setAtResume(e.target.checked)} /> Release at {siteTime(resumed, app.ds.site.timeZone, true)}, when the historian shows it running again
+        </label>
+      )}
       {missing.length > 0 && <p className="small muted">Still needed: {missing.join(', ')}</p>}
       <button
         className="btn primary big"
         disabled={missing.length > 0}
         onClick={() => {
-          const x = app.run(asset, (ctx) => release(ctx, flag, { details: d, reason: reason || undefined }));
+          const x = app.run(asset, (ctx) => release(ctx, flag, { details: d, reason: reason || undefined, at: resumed && atResume ? resumed : undefined }));
           setR(x);
           if (x.ok) onDone();
         }}

@@ -48,9 +48,10 @@ import {
   DEFAULT_CONDITION_SETTINGS, type CmResponse, type ConditionData, type ConditionSettings, type OilSample,
   DEFAULT_RCM_SETTINGS, type JobPlanVersion, type RcmMode, type RcmSettings, DEFAULT_SPARES_SETTINGS, type SparesSettings,
   DEFAULT_ASSIST_SETTINGS, STARTER_CODES, buildSuggester, type AssistSettings, type Suggester,
+  DEFAULT_PLANT_SETTINGS, generatePlant, type ClassifyResult, type DelayContext, type PlantSettings, type ProcessDelay, type RunSignal,
 } from '@mr/core';
 import { demoImprovements } from './data/demo-improve';
-import { saveRcmModes, saveJobPlanVersion, saveCmResponse, saveOilSamples, saveComponentRecord, saveViewRecord, saveAnalysisRecord, loadPhoto, saveForms, sendInspection, sendPhoto, SendError, saveAlertAnswer, saveDecision, saveRequests, saveFlags, saveRecords, saveSetting, saveTarget, saveTaskStatus, type Loaded } from './data/remote';
+import { saveProcessDelays, saveRunSignals, type PlantData, saveRcmModes, saveJobPlanVersion, saveCmResponse, saveOilSamples, saveComponentRecord, saveViewRecord, saveAnalysisRecord, loadPhoto, saveForms, sendInspection, sendPhoto, SendError, saveAlertAnswer, saveDecision, saveRequests, saveFlags, saveRecords, saveSetting, saveTarget, saveTaskStatus, type Loaded } from './data/remote';
 import { demoProjects } from './data/demo-projects';
 import { demoForms, demoInspections } from './data/demo-inspections';
 import { backoffMs, forgetPhoto, localPhoto, readDrafts, readOutbox, writeDrafts, writeOutbox, type OutboxItem } from './inspect/device';
@@ -131,6 +132,16 @@ export interface AppState {
   assistSettings: AssistSettings;
   runAssistSettings: (cmd: (ctx: ConsoleContext, current: AssistSettings) => ConsoleResult<AssistSettings>) => ConsoleResult<AssistSettings>;
   suggester: Suggester;
+  /** Fixed plant (docs/fixed-plant.md): structure, equipment, their flags, process delays and historian signals. */
+  plant: PlantData;
+  plantSettings: PlantSettings;
+  runPlantSettings: (cmd: (ctx: ConsoleContext, current: PlantSettings) => ConsoleResult<PlantSettings>) => ConsoleResult<PlantSettings>;
+  /** Record, end or void a process delay. `area` is the plant scope for the permission check. */
+  runDelay: (area: string, cmd: (ctx: DelayContext, delays: ProcessDelay[]) => ConsoleResult<ProcessDelay>) => ConsoleResult<ProcessDelay>;
+  /** Classify historian stops as a process delay: one delay record and the proposals rejected together. */
+  runClassify: (area: string, cmd: (ctxFor: (assetId: string) => FlagContext, dctx: DelayContext, delays: ProcessDelay[]) => ClassifyResult) => ClassifyResult;
+  /** Keep historian signals loaded from a file. Stops in them are proposed with `run` and proposeStop. */
+  addSignals: (fileName: string, signals: RunSignal[], stats: { rows: number; added: number; skipped: number }) => void;
   /** Inspection forms, every version (docs/inspections.md). */
   forms: InspectionForm[];
   runForms: (cmd: (ctx: ConsoleContext) => ConsoleResult<InspectionForm>) => ConsoleResult<InspectionForm>;
@@ -206,6 +217,8 @@ export function AppProvider({ children, live, onReload, onSignOut }: { children:
     ['reliability_engineer', 'Rae Reliability'], ['superintendent', 'Sol Superintendent'], ['admin', 'Ada Admin'],
   ].map(([role, name]) => ({ id: `demo-${role}`, name: name!, email: `${role}@example.com`, role: role as Role, scope: ['*'], addedAt: '2026-01-01T00:00:00.000Z' })));
   const [flags, setFlags] = useState<DownFlag[]>(ds.flags);
+  const [plant, setPlant] = useState<PlantData>(() => live?.plant ?? generatePlant({ seed: 42, days: 120, end: Date.parse(ds.generatedAt), timeZone: ds.site.timeZone, tenantId: ds.tenantId, siteId: ds.site.id }));
+  const [plantSettings, setPlantSettings] = useState<PlantSettings>(() => live?.plantSettings ?? DEFAULT_PLANT_SETTINGS);
   const [improve, setImprove] = useState(() => (live ? { actions: live.actions, rcas: live.rcas, projects: live.projects } : { ...demoImprovements(ds), projects: demoProjects(ds) }));
   const [audit, setAudit] = useState<AuditEntry[]>([]);
   const [now, setNow] = useState(() => new Date().toISOString());
@@ -239,41 +252,107 @@ export function AppProvider({ children, live, onReload, onSignOut }: { children:
     [role, live],
   );
 
+  const flagCtx = useCallback((asset: Asset, nowIso: string): FlagContext => {
+    const list = asset.assetClass === 'fixed_plant' ? plant.flags : flags;
+    const lc = ds.lifecycle.find((l) => l.assetId === asset.id && Date.parse(l.start) <= Date.parse(nowIso) && (!l.end || Date.parse(nowIso) < Date.parse(l.end)));
+    return {
+      now: nowIso,
+      actor,
+      rules,
+      calendar: ds.calendar,
+      asset,
+      lifecycle: lc?.status ?? 'active',
+      unitFlags: list.filter((f) => f.unitId === asset.id),
+      siteOpenFlags: list.filter((f) => f.state === 'open'),
+      shopLines: ds.shopLines,
+      lineClosures: ds.closures,
+      newId,
+    };
+  }, [actor, ds, flags, plant.flags, rules]);
+  const keepFlags = useCallback((changed: DownFlag[], plantSide: boolean) => {
+    const merge = (prev: DownFlag[]) => {
+      const next = [...prev];
+      for (const f of changed) {
+        const i = next.findIndex((x) => x.id === f.id);
+        if (i >= 0) next[i] = f;
+        else next.push(f);
+      }
+      return next;
+    };
+    if (plantSide) setPlant((p) => ({ ...p, flags: merge(p.flags) }));
+    else setFlags(merge);
+  }, []);
+
+  // Plant equipment flags go to the plant's list; everything else to the fleet's.
   const run = useCallback(
     (asset: Asset, cmd: (ctx: FlagContext) => CommandResult): CommandResult => {
       const nowIso = new Date().toISOString();
-      const lc = ds.lifecycle.find((l) => l.assetId === asset.id && Date.parse(l.start) <= Date.parse(nowIso) && (!l.end || Date.parse(nowIso) < Date.parse(l.end)));
-      const ctx: FlagContext = {
-        now: nowIso,
-        actor,
-        rules,
-        calendar: ds.calendar,
-        asset,
-        lifecycle: lc?.status ?? 'active',
-        unitFlags: flags.filter((f) => f.unitId === asset.id),
-        siteOpenFlags: flags.filter((f) => f.state === 'open'),
-        shopLines: ds.shopLines,
-        lineClosures: ds.closures,
-        newId,
-      };
-      const r = cmd(ctx);
+      const r = cmd(flagCtx(asset, nowIso));
       if (r.ok) {
-        setFlags((prev) => {
-          const next = [...prev];
-          for (const f of r.flags) {
-            const i = next.findIndex((x) => x.id === f.id);
-            if (i >= 0) next[i] = f;
-            else next.push(f);
-          }
-          return next;
-        });
+        keepFlags(r.flags, asset.assetClass === 'fixed_plant');
         setAudit((prev) => [...r.audit, ...prev]);
         setNow(nowIso);
         if (live) saveFlags(siteId, r.flags, r.audit).catch(failed);
       }
       return r;
     },
-    [actor, ds, flags, rules, live, failed],
+    [flagCtx, keepFlags, live, failed],
+  );
+
+  const runDelay = useCallback(
+    (area: string, cmd: (ctx: DelayContext, delays: ProcessDelay[]) => ConsoleResult<ProcessDelay>): ConsoleResult<ProcessDelay> => {
+      const nowIso = new Date().toISOString();
+      const r = cmd({ actor, now: nowIso, newId, timeZone: ds.site.timeZone, calendar: ds.calendar, area }, plant.delays);
+      if (r.ok) {
+        setPlant((p) => {
+          const next = [...p.delays];
+          for (const d of r.records) {
+            const i = next.findIndex((x) => x.id === d.id);
+            if (i >= 0) next[i] = d;
+            else next.push(d);
+          }
+          return { ...p, delays: next };
+        });
+        setAudit((prev) => [...r.audit, ...prev]);
+        setNow(nowIso);
+        if (live) saveProcessDelays(siteId, r.records, r.audit).catch(failed);
+      }
+      return r;
+    },
+    [actor, ds, plant.delays, live, failed],
+  );
+
+  const runClassify = useCallback(
+    (area: string, cmd: (ctxFor: (assetId: string) => FlagContext, dctx: DelayContext, delays: ProcessDelay[]) => ClassifyResult): ClassifyResult => {
+      const nowIso = new Date().toISOString();
+      const byId = new Map(plant.equipment.map((a) => [a.id, a]));
+      const r = cmd((id) => flagCtx(byId.get(id)!, nowIso), { actor, now: nowIso, newId, timeZone: ds.site.timeZone, calendar: ds.calendar, area }, plant.delays);
+      if (r.ok) {
+        keepFlags(r.flags, true);
+        setPlant((p) => ({ ...p, delays: [...p.delays, ...r.delays] }));
+        setAudit((prev) => [...r.audit, ...prev]);
+        setNow(nowIso);
+        if (live) {
+          const delayAudit = r.audit.filter((a) => a.entity === 'process_delay');
+          const flagAudit = r.audit.filter((a) => a.entity !== 'process_delay');
+          saveProcessDelays(siteId, r.delays, delayAudit).then(() => saveFlags(siteId, r.flags, flagAudit)).catch(failed);
+        }
+      }
+      return r;
+    },
+    [actor, ds, plant.delays, plant.equipment, flagCtx, keepFlags, live, failed],
+  );
+
+  const addSignals = useCallback(
+    (fileName: string, signals: RunSignal[], stats: { rows: number; added: number; skipped: number }) => {
+      const at = new Date().toISOString();
+      setPlant((p) => ({ ...p, signals: [...p.signals, ...signals] }));
+      const entry: AuditEntry = { at, userId: actor.userId, action: 'import_run_signals', entity: 'import_run', entityId: newId(), before: null, after: { fileName, ...stats }, reason: `File import: ${fileName}` };
+      setAudit((prev) => [entry, ...prev]);
+      setNow(at);
+      if (live) saveRunSignals(siteId, signals, [entry]).catch(failed);
+    },
+    [actor, live, failed],
   );
 
   const applyImport = useCallback(
@@ -553,6 +632,18 @@ export function AppProvider({ children, live, onReload, onSignOut }: { children:
     [actor, ds, live, failed],
   );
   // Learned in the browser from this site's own records; nothing leaves the platform (docs/ai-assist.md guardrail 6).
+  const runPlantSettings = useCallback(
+    (cmd: (ctx: ConsoleContext, current: PlantSettings) => ConsoleResult<PlantSettings>): ConsoleResult<PlantSettings> => {
+      const r = cmd({ actor, now: new Date().toISOString(), newId, timeZone: ds.site.timeZone, calendar: ds.calendar }, plantSettings);
+      if (r.ok) {
+        setPlantSettings(r.records[0]!);
+        setAudit((prev) => [...r.audit, ...prev]);
+        if (live) saveSetting(siteId, 'plant', r.records[0]!, r.audit[0]?.reason ?? '', r.audit).catch(failed);
+      }
+      return r;
+    },
+    [actor, ds, plantSettings, live, failed],
+  );
   const suggester = useMemo(() => buildSuggester(flags, ds.workOrders, STARTER_CODES, assistSettings), [flags, ds.workOrders, assistSettings]);
   const ruleAlertList = useMemo(
     () => ruleAlerts({ assets: ds.assets, flags, smu: ds.smu, lifecycle: ds.lifecycle, rules, now, timeZone: ds.site.timeZone, workOrders: ds.workOrders, targets: targetList, workSettings }, alertSettings),
@@ -750,7 +841,7 @@ export function AppProvider({ children, live, onReload, onSignOut }: { children:
   }, [live, siteId]);
   const people = useMemo(() => users.filter((u) => !u.retiredAt && !u.invited), [users]);
   const userName = useCallback((id: string) => users.find((u) => u.id === id)?.name ?? 'Unknown user', [users]);
-  const value: AppState = { ds, forms, runForms, inspections, drafts, saveDraft, discardDraft, runInspection, outbox, sendOutbox: () => void sendOutbox(true), dropOutboxItem, photo, workSettings, runWorkSettings, alertSettings, runAlertSettings, alertAnswers, runAlertAnswer, analyses, runAnalysis, views, runView, components, componentEvents, lifeTargets, runComponents, oilSamples, cmResponses, conditionSettings, runSamples, runResponse, runConditionSettings, rcmModes, jobPlanVersions, rcmSettings, runRcm, runJobPlan, runRcmSettings, sparesSettings, runSparesSettings, assistSettings, runAssistSettings, suggester, ruleAlerts: ruleAlertList, requests, runRequest, decide, actions: improve.actions, rcas: improve.rcas, projects: improve.projects, runImprove, people, userName, targets, targetOf, targetList, users, codes, runConsole, mode: live ? 'live' : 'demo', syncError, clearSyncError: () => setSyncError(null), signOut: onSignOut, importRuns, applyImport, newId, flags, audit, rules, now, actor, setRole, run, lastSync: ds.generatedAt, theme, setTheme };
+  const value: AppState = { ds, forms, runForms, inspections, drafts, saveDraft, discardDraft, runInspection, outbox, sendOutbox: () => void sendOutbox(true), dropOutboxItem, photo, workSettings, runWorkSettings, alertSettings, runAlertSettings, alertAnswers, runAlertAnswer, analyses, runAnalysis, views, runView, components, componentEvents, lifeTargets, runComponents, oilSamples, cmResponses, conditionSettings, runSamples, runResponse, runConditionSettings, rcmModes, jobPlanVersions, rcmSettings, runRcm, runJobPlan, runRcmSettings, sparesSettings, runSparesSettings, assistSettings, runAssistSettings, suggester, plant, plantSettings, runPlantSettings, runDelay, runClassify, addSignals, ruleAlerts: ruleAlertList, requests, runRequest, decide, actions: improve.actions, rcas: improve.rcas, projects: improve.projects, runImprove, people, userName, targets, targetOf, targetList, users, codes, runConsole, mode: live ? 'live' : 'demo', syncError, clearSyncError: () => setSyncError(null), signOut: onSignOut, importRuns, applyImport, newId, flags, audit, rules, now, actor, setRole, run, lastSync: ds.generatedAt, theme, setTheme };
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
 

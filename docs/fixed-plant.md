@@ -189,7 +189,7 @@ Circuits in process order, left to right (wrapping on a phone). Each circuit sho
 - each equipment as a tile: down (with stage, reason and hours), process delay (code), running, or
   idle (standby).
 
-A process delay is drawn apart from maintenance: a striped amber tile and the word "Process delay",
+A process delay is drawn apart from maintenance: a striped purple tile and the word "Process delay",
 never the red down colour. Stops waiting to be classified are listed above the board.
 
 ## Plant KPIs
