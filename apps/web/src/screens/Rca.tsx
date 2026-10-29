@@ -4,8 +4,9 @@
 
 import {
   EMPTY_FILTER, FISHBONE, analyse, can, cancelRca, closeRca, editRca, filterFromQuery, filterToQuery, flagSystem, rcaActions, reopenRca, startRca,
-  ACTION_STATUS_LABELS, type ActionSource, type FishboneCategory, type Rca,
+  ACTION_STATUS_LABELS, rcaTimeline, type ActionSource, type FishboneCategory, type Rca,
 } from '@mr/core';
+import { DraftBox } from '../components/DraftBox';
 import { useMemo, useState } from 'react';
 import { fmtHours, siteTime } from '../format';
 import { analysisHref, describeQuery, newHref } from '../improve/describe';
@@ -203,6 +204,18 @@ function RcaPage({ id }: { id: string }) {
           </div>
         </section>
       )}
+
+      <DraftBox
+        title="Draft timeline"
+        draft={rcaTimeline({
+          // The flags under study, or when none are linked, the latest 5 events on the slice.
+          rca: r.flagIds.length ? r : { ...r, flagIds: events.slice(0, 5).flatMap((e) => e.flags.map((f) => f.id)) },
+          flags: app.flags, workOrders: app.ds.workOrders, components: app.components, componentEvents: app.componentEvents, oilSamples: app.oilSamples,
+          assets: app.ds.assets, timeZone: tz, now: app.now,
+        })}
+        note={`What happened, in time order, from the records of ${r.flagIds.length ? 'the flags under study' : 'the latest 5 events on this slice'}: stages, locations, ETAs, releases, work orders, and component changes and oil samples on the same units from 30 days before. Each line names its record. Copy it into the problem or a why.`}
+        empty="No flags to build a timeline from."
+      />
 
       <section className="card">
         <h3>History</h3>

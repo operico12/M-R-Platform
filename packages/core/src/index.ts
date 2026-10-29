@@ -24,3 +24,4 @@ export * from './components.js';
 export * from './condition.js';
 export * from './rcm.js';
 export * from './spares.js';
+export * from './assist.js';
