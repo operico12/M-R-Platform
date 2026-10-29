@@ -104,6 +104,8 @@ function Shell() {
     [app.ruleAlerts, app.alertAnswers, app.now, app.alertSettings.snoozeDays, app.ds.site.timeZone],
   );
 
+  const me = app.users.find((u) => u.id === app.actor.userId);
+
   if (tv) return <div className="tv"><main>{page}</main></div>;
 
   return (
@@ -125,7 +127,9 @@ function Shell() {
             )}
           </>
         )}
-        bottom={(
+        theme={app.theme}
+        onTheme={app.setTheme}
+        account={(
           <div className="menu-foot">
             {app.mode === 'demo' ? (
               <label>
@@ -135,18 +139,13 @@ function Shell() {
                 </select>
               </label>
             ) : (
-              <div className="small" style={{ marginTop: 8 }}>
-                Signed in as {ROLES.find(([r]) => r === app.actor.role)?.[1]}
-                {app.signOut && <button className="btn" style={{ marginTop: 6, width: '100%', minHeight: 36 }} onClick={app.signOut}>Sign out</button>}
+              <div className="small">
+                Signed in{me ? <> as <strong>{me.name || me.email}</strong></> : null}
+                <div>Role: {ROLES.find(([r]) => r === app.actor.role)?.[1]}</div>
+                {app.signOut && <button className="btn" style={{ marginTop: 8, width: '100%', minHeight: 40 }} onClick={app.signOut}>Sign out</button>}
               </div>
             )}
-            <label>
-              Theme
-              <select value={app.theme} onChange={(e) => app.setTheme(e.target.value as 'light' | 'dark')}>
-                <option value="light">Light (office)</option>
-                <option value="dark">Dark (night shift)</option>
-              </select>
-            </label>
+            <a className="menu-foot-link" href="#/account">Account settings</a>
           </div>
         )}
       />

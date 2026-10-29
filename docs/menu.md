@@ -6,19 +6,21 @@ of design 3 (icon bar) and design 5 (pinned and search). Code: `packages/core/sr
 
 ## Layout
 
-- **Icon bar** on the left with seven buttons: Pinned, Today, Assets, Analyse, Improve, Data and
-  Admin. A red dot shows when a page in that group has something waiting (open alerts, or
-  inspections waiting to send).
-- **Page list** beside it shows the chosen group's pages. Opening a page from another group
-  switches the list to that group, unless Pinned is shown.
-- **Find a page** box at the top of the list. Press `/` anywhere (outside a text box) to jump to
-  it; Enter opens the first match. It matches page names first, then other words people use
-  (for example "weibull" finds Calculators, "maximo" finds Data import). Ctrl + K still finds a
+- **Icon bar** on the left, always shown: Find, Pinned, Today, Assets, Analyse, Improve, Data
+  and Admin, and at the bottom Day/Night and You. A red dot shows when a page in that group has
+  something waiting (open alerts, or inspections waiting to send).
+- **Page list.** Hovering over a group (or clicking it, on a touch screen) opens that group's
+  pages as a pop-out beside the bar. It closes when the mouse leaves it, when you pick a page,
+  click outside it or press Escape. Ope asked on 29 Oct 2026 for the list to go away without
+  effort, so this is the default.
+- **Keep open.** The » button in the pop-out keeps the list beside the bar instead; « folds it
+  again. The choice is kept on the device.
+- **You** shows who is signed in, the role, Sign out (live) or the demo role picker, and a link
+  to Account settings. **Day/Night** switches the theme in one click.
+- **Find** (or `/` anywhere outside a text box) opens the list with the cursor in "Find a page";
+  Enter opens the first match. It matches page names first, then other words people use (for
+  example "weibull" finds Calculators, "maximo" finds Data import). Ctrl + K still finds a
   calculator.
-- **Fold.** The « button at the top of the page list folds it away, leaving only the icon bar,
-  so pages get the room. While folded, a group button opens its pages as a pop-out that closes
-  when you pick a page, click outside it or press Escape; » keeps the list open again. The choice
-  is kept on the device. It starts open on screens 1200 px wide or more, folded on narrower ones.
 - On a phone the icon bar is a row across the top and the pages are a row you swipe.
 
 ## Groups
