@@ -25,6 +25,8 @@ export interface RemoteSite {
 export interface Loaded {
   ds: Dataset;
   role: Role;
+  /** The person's own role before an Admin test pick (docs/access.md section 4). */
+  ownRole: Role;
   me: string;
   rules: FlagRulesConfig;
   users: SiteUser[];
@@ -143,6 +145,11 @@ export async function loadAccessRequests(siteId: string): Promise<AccessRequest[
     role: r.role ?? undefined, decidedBy: r.decided_by ?? undefined, decidedAt: t(r.decided_at), reason: r.reason ?? undefined,
   }));
 }
+/** Pick a role to test as (Admin, test mode on). Returns the role now in use. */
+export async function setTestRoleRemote(siteId: string, role: Role): Promise<Role> {
+  return must(await remote!.rpc('app_set_test_role', { p_site: siteId, p_role: role })) as Role;
+}
+
 export async function decideAccessRemote(id: string, approve: boolean, role: Role | undefined, reason: string): Promise<void> {
   must(await remote!.rpc('app_decide_access', { p_id: id, p_approve: approve, p_role: approve ? role : null, p_reason: reason.trim() || null }));
 }
@@ -217,6 +224,8 @@ export async function loadSite(siteId: string): Promise<Loaded> {
   const insp = await loadInspections(siteId);
   const sby = await rpcRetry('app_load_standby', { p_site: siteId, p_since: since });
   const wts = await rpcRetry('app_load_waits', { p_site: siteId, p_since: since });
+  // Admin test mode (SQL 26). Before that file is run the function is missing; the own role is the role.
+  const tst = await rpcRetry('app_my_test_role', { p_site: siteId });
   const work = iso(must(wk)) as { plans: Array<Partial<WorkOrder> & { id: string }>; settings: { work?: Partial<WorkSettings>; alerts?: Partial<AlertSettings>; condition?: Partial<ConditionSettings>; rcm?: Partial<RcmSettings>; spares?: Partial<SparesSettings>; assist?: Partial<AssistSettings>; plant?: Partial<PlantSettings>; imports?: Partial<ImportSource>; access?: Partial<AccessSettings> } };
   const plans = new Map(work.plans.map((x) => [x.id, x]));
   const num = (v: unknown) => (v === undefined || v === null ? undefined : Number(v));
@@ -271,6 +280,7 @@ export async function loadSite(siteId: string): Promise<Loaded> {
       generatedAt: new Date().toISOString(),
     },
     role: d.role,
+    ownRole: (tst.error ? d.role : (tst.data as { ownRole?: Role } | null)?.ownRole) ?? d.role,
     me: d.me,
     rules: { ...DEFAULT_FLAG_RULES, ...(d.rules ?? {}) },
     actions: improve.actions,

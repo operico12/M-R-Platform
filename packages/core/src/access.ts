@@ -14,9 +14,11 @@ export interface AccessSettings {
   sessionDays: number;
   /** Signed out after this many days with no use on a device (1 to 30). */
   idleDays: number;
+  /** Development only: an Admin may act as any role, straight away (docs/access.md section 4). */
+  testMode: boolean;
 }
 
-export const DEFAULT_ACCESS: AccessSettings = { requestDomains: [], adminMfa: false, sessionDays: 30, idleDays: 7 };
+export const DEFAULT_ACCESS: AccessSettings = { requestDomains: [], adminMfa: false, sessionDays: 30, idleDays: 7, testMode: false };
 export const ACCESS_LIMITS = { maxSessionDays: 30, maxIdleDays: 30, requestsPerDay: 3, nameMax: 80, noteMax: 300 } as const;
 
 /** Roles an Admin can give by approving a request. Superintendent and Admin go through approvals. */
@@ -50,9 +52,27 @@ export function setAccessSettings(ctx: ConsoleContext, current: AccessSettings, 
   if (next.adminMfa && !current.adminMfa && !mfaPassed) e.push('Turn on two-step sign-in for yourself and pass the code check first, so you are not locked out.');
   if (!reason.trim()) e.push('Give a reason for the change.');
   if (e.length) return { ok: false, errors: e };
-  const clean: AccessSettings = { requestDomains: domains, adminMfa: !!next.adminMfa, sessionDays: next.sessionDays, idleDays: next.idleDays };
+  const clean: AccessSettings = { requestDomains: domains, adminMfa: !!next.adminMfa, sessionDays: next.sessionDays, idleDays: next.idleDays, testMode: !!next.testMode };
   const audit: AuditEntry = { at: ctx.now, userId: ctx.actor.userId, action: 'set_access', entity: 'settings', entityId: 'access', before: current, after: clean, reason: reason.trim() };
   return { ok: true, records: [clean], audit: [audit], warnings: [] };
+}
+
+// ---------- test mode (docs/access.md section 4) ----------
+
+/** Roles an Admin can test as. Admin itself means "back to my own role". */
+export const TEST_ROLES: Role[] = ['viewer', 'technician', 'supervisor', 'reliability_engineer', 'superintendent', 'admin'];
+
+/** Whether this person may use the "Testing as" picker: their own role is Admin and test mode is on. */
+export const mayTestAs = (ownRole: Role, s: AccessSettings) => ownRole === 'admin' && s.testMode;
+
+/**
+ * The role the app and the database use. Mirrors site_role(): an Admin who must pass two-step
+ * sign-in and has not acts as a Viewer first; then, with test mode on, the picked test role.
+ */
+export function testedRole(ownRole: Role, testRole: Role | null | undefined, s: AccessSettings, mfaPassed: boolean): Role {
+  if (ownRole === 'admin' && s.adminMfa && !mfaPassed) return 'viewer';
+  if (mayTestAs(ownRole, s) && testRole && TEST_ROLES.includes(testRole)) return testRole;
+  return ownRole;
 }
 
 // ---------- sessions ----------
