@@ -28,7 +28,7 @@ const SHOWN_ELSEWHERE = new Set<Alert['kind']>(['no_eta', 'eta_passed', 'proposa
 interface Row {
   unitId: string; unitNumber: string; model: string; group: BoardGroup; sub: BoardSub; text?: string;
   a: Asset; flag?: DownFlag; standby?: StandbyFlag; proposal?: DownFlag; since?: string;
-  noReadingSince?: string | null; alerts: Alert[]; stageLate: boolean; busy: boolean; parked: boolean;
+  noReadingSince?: string | null; alerts: Alert[]; stageLate: boolean; busy: boolean; parked: boolean; parkedSince?: string;
 }
 
 export function Board({ tv, query = '' }: { tv: boolean; query?: string }) {
@@ -61,6 +61,7 @@ export function Board({ tv, query = '' }: { tv: boolean; query?: string }) {
       const sb = !flag && !parked ? currentStandby(a.id, app.standby) : undefined;
       const { group, sub } = boardPlace(flag, sb, parked);
       const isParked = parked;
+      const parkedSince = parked ? app.ds.lifecycle.filter((l) => l.assetId === a.id && l.status !== 'active' && !l.end).map((l) => l.start).sort().at(-1) : undefined;
       const proposal = !flag && !parked ? app.flags.find((f) => f.unitId === a.id && f.state === 'proposed') : undefined;
       const last = lastReading.get(a.id);
       const noReadingSince = group === 'operational' && !parked && (!last || hoursSince(last, app.now) > NO_READING_HOURS) ? (last ?? null) : undefined;
@@ -72,7 +73,7 @@ export function Board({ tv, query = '' }: { tv: boolean; query?: string }) {
         : sb ? `standby ${sbLabel(sb.reasonCode)}` : proposal ? `proposed ${proposal.reasonCode}` : undefined;
       const shownAlerts = mine.filter((x) => !SHOWN_ELSEWHERE.has(x.kind));
       const busy = Boolean(sb || proposal || isParked || noReadingSince !== undefined || shownAlerts.length);
-      return { unitId: a.id, unitNumber: a.unitNumber, model: a.model, group, sub, text: isParked ? `${text ?? ''} parked` : text, a, flag, standby: sb, proposal, since, noReadingSince, alerts: shownAlerts, stageLate, busy, parked: isParked };
+      return { unitId: a.id, unitNumber: a.unitNumber, model: a.model, group, sub, text: isParked ? `${text ?? ''} parked` : text, a, flag, standby: sb, proposal, since, noReadingSince, alerts: shownAlerts, stageLate, busy, parked: isParked, parkedSince };
     });
   }, [app.ds, app.flags, app.now, app.standby, app.standbyReasons, app.waits, app.waitKinds, alerts]);
 
@@ -128,18 +129,18 @@ export function Board({ tv, query = '' }: { tv: boolean; query?: string }) {
     const f = r.flag;
     if (!f) {
       const items: JSX.Element[] = [];
-      if (r.parked) items.push(<li key="pk" className="ui-parked"><span><FlagIcon code="parked" /> Parked</span><span /></li>);
+      if (r.parked) items.push(<li key="pk" className="ui-parked"><span><FlagIcon code="parked" /> Parked</span><span>{hrs(r.parkedSince)}</span></li>);
       if (r.standby) items.push(<li key="sb" className="ui-standby"><span><FlagIcon code={r.standby.reasonCode} /> Standby: {sbLabel(r.standby.reasonCode)}</span><span>{hrs(r.standby.start)}</span></li>);
       if (r.proposal) items.push(<li key="pr" className="ui-warn"><span><FlagIcon code="proposed" /> Down proposed: {r.proposal.reasonCode}, waiting for a supervisor</span><span>{hrs(r.proposal.enteredAt)}</span></li>);
       if (r.noReadingSince !== undefined) items.push(<li key="nr" className="ui-muted"><span><FlagIcon code="no_reading" /> No hour meter reading</span><span>{r.noReadingSince ? hrs(r.noReadingSince) : 'none yet'}</span></li>);
       for (const x of r.alerts) items.push(<li key={x.kind} className="ui-warn"><span><FlagIcon code="alert" /> {ALERT_PLAIN[x.kind].title}</span><span>{hrs(x.since)}</span></li>);
-      const parked = r.parked;
+      // A parked operational unit is drawn like any operational card; Parked is one of its lines (Ope, 30 Oct 2026).
       return (
-        <button key={r.unitId} type="button" className={`ucard uc-${parked ? 'parked' : r.standby ? 'standby' : 'run'} uc-small`} onClick={() => pick(r.a)}
-          aria-label={`${r.unitNumber}, ${parked ? 'parked' : r.standby ? `on standby for ${hrs(r.standby.start)}` : 'operational'}`}>
+        <button key={r.unitId} type="button" className={`ucard uc-${r.standby ? 'standby' : 'run'} uc-small`} onClick={() => pick(r.a)}
+          aria-label={`${r.unitNumber}, ${r.standby ? `on standby for ${hrs(r.standby.start)}` : 'operational'}${r.parked ? ', parked' : ''}`}>
           <span className="uc-head">
             <strong>{r.unitNumber}</strong><span className="muted small">{r.model}</span>
-            <span className="uc-time">{parked ? 'parked' : r.since ? <><span className="muted small">up </span>{hrs(r.since)}</> : <span className="muted small">no stops on record</span>}</span>
+            <span className="uc-time">{r.since ? <><span className="muted small">up </span>{hrs(r.since)}</> : <span className="muted small">no stops on record</span>}</span>
           </span>
           {items.length ? <ul className="uc-items">{items}</ul> : <span className="uc-ok small"><FlagIcon code="in_use" /> In use</span>}
         </button>
@@ -158,7 +159,7 @@ export function Board({ tv, query = '' }: { tv: boolean; query?: string }) {
         </span>
         <span className="uc-reason">{f.reasonCode} <span className="muted">· {locationLabel(f, app.ds)}</span></span>
         <ul className="uc-items">
-          {r.parked && <li className="ui-parked"><span><FlagIcon code="parked" /> Parked</span><span /></li>}
+          {r.parked && <li className="ui-parked"><span><FlagIcon code="parked" /> Parked</span><span>{hrs(r.parkedSince)}</span></li>}
           <li className={r.stageLate ? 'ui-warn' : 'ui-stage'}><span><FlagIcon code={st?.stage ?? 'no_stage'} /> {st ? STAGE_LABELS[st.stage] : BOARD_SUB_LABELS.no_stage}</span><span>{hrs(stageSince(f))}</span></li>
           {openWaits(r.unitId, app.waits).map((w) => (
             <li key={w.id} className="ui-wait"><span><FlagIcon code={w.kind} /> Waiting: {waitLabel(w.kind)}{w.note ? ` · ${w.note}` : ''}</span><span>{hrs(w.start)}</span></li>
