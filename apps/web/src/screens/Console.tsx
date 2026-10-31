@@ -54,7 +54,7 @@ const TABS: Array<[Tab, string]> = [['users', 'Users'], ['access', 'Access'], ['
 export function Console({ tab }: { tab: string }) {
   const t: Tab = TABS.some(([k]) => k === tab) ? (tab as Tab) : 'users';
   const app = useApp();
-  const waiting = waitingOn(app.requests, app.actor.userId, app.actor.role).length;
+  const waiting = waitingOn(app.requests, app.actor.userId, app.actor).length;
   const asks = can(app.actor, 'manage_access') ? (app.accessRequests ?? []).filter((r) => r.status === 'pending').length : 0;
   return (
     <div className="stack">
@@ -304,7 +304,7 @@ const fmtTarget = (kpi: TargetKpi, v: number) => (TARGET_KPIS[kpi].unit === '%' 
 function Targets() {
   const app = useApp();
   const tz = app.ds.site.timeZone;
-  const p = permission(app.actor.role, 'change_targets');
+  const p = permission(app.actor, 'change_targets');
   const allowed = p === 'propose' || p === 'approve';
   const [kpi, setKpi] = useState<TargetKpi>('pa');
   const [model, setModel] = useState('');
@@ -409,7 +409,7 @@ function Codes() {
           <h3 style={{ margin: 0 }}>Reason codes</h3>
           <button className="btn primary" disabled={!allowed} onClick={() => setEdit('new')}>Add code</button>
         </div>
-        <p className="small muted">{allowed ? 'Codes are retired, never deleted, so old flags keep their reason.' : permission(app.actor.role, 'edit_codes') === 'propose' ? 'Code change proposals come later. The Admin makes changes for now.' : 'Only the Admin can change codes.'}</p>
+        <p className="small muted">{allowed ? 'Codes are retired, never deleted, so old flags keep their reason.' : permission(app.actor, 'edit_codes') === 'propose' ? 'Code change proposals come later. The Admin makes changes for now.' : 'Only the Admin can change codes.'}</p>
         {edit && <CodeForm code={edit === 'new' ? null : edit} onDone={() => setEdit(null)} />}
         <div className="table-wrap" style={{ maxHeight: 360 }}>
           <table>

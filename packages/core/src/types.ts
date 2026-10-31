@@ -118,6 +118,8 @@ export interface Actor {
   role: Role;
   /** Areas or fleets the user may act on. '*' means all. */
   scope: string[];
+  /** Admin full control in test mode (docs/access.md section 4): passes every role check. */
+  fullAccess?: boolean;
 }
 
 /** Phase 1a roles (plan 11.7). Technician and superintendent arrive in 1b and 2 but are modelled now. */

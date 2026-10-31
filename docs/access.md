@@ -66,9 +66,20 @@ Ope, 30 Oct 2026: during development the Admin needs to try every screen and act
   approval. Picking Admin goes back. Every pick is audited.
 - Nothing else changes: the person's real role stays Admin, two-step sign-in still applies first
   (an Admin who has not passed the code check stays a Viewer), and a person who is not an Admin
-  cannot use it. Separation of duties still holds: testing as Superintendent does not let you approve
-  your own request.
-- When test mode is turned off, everyone is back to their own role at once; any pick is ignored.
+  cannot use it. Separation of duties still holds while testing as another role: testing as
+  Superintendent does not let you approve your own request.
+- **Full control** (Ope, 31 Oct 2026: "admin should have full control for now, how can i design
+  something and not able to test on one account?"). While test mode is on and the Admin has not
+  picked another role, the Admin passes every role check in the app and in the database: every
+  action in the permission matrix, every area, every approval, and the "someone else must do it"
+  checks (approving your own request, signing off your own inspection, deciding your own project
+  change). The database function is `admin_full(site)`; every row rule that checks a role also
+  accepts it, and the security audit test fails if a new rule leaves it out.
+- Full control does **not** lift the data rules: nothing is deleted, history is voided with a reason,
+  submitted records are not edited, closed requests stay closed, the site keeps a superintendent,
+  and every change is audited under the Admin's own name.
+- When test mode is turned off, everyone is back to their own role at once; any pick is ignored,
+  and full control ends.
 - **Turn test mode off before real users join the site.** The Console shows a warning while it is on.
 
 ## Later

@@ -512,7 +512,7 @@ function RoundDone({ round }: { round: Round }) {
   const [err, setErr] = useState<string[] | null>(null);
   const [warn, setWarn] = useState<string[]>([]);
   const unit = (id: string) => app.plant.equipment.find((a) => a.id === id);
-  const canSign = permission(app.actor.role, 'sign_off_inspections') === 'yes';
+  const canSign = permission(app.actor, 'sign_off_inspections') === 'yes';
   const waiting = ins.filter((i) => i.status === 'submitted').length;
   const sign = () => { const r = app.runRound((ctx) => signOffRound(ctx, round, app.inspections, note)); if (!r.ok) setErr(r.errors); else { setErr(null); setWarn(['Signed off.']); } };
   const voidIt = () => {

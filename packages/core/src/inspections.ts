@@ -282,10 +282,10 @@ export function submitInspection(ctx: ConsoleContext, list: Inspection[], form: 
 }
 
 export function signOff(ctx: ConsoleContext, list: Inspection[], id: string, note: string): Ok<Inspection> | No {
-  if (permission(ctx.actor.role, 'sign_off_inspections') !== 'yes') return no('A supervisor or superintendent signs off inspections.');
+  if (permission(ctx.actor, 'sign_off_inspections') !== 'yes') return no('A supervisor or superintendent signs off inspections.');
   const i = list.find((x) => x.id === id);
   if (!i || i.status !== 'submitted') return no('Only a submitted inspection can be signed off.');
-  if (i.startedBy === ctx.actor.userId) return no('Someone other than the inspector signs it off.');
+  if (i.startedBy === ctx.actor.userId && !ctx.actor.fullAccess) return no('Someone other than the inspector signs it off.');
   const done: Inspection = { ...i, status: 'signed_off', signedOffBy: ctx.actor.userId, signedOffAt: ctx.now, signOffNote: note.trim() || undefined };
   return { ok: true, records: list.map((x) => (x.id === id ? done : x)), audit: [log(ctx, 'sign_off_inspection', 'inspection', id, i, done, note.trim() || undefined)], warnings: [] };
 }
@@ -294,7 +294,7 @@ export function voidInspection(ctx: ConsoleContext, list: Inspection[], id: stri
   const i = list.find((x) => x.id === id);
   if (!i || i.status === 'voided') return no('Not found.');
   const mineDraft = i.status === 'draft' && i.startedBy === ctx.actor.userId;
-  if (!mineDraft && permission(ctx.actor.role, 'sign_off_inspections') !== 'yes') return no('A supervisor or superintendent voids a submitted inspection.');
+  if (!mineDraft && permission(ctx.actor, 'sign_off_inspections') !== 'yes') return no('A supervisor or superintendent voids a submitted inspection.');
   if (!reason.trim()) return no('Give a reason.');
   const done: Inspection = { ...i, status: 'voided', voidedBy: ctx.actor.userId, voidedAt: ctx.now, voidReason: reason.trim() };
   return { ok: true, records: list.map((x) => (x.id === id ? done : x)), audit: [log(ctx, 'void_inspection', 'inspection', id, i, done, reason.trim())], warnings: [] };

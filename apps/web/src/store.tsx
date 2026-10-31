@@ -339,10 +339,15 @@ export function AppProvider({ children, live, onReload, onSignOut, sites = DEMO_
     }
   }, []);
 
-  const actor: Actor = useMemo(
-    () => (live ? { userId: live.me, role: live.role, scope: live.users.find((u) => u.id === live.me)?.scope ?? [] } : { userId: `demo-${role}`, role, scope: ['*'] }),
-    [role, live],
-  );
+  const [accessSettings, setAccessSettingsState] = useState<AccessSettings>(live?.accessSettings ?? DEFAULT_ACCESS);
+  // Admin full control in test mode (docs/access.md section 4): own role Admin, no other role picked.
+  // live.role already went through the two-step check and the test pick, as site_role() does.
+  const actor: Actor = useMemo(() => {
+    const fullAccess = accessSettings.testMode && (live ? live.ownRole === 'admin' && live.role === 'admin' : role === 'admin');
+    return live
+      ? { userId: live.me, role: live.role, scope: live.users.find((u) => u.id === live.me)?.scope ?? [], fullAccess }
+      : { userId: `demo-${role}`, role, scope: ['*'], fullAccess };
+  }, [role, live, accessSettings.testMode]);
 
   const flagCtx = useCallback((asset: Asset, nowIso: string): FlagContext => {
     const list = asset.assetClass === 'fixed_plant' ? plant.flags : flags;
@@ -1178,7 +1183,6 @@ export function AppProvider({ children, live, onReload, onSignOut, sites = DEMO_
     onSitesChanged?.(rest, site.id === ds.site.id ? rest[0]?.id : undefined);
     return r;
   }, [actor, live, siteRecords, sites, ds.site.id, onSitesChanged]);
-  const [accessSettings, setAccessSettingsState] = useState<AccessSettings>(live?.accessSettings ?? DEFAULT_ACCESS);
   const runAccessSettings = useCallback(
     (cmd: (ctx: ConsoleContext, current: AccessSettings) => ConsoleResult<AccessSettings>): ConsoleResult<AccessSettings> => {
       const r = cmd({ actor, now: new Date().toISOString(), newId, timeZone: ds.site.timeZone, calendar: ds.calendar }, accessSettings);

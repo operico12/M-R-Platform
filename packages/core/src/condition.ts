@@ -7,7 +7,7 @@ import { DateTime } from 'luxon';
 import type { ConsoleContext } from './console.js';
 import { unitSmuAt, type SmuIndex } from './components.js';
 import { assetMatcher, normaliseWoNumber, parseSourceDate, parseSourceNumber, type Table } from './imports.js';
-import { can } from './permissions.js';
+import { can, hasRole } from './permissions.js';
 import { HOUR_MS, ms } from './time.js';
 import type { Asset, AssetLifecycleInterval, AuditEntry, Iso, WorkOrder } from './types.js';
 
@@ -333,7 +333,7 @@ export function voidSample(ctx: ConsoleContext, samples: OilSample[], id: string
   const x = samples.find((s) => s.id === id);
   if (!x) return no('Sample not found.');
   if (x.voidedAt) return no('It is already voided.');
-  if (!((x.enteredBy === ctx.actor.userId && can(ctx.actor, 'record_condition')) || ctx.actor.role === 'superintendent')) return no('Only the person who entered it, or a superintendent, voids a sample.');
+  if (!((x.enteredBy === ctx.actor.userId && can(ctx.actor, 'record_condition')) || hasRole(ctx.actor, 'superintendent'))) return no('Only the person who entered it, or a superintendent, voids a sample.');
   if (!reason.trim()) return no('Give a reason.');
   const v: OilSample = { ...x, voidedBy: ctx.actor.userId, voidedAt: ctx.now, voidReason: reason.trim() };
   return { ok: true, records: samples.map((s) => (s.id === id ? v : s)), audit: [log(ctx, 'void_oil_sample', 'oil_sample', id, x, v, reason.trim())], warnings: [] };

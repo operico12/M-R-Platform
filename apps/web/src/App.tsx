@@ -147,6 +147,7 @@ function Shell() {
                     <select value={app.actor.role} onChange={(e) => { void app.setTestRole(e.target.value as Role).then((err) => { if (err) alert(err); }); }}>
                       {ROLES.map(([r, l]) => <option key={r} value={r}>{l}</option>)}
                     </select>
+                    {app.actor.fullAccess && <span className="muted">Admin has full control: every action, every area.</span>}
                   </label>
                 ) : <div>Role: {ROLES.find(([r]) => r === app.actor.role)?.[1]}</div>}
                 {app.signOut && <button className="btn" style={{ marginTop: 8, width: '100%', minHeight: 40 }} onClick={app.signOut}>Sign out</button>}

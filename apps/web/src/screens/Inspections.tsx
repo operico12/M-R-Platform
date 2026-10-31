@@ -328,7 +328,7 @@ function View({ id }: { id: string }) {
   const unit = asset(i.unitId);
   const waiting = app.outbox.filter((o) => o.inspectionId === i.id && !o.refused).length;
   const warn = window.location.hash.includes('warn=1') && i.result === 'fail';
-  const canSign = permission(app.actor.role, 'sign_off_inspections') === 'yes';
+  const canSign = permission(app.actor, 'sign_off_inspections') === 'yes';
   const run = (cmd: Parameters<typeof app.runInspection>[0]) => { const r = app.runInspection(cmd); setErrors(r.ok ? null : r.errors); return r.ok ? null : r.errors; };
   return (
     <>

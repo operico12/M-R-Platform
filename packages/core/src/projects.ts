@@ -474,7 +474,7 @@ export function decideChange(ctx: ConsoleContext, projects: Project[], id: strin
   const c = p.changes.find((x) => x.id === changeId);
   if (!c) return refuse('Change request not found.');
   if (c.status !== 'proposed') return refuse('That change request has been decided.');
-  if (c.raisedBy === ctx.actor.userId) return refuse('Someone else must decide your own change request.');
+  if (c.raisedBy === ctx.actor.userId && !ctx.actor.fullAccess) return refuse('Someone else must decide your own change request.');
   if (!approve && !note.trim()) return refuse('Give a reason for rejecting.');
   const decided: ChangeRequest = { ...c, status: approve ? 'approved' : 'rejected', decidedBy: ctx.actor.userId, decidedAt: ctx.now, decisionNote: note.trim() || undefined };
   const next: Project = {
