@@ -455,6 +455,53 @@ a.chip[aria-pressed='true'] { color: var(--brand-ink); }
   .bcards-small { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
   .bsearch { max-width: none; }
 }
+/* Board table (Ope, 31 Oct 2026): one row per unit, flags as chips with their times. */
+.bsub-g-operational { --c: var(--run); } .bsub-g-unsched { --c: var(--down); border-color: var(--down); } .bsub-g-sched { --c: var(--sched); border-color: var(--sched); }
+.btools + .bsubs, .board > .bsubs { margin: 0 0 var(--s2); }
+.btable-wrap { border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); overflow-x: auto; }
+.btable { width: 100%; border-collapse: collapse; font-size: 14px; }
+.btable th { text-align: left; font-weight: 500; color: var(--text-2); padding: 10px 12px; border-bottom: 1px solid var(--border); white-space: nowrap; position: sticky; top: 0; background: var(--surface); }
+.btable td { padding: 10px 12px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+.btable tbody tr:last-child td { border-bottom: 0; }
+.brow { cursor: pointer; }
+.brow:hover, .brow:focus-visible { background: var(--surface-2); outline: none; }
+.brow td:first-child { box-shadow: inset 4px 0 0 var(--run); }
+.br-unsched td:first-child { box-shadow: inset 4px 0 0 var(--down); }
+.br-sched td:first-child { box-shadow: inset 4px 0 0 var(--sched); }
+.br-standby td:first-child { box-shadow: inset 4px 0 0 var(--standby); }
+.bt-unit strong { display: block; font-size: 16px; }
+.bt-unit .muted { display: block; }
+.bt-time { white-space: nowrap; font-weight: 600; font-variant-numeric: tabular-nums; }
+.bt-stage .ficon { margin-right: 2px; }
+.bt-sub { display: block; font-size: 12px; color: var(--text-2); font-variant-numeric: tabular-nums; }
+.ch-warn-text { color: var(--sched); font-weight: 600; }
+.spill { --c: var(--run); display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 999px; font-size: 13px; font-weight: 600; white-space: nowrap;
+  color: var(--c); background: color-mix(in srgb, var(--c) 12%, transparent); border: 1px solid color-mix(in srgb, var(--c) 35%, transparent); }
+.spill .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--c); }
+.sp-unsched { --c: var(--down); } .sp-sched { --c: var(--sched); } .sp-standby { --c: var(--standby); }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.fchip { --c: var(--text-2); display: inline-flex; flex-direction: column; gap: 1px; }
+.fchip-l { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; white-space: nowrap;
+  color: var(--c); background: color-mix(in srgb, var(--c) 10%, transparent); border: 1px solid color-mix(in srgb, var(--c) 35%, transparent); }
+.fchip-t { font-size: 11px; color: var(--text-2); padding-left: 8px; font-variant-numeric: tabular-nums; }
+.ch-parked { --c: var(--text-2); } .ch-standby { --c: var(--standby); } .ch-wait, .ch-warn { --c: var(--sched); } .ch-late { --c: var(--down); } .ch-muted { --c: var(--text-2); }
+.tv .btable { font-size: 18px; } .tv .bt-unit strong { font-size: 22px; } .tv .fchip-l { font-size: 15px; } .tv .fchip-t { font-size: 13px; }
+@media (max-width: 760px) {
+  .btable thead { display: none; }
+  .btable, .btable tbody, .btable tr, .btable td { display: block; }
+  .btable-wrap { border: 0; background: transparent; }
+  .brow { display: grid !important; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 10px; margin-bottom: 8px; padding: 10px 12px; border: 1px solid var(--border); border-left: 5px solid var(--run); border-radius: var(--radius); background: var(--surface); }
+  .br-unsched { border-left-color: var(--down); } .br-sched { border-left-color: var(--sched); } .br-standby { border-left-color: var(--standby); }
+  .btable td { padding: 0; border: 0; }
+  .brow td:first-child { box-shadow: none; }
+  .bt-unit strong { display: inline; margin-right: 6px; } .bt-unit .muted { display: inline; }
+  .bt-status { text-align: right; }
+  .bt-where, .bt-problem, .bt-stage, .bt-flags { grid-column: 1 / -1; font-size: 13px; }
+  .bt-where::before, .bt-problem::before, .bt-stage::before { content: attr(data-label) ': '; color: var(--text-2); }
+  .bt-time { grid-column: 1 / -1; font-size: 13px; }
+  .bt-sub { display: inline; margin-left: 6px; }
+  .bt-where:has(.muted), .bt-problem:has(.muted), .bt-stage:has(.muted), .bt-flags:has(> .muted) { display: none; }
+}
 /* Standby (docs/standby.md): available but not in use. */
 .standby-panel { margin: var(--s2) 0 var(--s3); padding: var(--s2) var(--s3); border: 1px solid var(--border); border-left: 4px solid var(--standby); border-radius: var(--radius); background: var(--surface); }
 .standby-panel summary { cursor: pointer; font-weight: 600; min-height: 32px; display: flex; align-items: center; }
