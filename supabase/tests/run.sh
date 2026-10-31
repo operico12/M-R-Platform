@@ -34,3 +34,4 @@ psql -v ON_ERROR_STOP=1 -q -d "$DB" -f tests/assist_api.sql
 psql -v ON_ERROR_STOP=1 -q -d "$DB" -f tests/assist_questions_api.sql
 psql -v ON_ERROR_STOP=1 -q -d "$DB" -f tests/standby_api.sql
 psql -v ON_ERROR_STOP=1 -q -d "$DB" -f tests/wait_tags_api.sql
+psql -v ON_ERROR_STOP=1 -q -d "$DB" -f tests/admin_test_mode_api.sql
