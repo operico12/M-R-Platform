@@ -39,8 +39,9 @@ under that flag's status and its card is tagged Parked. Parked time still leaves
    - down units: the reason and where the unit is, the current stage with its time, each open wait tag with its
      time (docs/wait-tags.md), and the ETA. An ETA that has
      passed is red, and NO ETA is shown once the ETA rule applies;
-   - operational units: a standby flag with its reason, a proposed down flag waiting for a supervisor, or
-     "In use" when nothing is open;
+   - operational units: a standby flag with its reason, a proposed down flag waiting for a supervisor, a
+     Parked line with how long it has been parked, or "In use" when nothing is open. A parked operational unit
+     looks like any other operational card (green edge, "up" time); Parked is one of its lines (Ope, 30 Oct 2026);
    - any unit: its active alerts, and "no hour meter reading" after 14 h. A missing reading does not change the
      status; it leaves those hours out of utilisation.
 6. Down columns are sorted longest down first. The Operational column shows units with something open first
