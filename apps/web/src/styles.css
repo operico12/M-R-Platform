@@ -485,7 +485,20 @@ a.chip[aria-pressed='true'] { color: var(--brand-ink); }
   color: var(--c); background: color-mix(in srgb, var(--c) 10%, transparent); border: 1px solid color-mix(in srgb, var(--c) 35%, transparent); }
 .fchip-t { font-size: 11px; color: var(--text-2); padding-left: 8px; font-variant-numeric: tabular-nums; }
 .ch-parked { --c: var(--text-2); } .ch-standby { --c: var(--standby); } .ch-wait, .ch-warn { --c: var(--sched); } .ch-late { --c: var(--down); } .ch-muted { --c: var(--text-2); }
-.tv .btable { font-size: 18px; } .tv .bt-unit strong { font-size: 22px; } .tv .fchip-l { font-size: 15px; } .tv .fchip-t { font-size: 13px; }
+.tm-down { color: var(--down); } .tm-up { color: var(--run); }
+.tm-arrow { font-weight: 800; margin-right: 4px; }
+.bt-eta { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.eta-late { color: var(--down); font-weight: 700; }
+.fitems { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; min-width: 210px; }
+.fitems li { --c: var(--text-2); display: flex; justify-content: space-between; align-items: center; gap: 10px; font-size: 13px; padding: 2px 8px; border-radius: 4px;
+  border-left: 3px solid var(--c); background: color-mix(in srgb, var(--c) 8%, transparent); }
+.fi-l { display: inline-flex; align-items: center; gap: 4px; color: var(--c); font-weight: 600; }
+.fi-t { font-variant-numeric: tabular-nums; white-space: nowrap; color: var(--text-2); }
+.fi-run .fi-t { color: var(--text); font-weight: 700; }
+.fitems .fi-wait { --c: var(--sched); } .fitems .fi-standby { --c: var(--standby); } .fitems .fi-warn { --c: var(--down); } .fitems .fi-parked { --c: var(--text-2); }
+.fitems li.fi-total { border-left-color: transparent; background: transparent; border-top: 1px solid var(--border); border-radius: 0; margin-top: 2px; }
+.fi-total .fi-l { color: var(--text-2); font-weight: 500; } .fi-total .fi-t { color: var(--text); font-weight: 700; }
+.tv .btable { font-size: 18px; } .tv .bt-unit strong { font-size: 22px; } .tv .fchip-l { font-size: 15px; } .tv .fchip-t { font-size: 13px; } .tv .fitems li { font-size: 16px; }
 @media (max-width: 760px) {
   .btable thead { display: none; }
   .btable, .btable tbody, .btable tr, .btable td { display: block; }
@@ -496,11 +509,11 @@ a.chip[aria-pressed='true'] { color: var(--brand-ink); }
   .brow td:first-child { box-shadow: none; }
   .bt-unit strong { display: inline; margin-right: 6px; } .bt-unit .muted { display: inline; }
   .bt-status { text-align: right; }
-  .bt-where, .bt-problem, .bt-stage, .bt-flags { grid-column: 1 / -1; font-size: 13px; }
-  .bt-where::before, .bt-problem::before, .bt-stage::before { content: attr(data-label) ': '; color: var(--text-2); }
+  .bt-where, .bt-problem, .bt-stage, .bt-eta, .bt-flags { grid-column: 1 / -1; font-size: 13px; }
+  .bt-where::before, .bt-problem::before, .bt-stage::before, .bt-eta::before { content: attr(data-label) ': '; color: var(--text-2); }
   .bt-time { grid-column: 1 / -1; font-size: 13px; }
   .bt-sub { display: inline; margin-left: 6px; }
-  .bt-where:has(.muted), .bt-problem:has(.muted), .bt-stage:has(.muted), .bt-flags:has(> .muted) { display: none; }
+  .bt-where:has(.muted), .bt-problem:has(.muted), .bt-stage:has(.muted), .bt-eta:has(.muted), .bt-flags:has(> .muted) { display: none; }
 }
 /* Standby (docs/standby.md): available but not in use. */
 .standby-panel { margin: var(--s2) 0 var(--s3); padding: var(--s2) var(--s3); border: 1px solid var(--border); border-left: 4px solid var(--standby); border-radius: var(--radius); background: var(--surface); }

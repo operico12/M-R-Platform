@@ -11,9 +11,10 @@ Code: `packages/core/src/waits.ts` (tested in `test/waits.test.ts` and the golde
   optional note. An open tag has no end yet.
 - It records who set it and when it was entered. It is never typed as a duration (rule 4).
 - Tags can overlap: a unit can wait for labour and parts at the same time.
-- The kinds are in `DEFAULT_WAIT_KINDS`: tow or recovery, lowboy or transport, parts or materials, labour,
-  field crew, shop line or bay, tools or equipment, specialist (OEM or contractor), engineering or
-  information, approval or permit, access or safety clearance, and other (a note is required).
+- The kinds are in `DEFAULT_WAIT_KINDS`: tow or recovery, lowboy or transport, parts or materials, technician
+  (labour), operator, management decision, field crew, shop line or bay, tools or equipment, specialist (OEM or
+  contractor), engineering or information, approval or permit, access or safety clearance, and other (a note is
+  required). Operator and management decision were added by Ope, 31 Oct 2026; Labour is shown as "Technician".
 - Nothing is deleted (rule 5). A wrong tag is voided with a reason. Each change goes to the audit log.
 
 ## Why the stage stays

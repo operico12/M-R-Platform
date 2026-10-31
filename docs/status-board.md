@@ -33,16 +33,20 @@ under that flag's status and its row is tagged Parked. Parked time still leaves 
 3. The filters are model chips and a search box. They are hidden in TV mode.
 4. **The units are one table** (Ope, 31 Oct 2026, replacing the columns of cards). Above it, one chip per
    sub-status with its count, coloured by its status; pressing one filters the table.
-5. **Every unit is a row.** Columns: Unit (number and model), Status (a coloured pill: Operational, Standby,
-   Unscheduled down or Scheduled down), Where (the down location, or "In the field"), Problem (the reason),
-   Stage (the current stage and its time), Time ("down" or "up" and how long), and Flags: everything open on
-   the unit as chips, each with how long it has been on:
-   - down units: each open wait tag (docs/wait-tags.md) and the ETA. An ETA that has passed is red, and
-     No ETA is shown once the ETA rule applies;
-   - operational units: a standby flag with its reason, a proposed down flag waiting for a supervisor;
-   - any unit: Parked with how long it has been parked (a parked operational unit is an ordinary
-     Operational row, Ope, 30 Oct 2026), its active alerts, and "no hour meter reading" after 14 h. A missing
-     reading does not change the status; it leaves those hours out of utilisation.
+5. **Every unit is a row** (Ope, 31 Oct 2026). Columns:
+   - Unit (number and model);
+   - Status: a coloured pill with one of three words only: Operational, Unscheduled or Scheduled;
+   - Where (the down location, or "In the field"), Problem (the reason), Stage (the current stage and its time);
+   - Time: an arrow and how long, ↓ red for down (since the first flag of the stop), ↑ green for up (since the
+     last release or standby);
+   - ETA: its own column. A passed ETA is red; "No ETA" is red once the ETA rule applies; otherwise a dash;
+   - **Flags**: only the things that take time from the unit, one sub-row each with its hours, so a stop can be
+     read at a glance ("down 10 h: parts 5 h, technician 3 h"). For a down unit these are the wait tags of the
+     stop (docs/wait-tags.md), open and ended, open ones first and marked as still running, then a total line
+     "Waiting X of Y down" (overlaps counted once, KPI-046). For an operational unit they are its open standby
+     flag with the reason (docs/standby.md), Parked with its time, and a proposed down flag. Being up is not the
+     same as being used: standby time shows here.
+   Alerts and a missing hour meter reading are no longer shown on the row; they are in the alerts list below.
    On a phone each row folds into a short block with only the filled-in fields. Tapping a row opens the unit.
 6. Row order: unscheduled down (longest first), scheduled down (longest first), then operational with
    something open first (standby longest first, then other open items, then parked), then the rest by unit number.
