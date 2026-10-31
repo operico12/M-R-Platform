@@ -64,11 +64,12 @@ import {
   DEFAULT_IMPORT_SOURCE, mappingFor, setImportSource, type ImportMapping, type ImportSource,
   addSite, retireSite, createApiKey, revokeApiKey, apiKeyFromHex, type ApiKeyInput, type ApiKeyRecord, DEFAULT_ACCESS, type AccessSettings, type AccessRequest, decideAccessRequest, type Role as AccessRole, twelveHourCalendar as _cal, type SiteInput, type SiteRecord, type SiteSnapshot,
   DEFAULT_PLANT_SETTINGS, generatePlant, type ClassifyResult, type DelayContext, type PlantSettings, type ProcessDelay, type RunSignal,
+  activeLines, type ShopLine, type ShopLineClosure,
 } from '@mr/core';
 import { demoImprovements } from './data/demo-improve';
 import { demoStandby } from './data/demo-standby';
 import { demoWaits } from './data/demo-waits';
-import { addSiteRemote, loadAccessRequests, decideAccessRemote, setTestRoleRemote, loadApiKeys, createApiKeyRemote, revokeApiKeyRemote, loadSnapshot, retireSiteRemote, savePlantNodes, saveShutdown, sendRound, saveProcessDelays, saveRunSignals, type PlantData, saveRcmModes, saveJobPlanVersion, saveCmResponse, saveOilSamples, saveComponentRecord, saveViewRecord, saveAnalysisRecord, loadPhoto, saveForms, sendInspection, sendPhoto, SendError, saveAlertAnswer, saveDecision, saveRequests, saveFlags, saveStandby, saveWaits, saveRecords, saveSetting, saveTarget, saveTaskStatus, type Loaded } from './data/remote';
+import { saveLines, saveClosures, addSiteRemote, loadAccessRequests, decideAccessRemote, setTestRoleRemote, loadApiKeys, createApiKeyRemote, revokeApiKeyRemote, loadSnapshot, retireSiteRemote, savePlantNodes, saveShutdown, sendRound, saveProcessDelays, saveRunSignals, type PlantData, saveRcmModes, saveJobPlanVersion, saveCmResponse, saveOilSamples, saveComponentRecord, saveViewRecord, saveAnalysisRecord, loadPhoto, saveForms, sendInspection, sendPhoto, SendError, saveAlertAnswer, saveDecision, saveRequests, saveFlags, saveStandby, saveWaits, saveRecords, saveSetting, saveTarget, saveTaskStatus, type Loaded } from './data/remote';
 import { demoProjects } from './data/demo-projects';
 import { demoForms, demoInspections } from './data/demo-inspections';
 import { DEMO_SITES, demoFleet, type SiteChoice } from './data/sites';
@@ -243,6 +244,9 @@ export interface AppState {
   retireSite: (site: SiteChoice, reason: string) => Promise<ConsoleResult<SiteRecord>>;
   /** Sign-in rules for this site (docs/access.md). */
   accessSettings: AccessSettings;
+  /** Shop lines and closures (docs/shop-lines.md). */
+  runLines: (cmd: (ctx: ConsoleContext) => ConsoleResult<ShopLine>) => ConsoleResult<ShopLine>;
+  runClosures: (cmd: (ctx: ConsoleContext) => ConsoleResult<ShopLineClosure>) => ConsoleResult<ShopLineClosure>;
   /** The person's own role before an Admin test pick; the actor's role is the one in use. */
   ownRole: Role;
   /** Admin test mode: act as another role (docs/access.md section 4). */
@@ -1253,12 +1257,40 @@ export function AppProvider({ children, live, onReload, onSignOut, sites = DEMO_
     return r;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [actor, ds, live, apiKeys, loadApiKeysCmd]);
+  // Lines: the screen keeps open lines only; retired ones are saved, then drop off (docs/shop-lines.md).
+  const runLines = useCallback((cmd: (ctx: ConsoleContext) => ConsoleResult<ShopLine>): ConsoleResult<ShopLine> => {
+    const nowIso = new Date().toISOString();
+    const r = cmd({ actor, now: nowIso, newId, timeZone: ds.site.timeZone, calendar: ds.calendar });
+    if (r.ok) {
+      setDs((prev) => ({ ...prev, shopLines: activeLines(r.records) }));
+      setAudit((prev) => [...r.audit, ...prev]);
+      if (live) {
+        const ids = new Set(r.audit.map((a) => a.entityId));
+        saveLines(siteId, r.records.filter((x) => ids.has(x.id)), r.audit).catch(failed);
+      }
+    }
+    return r;
+  }, [actor, ds, live, siteId, failed]);
+  const runClosures = useCallback((cmd: (ctx: ConsoleContext) => ConsoleResult<ShopLineClosure>): ConsoleResult<ShopLineClosure> => {
+    const nowIso = new Date().toISOString();
+    const r = cmd({ actor, now: nowIso, newId, timeZone: ds.site.timeZone, calendar: ds.calendar });
+    if (r.ok) {
+      setDs((prev) => ({ ...prev, closures: r.records }));
+      setAudit((prev) => [...r.audit, ...prev]);
+      setNow(nowIso);
+      if (live) {
+        const ids = new Set(r.audit.map((a) => a.entityId));
+        saveClosures(siteId, r.records.filter((x) => x.id && ids.has(x.id)), r.audit).catch(failed);
+      }
+    }
+    return r;
+  }, [actor, ds, live, siteId, failed]);
   const ownRole: Role = live ? live.ownRole : 'admin';
   const setTestRoleCmd = useCallback(async (r: Role): Promise<string | null> => {
     if (!live) { setRole(r); return null; }
     try { await setTestRoleRemote(siteId, r); onReload?.(); return null; } catch (e) { return e instanceof Error ? e.message : String(e); }
   }, [live, siteId, onReload]);
-  const value: AppState = { ownRole, setTestRole: setTestRoleCmd, accessSettings, runAccessSettings, accessRequests, loadAccessRequests: loadAccessRequestsCmd, decideAccess: decideAccessCmd, apiKeys, loadApiKeys: loadApiKeysCmd, createApiKey: createApiKeyCmd, revokeApiKey: revokeApiKeyCmd, importSource, importMapping, runImportSource, sites, switchSite: (id: string) => onSwitchSite?.(id), snapshot, addSite: addSiteCmd, retireSite: retireSiteCmd, ds, forms, runForms, inspections, drafts, saveDraft, discardDraft, runInspection, outbox, sendOutbox: () => void sendOutbox(true), dropOutboxItem, photo, workSettings, runWorkSettings, alertSettings, runAlertSettings, alertAnswers, runAlertAnswer, analyses, runAnalysis, views, runView, components, componentEvents, lifeTargets, runComponents, oilSamples, cmResponses, conditionSettings, runSamples, runResponse, runConditionSettings, rcmModes, jobPlanVersions, rcmSettings, runRcm, runJobPlan, runRcmSettings, sparesSettings, runSparesSettings, assistSettings, runAssistSettings, suggester, plant, plantSettings, runPlantSettings, runDelay, runClassify, addSignals, runNode, runShutdown, runShutdownFlow, rounds, roundDrafts, beginRound, saveRoundDraft, discardRound, runRound, ruleAlerts: ruleAlertList, requests, runRequest, decide, actions: improve.actions, rcas: improve.rcas, projects: improve.projects, runImprove, people, userName, targets, targetOf, targetList, users, codes, runConsole, mode: live ? 'live' : 'demo', syncError, clearSyncError: () => setSyncError(null), signOut: onSignOut, importRuns, applyImport, newId, flags, standby, standbyReasons: DEFAULT_STANDBY_REASONS, runStandby, waits, waitKinds: DEFAULT_WAIT_KINDS, runWaits, audit, rules, now, actor, setRole, run, lastSync: ds.generatedAt, theme, setTheme };
+  const value: AppState = { runLines, runClosures, ownRole, setTestRole: setTestRoleCmd, accessSettings, runAccessSettings, accessRequests, loadAccessRequests: loadAccessRequestsCmd, decideAccess: decideAccessCmd, apiKeys, loadApiKeys: loadApiKeysCmd, createApiKey: createApiKeyCmd, revokeApiKey: revokeApiKeyCmd, importSource, importMapping, runImportSource, sites, switchSite: (id: string) => onSwitchSite?.(id), snapshot, addSite: addSiteCmd, retireSite: retireSiteCmd, ds, forms, runForms, inspections, drafts, saveDraft, discardDraft, runInspection, outbox, sendOutbox: () => void sendOutbox(true), dropOutboxItem, photo, workSettings, runWorkSettings, alertSettings, runAlertSettings, alertAnswers, runAlertAnswer, analyses, runAnalysis, views, runView, components, componentEvents, lifeTargets, runComponents, oilSamples, cmResponses, conditionSettings, runSamples, runResponse, runConditionSettings, rcmModes, jobPlanVersions, rcmSettings, runRcm, runJobPlan, runRcmSettings, sparesSettings, runSparesSettings, assistSettings, runAssistSettings, suggester, plant, plantSettings, runPlantSettings, runDelay, runClassify, addSignals, runNode, runShutdown, runShutdownFlow, rounds, roundDrafts, beginRound, saveRoundDraft, discardRound, runRound, ruleAlerts: ruleAlertList, requests, runRequest, decide, actions: improve.actions, rcas: improve.rcas, projects: improve.projects, runImprove, people, userName, targets, targetOf, targetList, users, codes, runConsole, mode: live ? 'live' : 'demo', syncError, clearSyncError: () => setSyncError(null), signOut: onSignOut, importRuns, applyImport, newId, flags, standby, standbyReasons: DEFAULT_STANDBY_REASONS, runStandby, waits, waitKinds: DEFAULT_WAIT_KINDS, runWaits, audit, rules, now, actor, setRole, run, lastSync: ds.generatedAt, theme, setTheme };
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
 

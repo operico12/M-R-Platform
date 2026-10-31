@@ -98,10 +98,15 @@ export interface ShopLine {
   capacity: number;
   /** Models that fit; empty means any. */
   fits: string[];
+  /** Retired lines stay for history (rule 5, docs/shop-lines.md). */
+  retiredAt?: Iso;
+  retiredReason?: string;
 }
 
 /** A line closed for a period (e.g. crane inspection). Closed time is excluded from occupancy. */
 export interface ShopLineClosure {
+  /** Set for closures made in the app, so they can be ended. */
+  id?: string;
   lineId: string;
   start: Iso;
   end: Iso | null;
@@ -215,7 +220,7 @@ export interface AuditEntry {
   at: Iso;
   userId: string;
   action: string;
-  entity: 'down_flag' | 'standby_flag' | 'wait_tag' | 'import_run' | 'target' | 'user' | 'code' | 'action' | 'rca' | 'project' | 'settings' | 'alert' | 'approval' | 'inspection' | 'inspection_form' | 'analysis' | 'view' | 'component' | 'life_target' | 'oil_sample' | 'rcm_mode' | 'job_plan' | 'process_delay' | 'plant_node' | 'shutdown' | 'round' | 'site' | 'api_key';
+  entity: 'down_flag' | 'standby_flag' | 'wait_tag' | 'import_run' | 'target' | 'user' | 'code' | 'action' | 'rca' | 'project' | 'settings' | 'alert' | 'approval' | 'inspection' | 'inspection_form' | 'analysis' | 'view' | 'component' | 'life_target' | 'oil_sample' | 'rcm_mode' | 'job_plan' | 'process_delay' | 'plant_node' | 'shutdown' | 'round' | 'site' | 'api_key' | 'shop_line' | 'shop_line_closure';
   entityId: string;
   before: unknown;
   after: unknown;

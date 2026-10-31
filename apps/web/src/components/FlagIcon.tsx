@@ -61,6 +61,7 @@ const PATHS: Record<string, ReactNode> = {
   in_use: <path d="M5 12l5 5 9-10" />,
   standby: PAUSE,
   parked: <><rect x="4" y="3" width="16" height="18" rx="3" /><path d="M10 17V8h3a2.5 2.5 0 0 1 0 5h-3" /></>,
+  closed: <><rect x="5" y="11" width="14" height="10" rx="2" /><path d="M8 11V7a4 4 0 0 1 8 0v4" /></>,
   proposed: <path d="M5 21V4M5 4h12l-2.5 4L17 12H5" />,
   no_reading: <><path d="M4 18a8 8 0 1 1 16 0" /><path d="M12 18l4-5M4 4l16 16" /></>,
   alert: <path d="M12 3l10 18H2zM12 10v5M12 18v.5" />,

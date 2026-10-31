@@ -38,3 +38,4 @@ export * from './board.js';
 export * from './standby.js';
 export * from './people.js';
 export * from './waits.js';
+export * from './shop-lines.js';

@@ -3,7 +3,7 @@
 // The anon key is public by design: row-level security decides what each
 // signed-in person can read and write. Never put the service_role key here.
 
-import { DEFAULT_FLAG_RULES, DEFAULT_WORK_SETTINGS, withAlertDefaults, type ApprovalRequest, type AuditRecord, type AlertAnswer, type AlertSettings, emptyFishbone, type WorkSettings, type ImprovementAction, type Project, type Rca, type AuditEntry, type Dataset, type DownFlag, type FlagRulesConfig, type ReasonCode, type Role, type ShiftCalendar, type SiteUser, type SmuReading, type Target, type WorkOrder, type Asset, type Inspection, type InspectionForm, type SavedAnalysis, type SavedView, type Component, type ComponentEvent, type LifeTarget, type OilSample, type CmResponse, type ConditionSettings, withConditionDefaults, type RcmMode, type JobPlanVersion, type RcmSettings, withRcmDefaults, type SparesSettings, withSparesDefaults, type AssistSettings, withAssistDefaults, type PlantNode, type ProcessDelay, type RunSignal, type PlantSettings, withPlantDefaults, type Shutdown, type ScopeItem, type Round, type SiteSnapshot, type SiteRecord, twelveHourCalendar, type ImportSource, withImportDefaults, type ApiKeyRecord, type ApiKeyInput, type ApiScope, type AccessSettings, withAccessDefaults, type AccessRequest, type StandbyFlag, type WaitTag } from '@mr/core';
+import { DEFAULT_FLAG_RULES, DEFAULT_WORK_SETTINGS, withAlertDefaults, type ApprovalRequest, type AuditRecord, type AlertAnswer, type AlertSettings, emptyFishbone, type WorkSettings, type ImprovementAction, type Project, type Rca, type AuditEntry, type Dataset, type DownFlag, type FlagRulesConfig, type ReasonCode, type Role, type ShiftCalendar, type SiteUser, type SmuReading, type Target, type WorkOrder, type Asset, type Inspection, type InspectionForm, type SavedAnalysis, type SavedView, type Component, type ComponentEvent, type LifeTarget, type OilSample, type CmResponse, type ConditionSettings, withConditionDefaults, type RcmMode, type JobPlanVersion, type RcmSettings, withRcmDefaults, type SparesSettings, withSparesDefaults, type AssistSettings, withAssistDefaults, type PlantNode, type ProcessDelay, type RunSignal, type PlantSettings, withPlantDefaults, type Shutdown, type ScopeItem, type Round, type SiteSnapshot, type SiteRecord, twelveHourCalendar, type ImportSource, withImportDefaults, type ApiKeyRecord, type ApiKeyInput, type ApiScope, type AccessSettings, withAccessDefaults, type AccessRequest, type StandbyFlag, type WaitTag, type ShopLine, type ShopLineClosure } from '@mr/core';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 
 const url = import.meta.env.VITE_SUPABASE_URL as string | undefined;
@@ -224,6 +224,8 @@ export async function loadSite(siteId: string): Promise<Loaded> {
   const insp = await loadInspections(siteId);
   const sby = await rpcRetry('app_load_standby', { p_site: siteId, p_since: since });
   const wts = await rpcRetry('app_load_waits', { p_site: siteId, p_since: since });
+  // Closures with their ids (SQL 27), so a closure can be ended in the app.
+  const cls = await rpcRetry('app_load_closures', { p_site: siteId });
   // Admin test mode (SQL 26). Before that file is run the function is missing; the own role is the role.
   const tst = await rpcRetry('app_my_test_role', { p_site: siteId });
   const work = iso(must(wk)) as { plans: Array<Partial<WorkOrder> & { id: string }>; settings: { work?: Partial<WorkSettings>; alerts?: Partial<AlertSettings>; condition?: Partial<ConditionSettings>; rcm?: Partial<RcmSettings>; spares?: Partial<SparesSettings>; assist?: Partial<AssistSettings>; plant?: Partial<PlantSettings>; imports?: Partial<ImportSource>; access?: Partial<AccessSettings> } };
@@ -262,7 +264,7 @@ export async function loadSite(siteId: string): Promise<Loaded> {
       tenantId: d.site.tenantId,
       site: { id: d.site.id, name: d.site.name, timeZone: d.site.timeZone },
       calendar,
-      assets: d.assets.filter((a) => !plantIds.has(a.id)), lifecycle: d.lifecycle, shopLines: d.shopLines, closures: d.closures, fieldLocations: d.fieldLocations,
+      assets: d.assets.filter((a) => !plantIds.has(a.id)), lifecycle: d.lifecycle, shopLines: d.shopLines, closures: cls.error ? d.closures : (iso(cls.data) as Dataset['closures']), fieldLocations: d.fieldLocations,
       flags, smu: d.smu.map((r) => ({ ...r, hours: Number(r.hours) })),
       workOrders: d.workOrders.map((w) => {
         const p = plans.get(w.id);
@@ -331,6 +333,17 @@ export async function saveStandby(siteId: string, rows: StandbyFlag[], audit: Au
 }
 
 /** Wait tags as the core commands return them; matched by id. */
+/** The Admin's line changes (docs/shop-lines.md, SQL 27). */
+export async function saveLines(siteId: string, rows: ShopLine[], audit: AuditEntry[]): Promise<void> {
+  must(await remote!.rpc('app_save_lines', { p_site: siteId, p_rows: rows }));
+  if (audit.length) must(await remote!.rpc('app_log', { p_site: siteId, p_entries: audit }));
+}
+
+export async function saveClosures(siteId: string, rows: ShopLineClosure[], audit: AuditEntry[]): Promise<void> {
+  must(await remote!.rpc('app_save_closures', { p_site: siteId, p_rows: rows }));
+  if (audit.length) must(await remote!.rpc('app_log', { p_site: siteId, p_entries: audit }));
+}
+
 export async function saveWaits(siteId: string, rows: WaitTag[], audit: AuditEntry[]): Promise<void> {
   must(await remote!.rpc('app_save_waits', { p_site: siteId, p_rows: rows }));
   if (audit.length) must(await remote!.rpc('app_log', { p_site: siteId, p_entries: audit }));
