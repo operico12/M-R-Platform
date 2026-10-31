@@ -17,7 +17,7 @@ from what is already recorded, never typed twice:
 Waiting parts or waiting crew on a down unit is the stage of its down flag, not a second flag, so the hours are
 counted once. **Parked** (lifecycle status not active) is a tag, not a fourth status (Ope, 29 Oct 2026): a parked
 unit with no open down flag is Operational with the sub-status Parked; a parked unit with an open down flag sits
-under that flag's status and its card is tagged Parked. Parked time still leaves available time as before
+under that flag's status and its row is tagged Parked. Parked time still leaves available time as before
 (KPI-001); only the board changed.
 
 1. The fleet bar shows the share of units in use, on standby, scheduled down, unscheduled down and parked.
@@ -25,28 +25,28 @@ under that flag's status and its card is tagged Parked. Parked time still leaves
    **Alerts**. Each status tile shows its count, its share of the fleet and its largest sub-statuses
    (for example "35 in use · 2 standby · 1 parked"). Pressing the Alerts tile goes to the alerts list, which sits
    at the bottom of the board in place of the old downline queue (Ope, 29 Oct 2026). The queue's content, units
-   waiting for a crew, a tow or a line, now shows on each down unit's card as its stage and wait tags.
+   waiting for a crew, a tow or a line, now shows on each down unit's row as its stage and wait tags.
    - The alerts list shows each alert in plain words, most urgent kind first, then the longest on: the unit, what
      it is ("ETA passed"), what it means, the next step and who it goes to, and how long it has been on. Tapping
      one opens the unit. The words are `ALERT_PLAIN` in `packages/core/src/alerts.ts`; the order is `sortAlerts`.
-   - A missing hour meter reading is shown on the unit's card, not counted as an alert.
+   - A missing hour meter reading is shown on the unit's row, not counted as an alert.
 3. The filters are model chips and a search box. They are hidden in TV mode.
-4. Each status has a column of unit cards. On a wide screen the columns are side by side in the tile order;
-   on a narrow screen they stack with Unscheduled first, then Scheduled, then Operational (exceptions first).
-   Each column's header lists its sub-statuses with counts.
-5. **Every unit has a card.** A card shows the unit, the model, the time in its status, and everything open on
-   the unit, each with how long it has been on:
-   - down units: the reason and where the unit is, the current stage with its time, each open wait tag with its
-     time (docs/wait-tags.md), and the ETA. An ETA that has
-     passed is red, and NO ETA is shown once the ETA rule applies;
-   - operational units: a standby flag with its reason, a proposed down flag waiting for a supervisor, a
-     Parked line with how long it has been parked, or "In use" when nothing is open. A parked operational unit
-     looks like any other operational card (green edge, "up" time); Parked is one of its lines (Ope, 30 Oct 2026);
-   - any unit: its active alerts, and "no hour meter reading" after 14 h. A missing reading does not change the
-     status; it leaves those hours out of utilisation.
-6. Down columns are sorted longest down first. The Operational column shows units with something open first
-   (standby longest first), then parked units, then the rest by unit number, as smaller cards.
-7. The alerts list follows the columns.
+4. **The units are one table** (Ope, 31 Oct 2026, replacing the columns of cards). Above it, one chip per
+   sub-status with its count, coloured by its status; pressing one filters the table.
+5. **Every unit is a row.** Columns: Unit (number and model), Status (a coloured pill: Operational, Standby,
+   Unscheduled down or Scheduled down), Where (the down location, or "In the field"), Problem (the reason),
+   Stage (the current stage and its time), Time ("down" or "up" and how long), and Flags: everything open on
+   the unit as chips, each with how long it has been on:
+   - down units: each open wait tag (docs/wait-tags.md) and the ETA. An ETA that has passed is red, and
+     No ETA is shown once the ETA rule applies;
+   - operational units: a standby flag with its reason, a proposed down flag waiting for a supervisor;
+   - any unit: Parked with how long it has been parked (a parked operational unit is an ordinary
+     Operational row, Ope, 30 Oct 2026), its active alerts, and "no hour meter reading" after 14 h. A missing
+     reading does not change the status; it leaves those hours out of utilisation.
+   On a phone each row folds into a short block with only the filled-in fields. Tapping a row opens the unit.
+6. Row order: unscheduled down (longest first), scheduled down (longest first), then operational with
+   something open first (standby longest first, then other open items, then parked), then the rest by unit number.
+7. The alerts list follows the table.
 8. Every flag, stage, wait tag, standby reason, location, status and alert has a small icon
    (`apps/web/src/components/FlagIcon.tsx`). The label is always shown beside it; the icon never stands alone.
 
