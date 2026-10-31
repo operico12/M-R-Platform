@@ -54,6 +54,23 @@ people after every shift and over days off.
   the code check in this sign-in. A lost phone is fixed by the platform owner in the
   Supabase dashboard (Authentication, Users, remove the factor).
 
+## 4. Test mode: an Admin can act as any role (development only)
+
+Ope, 30 Oct 2026: during development the Admin needs to try every screen and action.
+
+- Setting `access.testMode` (default **off**). Only the Admin changes it, on the Console Access tab,
+  with a reason, and the change is audited.
+- While it is on, a person whose own role at the site is **Admin** sees a "Testing as" picker at the
+  bottom of the menu. Picking a role (Viewer, Technician, Supervisor, Reliability engineer,
+  Superintendent) makes the app and the database treat them as that role straight away, with no
+  approval. Picking Admin goes back. Every pick is audited.
+- Nothing else changes: the person's real role stays Admin, two-step sign-in still applies first
+  (an Admin who has not passed the code check stays a Viewer), and a person who is not an Admin
+  cannot use it. Separation of duties still holds: testing as Superintendent does not let you approve
+  your own request.
+- When test mode is turned off, everyone is back to their own role at once; any pick is ignored.
+- **Turn test mode off before real users join the site.** The Console shows a warning while it is on.
+
 ## Later
 
 - Company single sign-on (Microsoft Entra ID or Google Workspace) through Supabase SAML, once IT

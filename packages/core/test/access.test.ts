@@ -2,7 +2,7 @@
 // session limits (30 days, a week idle) and turning on two-step sign-in safely.
 
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_ACCESS, decideAccessRequest, emailDomain, mayRequest, requestProblems, sessionCheck, setAccessSettings, withAccessDefaults, type AccessRequest } from '../src/access.js';
+import { DEFAULT_ACCESS, TEST_ROLES, decideAccessRequest, testedRole, mayTestAs, emailDomain, mayRequest, requestProblems, sessionCheck, setAccessSettings, withAccessDefaults, type AccessRequest } from '../src/access.js';
 import type { ConsoleContext } from '../src/console.js';
 import type { Role } from '../src/types.js';
 import { TZ, actor, cal } from './helpers.js';
@@ -11,14 +11,14 @@ const ctx = (role: Role): ConsoleContext => ({ actor: actor(role), now: '2026-10
 
 describe('access settings', () => {
   it('defaults to no requests, no forced two-step, 30 days and a week idle', () => {
-    expect(withAccessDefaults(undefined)).toEqual({ requestDomains: [], adminMfa: false, sessionDays: 30, idleDays: 7 });
+    expect(withAccessDefaults(undefined)).toEqual({ requestDomains: [], adminMfa: false, sessionDays: 30, idleDays: 7, testMode: false });
   });
 
   it('is the Admin\'s, cleans domains, and checks the limits', () => {
     expect(setAccessSettings(ctx('superintendent'), DEFAULT_ACCESS, DEFAULT_ACCESS, 'x', true).ok).toBe(false);
     const r = setAccessSettings(ctx('admin'), DEFAULT_ACCESS, { ...DEFAULT_ACCESS, requestDomains: [' @Example-Mining.com ', 'example-mining.com', ''] }, 'Let staff ask', false);
     expect(r.ok && r.records[0]!.requestDomains).toEqual(['example-mining.com']);
-    const bad = setAccessSettings(ctx('admin'), DEFAULT_ACCESS, { requestDomains: ['gmail'], adminMfa: false, sessionDays: 31, idleDays: 0 }, ' ', false);
+    const bad = setAccessSettings(ctx('admin'), DEFAULT_ACCESS, { requestDomains: ['gmail'], adminMfa: false, sessionDays: 31, idleDays: 0, testMode: false }, ' ', false);
     expect(bad.ok || bad.errors).toEqual([
       'Not an email domain: gmail. Use the part after the @, like example-mining.com.',
       'Sign in again after 1 to 30 days.', 'Sign out after 1 to 30 days with no use.', 'Give a reason for the change.',
@@ -29,6 +29,35 @@ describe('access settings', () => {
     const on = { ...DEFAULT_ACCESS, adminMfa: true };
     expect(setAccessSettings(ctx('admin'), DEFAULT_ACCESS, on, 'Policy', false).ok).toBe(false);
     expect(setAccessSettings(ctx('admin'), DEFAULT_ACCESS, on, 'Policy', true).ok).toBe(true);
+  });
+});
+
+describe('test mode (Admin acts as any role)', () => {
+  const on = { ...DEFAULT_ACCESS, testMode: true };
+  it('is off by default and only the Admin turns it on', () => {
+    expect(DEFAULT_ACCESS.testMode).toBe(false);
+    expect(setAccessSettings(ctx('superintendent'), DEFAULT_ACCESS, on, 'Testing', false).ok).toBe(false);
+    const r = setAccessSettings(ctx('admin'), DEFAULT_ACCESS, on, 'Testing', false);
+    expect(r.ok && r.records[0]!.testMode).toBe(true);
+    expect(r.ok && r.audit[0]!.after).toMatchObject({ testMode: true });
+  });
+
+  it('lets only an Admin pick a role, and only while test mode is on', () => {
+    expect(mayTestAs('admin', on)).toBe(true);
+    expect(mayTestAs('admin', DEFAULT_ACCESS)).toBe(false);
+    for (const r of TEST_ROLES.filter((x) => x !== 'admin')) expect(mayTestAs(r, on)).toBe(false);
+    expect(testedRole('admin', 'technician', on, true)).toBe('technician');
+    expect(testedRole('admin', 'superintendent', on, true)).toBe('superintendent');
+    expect(testedRole('admin', null, on, true)).toBe('admin');
+    // Off: the pick is ignored. Not an Admin: the pick is ignored.
+    expect(testedRole('admin', 'technician', DEFAULT_ACCESS, true)).toBe('admin');
+    expect(testedRole('supervisor', 'superintendent', on, true)).toBe('supervisor');
+  });
+
+  it('keeps two-step sign-in first: an Admin who has not passed it stays a Viewer', () => {
+    const both = { ...on, adminMfa: true };
+    expect(testedRole('admin', 'superintendent', both, false)).toBe('viewer');
+    expect(testedRole('admin', 'superintendent', both, true)).toBe('superintendent');
   });
 });
 

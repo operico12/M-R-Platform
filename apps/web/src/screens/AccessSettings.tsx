@@ -80,12 +80,13 @@ function Rules() {
   const [sessionDays, setSessionDays] = useState(cur.sessionDays);
   const [idleDays, setIdleDays] = useState(cur.idleDays);
   const [adminMfa, setAdminMfa] = useState(cur.adminMfa);
+  const [testMode, setTestMode] = useState(cur.testMode);
   const [reason, setReason] = useState('');
   const [msg, setMsg] = useState<string[] | null>(null);
   const [passed, setPassed] = useState(app.mode === 'demo');
   useEffect(() => { if (app.mode === 'live') mfaState().then((m) => setPassed(m.current === 'aal2')).catch(() => setPassed(false)); }, [app.mode]);
   const save = () => {
-    const next = { requestDomains: domains.split(/[\s,;]+/), sessionDays, idleDays, adminMfa };
+    const next = { requestDomains: domains.split(/[\s,;]+/), sessionDays, idleDays, adminMfa, testMode };
     const r = app.runAccessSettings((ctx, c) => setAccessSettings(ctx, c, next, reason, passed));
     setMsg(r.ok ? ['Saved.'] : r.errors);
     if (r.ok) { setReason(''); setDomains(r.records[0]!.requestDomains.join(', ')); }
@@ -106,6 +107,11 @@ function Rules() {
         Admins must use two-step sign-in. Until they pass the code check, they act as Viewers.
       </label>
       {adminMfa && !cur.adminMfa && !passed && <p className="small">First turn on two-step sign-in for yourself on the <a href="#/account">Account</a> page and pass the code check, so you are not locked out.</p>}
+      <label className="row small" style={{ gap: 6 }}>
+        <input type="checkbox" checked={testMode} onChange={(e) => setTestMode(e.target.checked)} />
+        Test mode (development only): Admins can act as any role from the menu, straight away.
+      </label>
+      {cur.testMode && <p className="small ui-warn" role="note">Test mode is on. Turn it off before real users join this site.</p>}
       <label className="field"><span>Reason for the change</span><input value={reason} onChange={(e) => setReason(e.target.value)} /></label>
       <div><button className="btn primary" onClick={save}>Save</button></div>
       {msg && <div className={msg[0] === 'Saved.' ? 'small' : 'errors'} role="status">{msg.map((x) => <div key={x}>{x}</div>)}</div>}
