@@ -13,6 +13,8 @@ export type Action =
   | 'set_clear_flag'
   | 'set_standby'
   | 'set_waits'
+  | 'assign_technicians'
+  | 'mark_investigation'
   | 'move_location'
   | 'reclassify_flag'
   | 'void_flag'
@@ -57,6 +59,10 @@ const MATRIX: Record<Action, Partial<Record<Role, Permission>>> = {
   update_stage: { technician: 'area', supervisor: 'area', reliability_engineer: 'yes', superintendent: 'yes' },
   set_clear_flag: { technician: 'propose', supervisor: 'area', reliability_engineer: 'yes', superintendent: 'yes' },
   // Standby flags (docs/standby.md): available but not in use. No approval step; down wins over standby.
+  // docs/unit-screen.md: assigning technicians follows setting flags (area for a supervisor).
+  assign_technicians: { supervisor: 'area', reliability_engineer: 'yes', superintendent: 'yes' },
+  // docs/unit-screen.md: marking a stop for investigation follows raising actions.
+  mark_investigation: { supervisor: 'yes', reliability_engineer: 'yes', superintendent: 'yes' },
   set_standby: { technician: 'yes', supervisor: 'yes', reliability_engineer: 'yes', superintendent: 'yes' },
   // Wait tags (docs/wait-tags.md): follows update_stage.
   set_waits: { technician: 'area', supervisor: 'area', reliability_engineer: 'yes', superintendent: 'yes' },
@@ -125,6 +131,8 @@ export const ACTION_LABELS: Record<Action, string> = {
   set_clear_flag: 'Set or clear down flags',
   set_standby: 'Raise or end standby flags',
   set_waits: 'Raise or end wait tags on a down unit',
+  assign_technicians: 'Assign technicians to a down unit',
+  mark_investigation: 'Mark a stop for investigation',
   move_location: 'Move a unit between locations',
   reclassify_flag: 'Reclassify flag type or reason',
   void_flag: 'Void a flag',

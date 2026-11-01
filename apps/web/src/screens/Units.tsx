@@ -3,11 +3,12 @@
 import { buildEvents, can, computeKpis, flagDownHours, openWorkOrders, stageHours, timeToFirstWrench, workOrdersForFlag, type Asset } from '@mr/core';
 import { useMemo, useState } from 'react';
 import { FlagSheet } from '../components/FlagSheet';
-import { STATUS_WORD, fmtHours, fmtNum, fmtPct, siteTime, unitStatus } from '../format';
+import { STATUS_WORD, fmtHours, fmtNum, fmtPct, hoursSince, siteTime, unitStatus } from '../format';
 import { newHref } from '../improve/describe';
 import { useApp } from '../store';
 import { UnitComponents } from './Components';
 import { UnitCondition } from './Condition';
+import { HistoryCard, InvestigationCard, NotesCard, RepairDetailsCard, TechniciansCard, UnitNow } from './UnitScreen';
 
 const DAY = 864e5;
 
@@ -76,12 +77,18 @@ export function UnitPage({ id }: { id: string }) {
     .map((f) => ({ f, s: Math.max(t0, Date.parse(f.start)), e: f.end ? Date.parse(f.end) : Date.parse(app.now) }))
     .filter((x) => x.e > t0);
 
+  // The last stop that ended, for an up unit: when it came back and what it was.
+  const last = flags.find((f) => f.state === 'released');
+  const since = s.flag ? s.flag.start : last?.end;
+
   return (
     <div className="stack">
+      <p className="small"><a href="#/">← Board</a></p>
       <div className="page-head">
         <h2>{a.unitNumber}</h2>
         <span className="muted">{a.model} · {a.fleet} · serial {a.serial} · {a.externalAssetId}</span>
         <span className={`status ${s.status === 'parked' ? 'stale' : s.status}`}>{STATUS_WORD[s.status]}</span>
+        {since && <span className="small muted">{s.flag ? '↓ down' : '↑ up'} {fmtHours(hoursSince(since, app.now))}</span>}
         <button className="btn primary" onClick={() => setSheet(a)}>{s.flag ? 'Update flag' : app.actor.role === 'technician' ? 'Propose down' : 'Flag down'}</button>
         {can(app.actor, 'create_actions') && <a className="btn" style={{ display: 'inline-flex', alignItems: 'center', textDecoration: 'none' }} href={newHref('actions', { kind: 'unit', unitId: a.id })}>Raise action</a>}
         {can(app.actor, 'run_rcas') && <a className="btn" style={{ display: 'inline-flex', alignItems: 'center', textDecoration: 'none' }} href={newHref('rca', { kind: 'unit', unitId: a.id })}>Start RCA</a>}
@@ -97,6 +104,29 @@ export function UnitPage({ id }: { id: string }) {
           </p>
         );
       })()}
+      <div className="us-grid">
+        <div className="stack">
+          {s.flag ? (
+            <>
+              <UnitNow a={a} f={s.flag} />
+              <RepairDetailsCard key={`d-${s.flag.id}`} a={a} f={s.flag} />
+              <TechniciansCard a={a} f={s.flag} />
+              <InvestigationCard key={`i-${s.flag.id}`} a={a} f={s.flag} />
+            </>
+          ) : last ? (
+            <>
+              <section className="card"><h3>Up</h3><p className="small">Back from <strong>{last.reasonCode}</strong> at {siteTime(last.end!, tz, true)}, after {fmtHours(flagDownHours(last, { from: last.start, to: last.end! }, app.now))} down. The details below are from that stop.</p></section>
+              <RepairDetailsCard key={`d-${last.id}`} a={a} f={last} />
+              <InvestigationCard key={`i-${last.id}`} a={a} f={last} />
+            </>
+          ) : <section className="card"><h3>Up</h3><p className="small muted">No stops recorded for this unit.</p></section>}
+        </div>
+        <div className="stack">
+          <NotesCard a={a} />
+          <HistoryCard a={a} />
+        </div>
+      </div>
+
       <div className="trust">SMU {lastSmu ? `${lastSmu.hours.toLocaleString()} h at ${siteTime(lastSmu.at, tz, true)}` : 'no reading'}</div>
 
       <div className="grid kpis">

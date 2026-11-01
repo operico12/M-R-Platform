@@ -33,6 +33,7 @@ function RcaList() {
         <span className="muted small">Start one from a unit page or Downtime analysis so the events come with it.</span>
       </div>
       {can(app.actor, 'run_rcas') && <div><a className="btn primary" style={linkBtn} href="#/rca/new?src=manual">New RCA</a></div>}
+      <Marked />
       <div className="table-wrap">
         <table>
           <thead><tr><th>Title</th><th>Lead</th><th>Status</th><th>For</th><th>Root cause</th><th className="num">Actions</th><th>Updated</th></tr></thead>
@@ -297,5 +298,40 @@ function Fishbone({ r, disabled, onSave }: { r: Rca; disabled: boolean; onSave: 
         </div>
       )}
     </>
+  );
+}
+
+/** Stops marked for investigation on the unit screen and not cleared (docs/unit-screen.md). */
+function Marked() {
+  const app = useApp();
+  const tz = app.ds.site.timeZone;
+  const marked = app.flags
+    .filter((f) => f.state !== 'voided' && f.investigation && !f.investigation.clearedAt)
+    .sort((x, y) => y.investigation!.at.localeCompare(x.investigation!.at));
+  if (!marked.length) return null;
+  const unit = (id: string) => app.ds.assets.find((a) => a.id === id)?.unitNumber ?? 'Unit';
+  return (
+    <section className="card">
+      <h3>Marked for investigation ({marked.length})</h3>
+      <div className="table-wrap">
+        <table>
+          <thead><tr><th>Unit</th><th>Stop</th><th>Why</th><th>Marked by</th><th></th></tr></thead>
+          <tbody>
+            {marked.map((f) => {
+              const started = app.rcas.find((r) => r.source.flagId === f.id);
+              return (
+                <tr key={f.id}>
+                  <td><a href={`#/unit/${f.unitId}`}>{unit(f.unitId)}</a></td>
+                  <td className="small">{f.release?.system ?? f.reasonCode} · {siteTime(f.start, tz, true)}{f.state === 'open' ? ' · still down' : ''}</td>
+                  <td className="small">{f.investigation!.reason}</td>
+                  <td className="small">{app.userName(f.investigation!.by)}, {siteTime(f.investigation!.at, tz, true)}</td>
+                  <td>{started ? <a href={`#/rca/${started.id}`}>Open RCA</a> : can(app.actor, 'run_rcas') ? <a href={newHref('rca', { kind: 'flag', unitId: f.unitId, flagId: f.id })}>Start RCA</a> : null}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </section>
   );
 }

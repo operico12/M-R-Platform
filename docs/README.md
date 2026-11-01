@@ -23,6 +23,6 @@ Phase 2 rules: [reliability and threshold alerts](alert-rules.md), [approvals](a
 
 Phase 3 rules: [component life and rebuilds](component-life.md), [condition monitoring](condition-monitoring.md), [RCM to PM job plans](rcm.md), [spares and rebuild pool sizing](spares.md), [assist: the first AI features](ai-assist.md).
 
-Phase 3b and 4 rules: [fixed plant](fixed-plant.md), [multi-site](multi-site.md), [public API](public-api.md), [access: account requests, sessions, two-step sign-in, Admin test mode](access.md), [main menu](menu.md), [status board](status-board.md), [people: job titles, crews, access end dates](people.md), [standby flags](standby.md), [wait tags](wait-tags.md), [shop lines](shop-lines.md).
+Phase 3b and 4 rules: [fixed plant](fixed-plant.md), [multi-site](multi-site.md), [public API](public-api.md), [access: account requests, sessions, two-step sign-in, Admin test mode](access.md), [main menu](menu.md), [status board](status-board.md), [people: job titles, crews, access end dates](people.md), [standby flags](standby.md), [wait tags](wait-tags.md), [shop lines](shop-lines.md), [unit screen](unit-screen.md).
 
 Setup: [connecting a Supabase project](setup-supabase.md).

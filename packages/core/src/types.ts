@@ -163,6 +163,8 @@ export interface EtaEntry {
 
 export interface ReleaseDetails {
   system?: string;
+  /** docs/unit-screen.md: the major component (engine, final drive...), above the component. */
+  majorComponent?: string;
   component?: string;
   failureModes?: string[];
   repairSummary?: string;
@@ -210,6 +212,17 @@ export interface DownFlag {
   voidReason?: string;
   restated?: boolean;
   notes?: string;
+  /** docs/unit-screen.md: the stop is marked for investigation (cleared with a reason, never deleted). */
+  investigation?: Investigation;
+}
+
+export interface Investigation {
+  at: Iso;
+  by: string;
+  reason: string;
+  clearedAt?: Iso;
+  clearedBy?: string;
+  clearReason?: string;
 }
 
 export interface SmuReading {
@@ -222,7 +235,7 @@ export interface AuditEntry {
   at: Iso;
   userId: string;
   action: string;
-  entity: 'down_flag' | 'standby_flag' | 'wait_tag' | 'import_run' | 'target' | 'user' | 'code' | 'action' | 'rca' | 'project' | 'settings' | 'alert' | 'approval' | 'inspection' | 'inspection_form' | 'analysis' | 'view' | 'component' | 'life_target' | 'oil_sample' | 'rcm_mode' | 'job_plan' | 'process_delay' | 'plant_node' | 'shutdown' | 'round' | 'site' | 'api_key' | 'shop_line' | 'shop_line_closure';
+  entity: 'down_flag' | 'standby_flag' | 'wait_tag' | 'import_run' | 'target' | 'user' | 'code' | 'action' | 'rca' | 'project' | 'settings' | 'alert' | 'approval' | 'inspection' | 'inspection_form' | 'analysis' | 'view' | 'component' | 'life_target' | 'oil_sample' | 'rcm_mode' | 'job_plan' | 'process_delay' | 'plant_node' | 'shutdown' | 'round' | 'site' | 'api_key' | 'shop_line' | 'shop_line_closure' | 'unit_note' | 'assignment';
   entityId: string;
   before: unknown;
   after: unknown;

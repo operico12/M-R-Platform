@@ -37,3 +37,4 @@ psql -v ON_ERROR_STOP=1 -q -d "$DB" -f tests/wait_tags_api.sql
 psql -v ON_ERROR_STOP=1 -q -d "$DB" -f tests/admin_test_mode_api.sql
 psql -v ON_ERROR_STOP=1 -q -d "$DB" -f tests/shop_lines_api.sql
 psql -v ON_ERROR_STOP=1 -q -d "$DB" -f tests/admin_full_api.sql
+psql -v ON_ERROR_STOP=1 -q -d "$DB" -f tests/unit_screen_api.sql

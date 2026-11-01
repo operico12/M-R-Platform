@@ -3,7 +3,7 @@
 // The anon key is public by design: row-level security decides what each
 // signed-in person can read and write. Never put the service_role key here.
 
-import { DEFAULT_FLAG_RULES, DEFAULT_WORK_SETTINGS, withAlertDefaults, type ApprovalRequest, type AuditRecord, type AlertAnswer, type AlertSettings, emptyFishbone, type WorkSettings, type ImprovementAction, type Project, type Rca, type AuditEntry, type Dataset, type DownFlag, type FlagRulesConfig, type ReasonCode, type Role, type ShiftCalendar, type SiteUser, type SmuReading, type Target, type WorkOrder, type Asset, type Inspection, type InspectionForm, type SavedAnalysis, type SavedView, type Component, type ComponentEvent, type LifeTarget, type OilSample, type CmResponse, type ConditionSettings, withConditionDefaults, type RcmMode, type JobPlanVersion, type RcmSettings, withRcmDefaults, type SparesSettings, withSparesDefaults, type AssistSettings, withAssistDefaults, type PlantNode, type ProcessDelay, type RunSignal, type PlantSettings, withPlantDefaults, type Shutdown, type ScopeItem, type Round, type SiteSnapshot, type SiteRecord, twelveHourCalendar, type ImportSource, withImportDefaults, type ApiKeyRecord, type ApiKeyInput, type ApiScope, type AccessSettings, withAccessDefaults, type AccessRequest, type StandbyFlag, type WaitTag, type ShopLine, type ShopLineClosure } from '@mr/core';
+import { DEFAULT_FLAG_RULES, DEFAULT_WORK_SETTINGS, withAlertDefaults, type ApprovalRequest, type AuditRecord, type AlertAnswer, type AlertSettings, emptyFishbone, type WorkSettings, type ImprovementAction, type Project, type Rca, type AuditEntry, type Dataset, type DownFlag, type FlagRulesConfig, type ReasonCode, type Role, type ShiftCalendar, type SiteUser, type SmuReading, type Target, type WorkOrder, type Asset, type Inspection, type InspectionForm, type SavedAnalysis, type SavedView, type Component, type ComponentEvent, type LifeTarget, type OilSample, type CmResponse, type ConditionSettings, withConditionDefaults, type RcmMode, type JobPlanVersion, type RcmSettings, withRcmDefaults, type SparesSettings, withSparesDefaults, type AssistSettings, withAssistDefaults, type PlantNode, type ProcessDelay, type RunSignal, type PlantSettings, withPlantDefaults, type Shutdown, type ScopeItem, type Round, type SiteSnapshot, type SiteRecord, twelveHourCalendar, type ImportSource, withImportDefaults, type ApiKeyRecord, type ApiKeyInput, type ApiScope, type AccessSettings, withAccessDefaults, type AccessRequest, type StandbyFlag, type WaitTag, type ShopLine, type ShopLineClosure, type UnitNote, type Assignment, type RepairDetails } from '@mr/core';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 
 const url = import.meta.env.VITE_SUPABASE_URL as string | undefined;
@@ -39,6 +39,9 @@ export interface Loaded {
   standby: StandbyFlag[];
   /** Wait tags on down units (docs/wait-tags.md), SQL 25. */
   waits: WaitTag[];
+  /** Unit screen (docs/unit-screen.md), SQL 29. */
+  notes: UnitNote[];
+  assignments: Assignment[];
   workSettings: WorkSettings;
   alertSettings: AlertSettings;
   alertAnswers: AlertAnswer[];
@@ -224,6 +227,8 @@ export async function loadSite(siteId: string): Promise<Loaded> {
   const insp = await loadInspections(siteId);
   const sby = await rpcRetry('app_load_standby', { p_site: siteId, p_since: since });
   const wts = await rpcRetry('app_load_waits', { p_site: siteId, p_since: since });
+  const nts = await rpcRetry('app_load_notes', { p_site: siteId, p_since: since });
+  const asg = await rpcRetry('app_load_assignments', { p_site: siteId, p_since: since });
   // Closures with their ids (SQL 27), so a closure can be ended in the app.
   const cls = await rpcRetry('app_load_closures', { p_site: siteId });
   // Admin test mode (SQL 26). Before that file is run the function is missing; the own role is the role.
@@ -317,11 +322,29 @@ export async function loadSite(siteId: string): Promise<Loaded> {
     codes: d.codes,
     standby: iso(optional(sby, [], 'Standby flags')) as StandbyFlag[],
     waits: iso(optional(wts, [], 'Wait tags')) as WaitTag[],
+    notes: iso(optional(nts, [], 'Unit notes')) as UnitNote[],
+    assignments: iso(optional(asg, [], 'Assigned technicians')) as Assignment[],
     targets: d.targets.map((t) => ({ ...t, value: Number(t.value), amber: Number(t.amber), ...(approvedTargets.get(t.id) ?? {}) })),
   };
 }
 
 export async function saveFlags(siteId: string, flags: DownFlag[], audit: AuditEntry[]): Promise<void> {
+  // Repair details and investigation marks have their own functions (SQL 29): a technician may set
+  // the details but not update a flag, and the database stamps who marked a stop and when.
+  const act = audit[0]?.action;
+  if (flags.length === 1 && act === 'set_repair_details') {
+    const r = flags[0]!.release ?? {};
+    const d: RepairDetails = { system: r.system, majorComponent: r.majorComponent, component: r.component, failureModes: r.failureModes, findings: r.findings };
+    must(await remote!.rpc('app_flag_details', { p_site: siteId, p_flag: flags[0]!.id, p_details: d }));
+    must(await remote!.rpc('app_log', { p_site: siteId, p_entries: audit }));
+    return;
+  }
+  if (flags.length === 1 && (act === 'mark_investigation' || act === 'clear_investigation')) {
+    const i = flags[0]!.investigation!;
+    must(await remote!.rpc('app_flag_investigation', { p_site: siteId, p_flag: flags[0]!.id, p_reason: act === 'clear_investigation' ? i.clearReason : i.reason, p_clear: act === 'clear_investigation' }));
+    must(await remote!.rpc('app_log', { p_site: siteId, p_entries: audit }));
+    return;
+  }
   must(await remote!.rpc('app_save_flags', { p_site: siteId, p_flags: flags }));
   if (audit.length) must(await remote!.rpc('app_log', { p_site: siteId, p_entries: audit }));
 }
@@ -332,7 +355,6 @@ export async function saveStandby(siteId: string, rows: StandbyFlag[], audit: Au
   if (audit.length) must(await remote!.rpc('app_log', { p_site: siteId, p_entries: audit }));
 }
 
-/** Wait tags as the core commands return them; matched by id. */
 /** The Admin's line changes (docs/shop-lines.md, SQL 27). */
 export async function saveLines(siteId: string, rows: ShopLine[], audit: AuditEntry[]): Promise<void> {
   must(await remote!.rpc('app_save_lines', { p_site: siteId, p_rows: rows }));
@@ -344,6 +366,18 @@ export async function saveClosures(siteId: string, rows: ShopLineClosure[], audi
   if (audit.length) must(await remote!.rpc('app_log', { p_site: siteId, p_entries: audit }));
 }
 
+/** Unit notes and assigned technicians (docs/unit-screen.md, SQL 29); matched by id. */
+export async function saveNotes(siteId: string, rows: UnitNote[], audit: AuditEntry[]): Promise<void> {
+  must(await remote!.rpc('app_save_notes', { p_site: siteId, p_rows: rows }));
+  if (audit.length) must(await remote!.rpc('app_log', { p_site: siteId, p_entries: audit }));
+}
+
+export async function saveAssignments(siteId: string, rows: Assignment[], audit: AuditEntry[]): Promise<void> {
+  must(await remote!.rpc('app_save_assignments', { p_site: siteId, p_rows: rows }));
+  if (audit.length) must(await remote!.rpc('app_log', { p_site: siteId, p_entries: audit }));
+}
+
+/** Wait tags as the core commands return them; matched by id. */
 export async function saveWaits(siteId: string, rows: WaitTag[], audit: AuditEntry[]): Promise<void> {
   must(await remote!.rpc('app_save_waits', { p_site: siteId, p_rows: rows }));
   if (audit.length) must(await remote!.rpc('app_log', { p_site: siteId, p_entries: audit }));
