@@ -227,6 +227,9 @@ function FlagDownForm({ asset, onDone }: { asset: Asset; onDone: () => void }) {
   const [override, setOverride] = useState('');
   const [etaH, setEtaH] = useState<number | null>(null);
   const [r, setR] = useState<CommandResult | null>(null);
+  // Optional repair details when they are already known at flag down (docs/unit-screen.md).
+  const [more, setMore] = useState(false);
+  const [det, setDet] = useState<{ majorComponent?: string; component?: string; mode?: string }>({});
   const freeLines = useFreeLines(asset);
   const plant = asset.assetClass === 'fixed_plant';
 
@@ -253,6 +256,11 @@ function FlagDownForm({ asset, onDone }: { asset: Asset; onDone: () => void }) {
             location,
             eta: etaH ? new Date(Date.parse(startIso) + etaH * 3_600_000).toISOString() : undefined,
             plannedDurationHours: type === 'scheduled' && etaH ? etaH : undefined,
+            details: type === 'unscheduled' && more ? {
+              majorComponent: det.majorComponent?.trim() || undefined,
+              component: det.component?.trim() || undefined,
+              failureModes: det.mode?.trim() ? [det.mode.trim()] : undefined,
+            } : undefined,
           }),
         );
     setR(res);
@@ -276,10 +284,29 @@ function FlagDownForm({ asset, onDone }: { asset: Asset; onDone: () => void }) {
         <span>{type === 'unscheduled' ? 'System' : 'Reason'}</span>
         <div className="chips">
           {reasons.map((x) => (
-            <button key={x} className="chip" aria-pressed={reason === x} onClick={() => setReason(x)}>{x}</button>
+            <button key={x} className="chip" aria-pressed={reason === x} onClick={() => { setReason(x); setDet({}); }}>{x}</button>
           ))}
         </div>
       </div>
+      {!propose && type === 'unscheduled' && reason && (() => {
+        const def = (plant ? PLANT_SYSTEMS : SYSTEMS)[reason];
+        return !more ? (
+          <button type="button" className="linklike small" onClick={() => setMore(true)}>+ Add failure mode or component (optional)</button>
+        ) : (
+          <div className="field">
+            <span>Known so far (optional; can be filled in later on the unit screen)</span>
+            <label className="field"><span>Major component</span><input value={det.majorComponent ?? ''} onChange={(e) => setDet({ ...det, majorComponent: e.target.value })} maxLength={200} /></label>
+            <label className="field"><span>Component</span>
+              <input list="fd-comp" value={det.component ?? ''} onChange={(e) => setDet({ ...det, component: e.target.value })} maxLength={200} />
+              <datalist id="fd-comp">{(def?.components ?? []).map((c) => <option key={c} value={c} />)}</datalist>
+            </label>
+            <span className="small">Failure mode</span>
+            <div className="chips">
+              {(def?.modes ?? []).map((m) => <button key={m} type="button" className="chip" aria-pressed={det.mode === m} onClick={() => setDet({ ...det, mode: det.mode === m ? undefined : m })}>{m}</button>)}
+            </div>
+          </div>
+        );
+      })()}
       {plant ? (
         <p className="small">In place at {asset.functionalLocation ?? <strong>no functional location</strong>}</p>
       ) : (
@@ -573,8 +600,11 @@ function ReleasePanel({ asset, flag, setR, onDone }: { asset: Asset; flag: DownF
   const app = useApp();
   const plant = asset.assetClass === 'fixed_plant';
   const codes: Record<string, { components: string[]; modes: string[] }> = plant ? PLANT_SYSTEMS : SYSTEMS;
-  const sys = flag.system && codes[flag.system] ? flag.system : '';
-  const [d, setD] = useState<ReleaseDetails>({ system: sys, failureModes: [], workOrder: flag.workOrders[0], pmOrWorkOrder: flag.workOrders[0] });
+  const known = flag.release ?? {};
+  const s0 = known.system ?? flag.system;
+  const sys = s0 && codes[s0] ? s0 : '';
+  // Start from what was filled in while the stop was open (docs/unit-screen.md).
+  const [d, setD] = useState<ReleaseDetails>({ ...known, system: sys, failureModes: known.failureModes ?? [], workOrder: known.workOrder ?? flag.workOrders[0], pmOrWorkOrder: known.pmOrWorkOrder ?? flag.workOrders[0] });
   const [reason, setReason] = useState('');
   // Fixed plant: the historian may already show it running again; offer that as the release time.
   const resumed = plant ? resumeAfter(app.plant.signals, asset.id, flag.start) : null;
@@ -597,9 +627,10 @@ function ReleasePanel({ asset, flag, setR, onDone }: { asset: Asset; flag: DownF
           </label>
           {def && (
             <>
+              <label className="field"><span>Major component (optional)</span><input value={d.majorComponent ?? ''} onChange={(e) => setD({ ...d, majorComponent: e.target.value || undefined })} maxLength={200} /></label>
               <label className="field"><span>Component</span>
                 <select value={d.component ?? ''} onChange={(e) => setD({ ...d, component: e.target.value })}>
-                  <option value="">Choose…</option>{def.components.map((c) => <option key={c}>{c}</option>)}
+                  <option value="">Choose…</option>{d.component && !def.components.includes(d.component) && <option>{d.component}</option>}{def.components.map((c) => <option key={c}>{c}</option>)}
                 </select>
               </label>
               <div className="field"><span>Failure mode (one or more)</span>

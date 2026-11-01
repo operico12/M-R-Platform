@@ -39,3 +39,5 @@ export * from './standby.js';
 export * from './people.js';
 export * from './waits.js';
 export * from './shop-lines.js';
+export * from './unit-notes.js';
+export * from './unit-history.js';

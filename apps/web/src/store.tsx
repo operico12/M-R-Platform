@@ -1,3 +1,5 @@
+export type UnitResult<T> = { ok: true; records: T[]; audit: AuditEntry[] } | { ok: false; errors: string[] };
+
 // App state. For phase 1a development the data comes from the synthetic
 // fleet in memory; the DataSource boundary is where Supabase plugs in.
 // All writes go through the pure commands in @mr/core, so the screen can
@@ -8,6 +10,10 @@ import {
   DEFAULT_STANDBY_REASONS,
   endStandbyForDown,
   settleWaits,
+  settleAssignments,
+  type UnitNote,
+  type Assignment,
+  type UnitContext,
   DEFAULT_WAIT_KINDS,
   type WaitContext,
   type WaitResult,
@@ -69,7 +75,7 @@ import {
 import { demoImprovements } from './data/demo-improve';
 import { demoStandby } from './data/demo-standby';
 import { demoWaits } from './data/demo-waits';
-import { saveLines, saveClosures, addSiteRemote, loadAccessRequests, decideAccessRemote, setTestRoleRemote, loadApiKeys, createApiKeyRemote, revokeApiKeyRemote, loadSnapshot, retireSiteRemote, savePlantNodes, saveShutdown, sendRound, saveProcessDelays, saveRunSignals, type PlantData, saveRcmModes, saveJobPlanVersion, saveCmResponse, saveOilSamples, saveComponentRecord, saveViewRecord, saveAnalysisRecord, loadPhoto, saveForms, sendInspection, sendPhoto, SendError, saveAlertAnswer, saveDecision, saveRequests, saveFlags, saveStandby, saveWaits, saveRecords, saveSetting, saveTarget, saveTaskStatus, type Loaded } from './data/remote';
+import { saveLines, saveClosures, addSiteRemote, loadAccessRequests, decideAccessRemote, setTestRoleRemote, loadApiKeys, createApiKeyRemote, revokeApiKeyRemote, loadSnapshot, retireSiteRemote, savePlantNodes, saveShutdown, sendRound, saveProcessDelays, saveRunSignals, type PlantData, saveRcmModes, saveJobPlanVersion, saveCmResponse, saveOilSamples, saveComponentRecord, saveViewRecord, saveAnalysisRecord, loadPhoto, saveForms, sendInspection, sendPhoto, SendError, saveAlertAnswer, saveDecision, saveRequests, saveFlags, saveStandby, saveWaits, saveNotes, saveAssignments, saveRecords, saveSetting, saveTarget, saveTaskStatus, type Loaded } from './data/remote';
 import { demoProjects } from './data/demo-projects';
 import { demoForms, demoInspections } from './data/demo-inspections';
 import { DEMO_SITES, demoFleet, type SiteChoice } from './data/sites';
@@ -228,6 +234,11 @@ export interface AppState {
   waits: WaitTag[];
   waitKinds: WaitKind[];
   runWaits: (asset: Asset, cmd: (ctx: WaitContext) => WaitResult) => WaitResult;
+  /** Unit screen (docs/unit-screen.md): notes and assigned technicians. */
+  notes: UnitNote[];
+  assignments: Assignment[];
+  runNotes: (asset: Asset, cmd: (ctx: UnitContext, notes: UnitNote[]) => UnitResult<UnitNote>) => UnitResult<UnitNote>;
+  runAssignments: (asset: Asset, cmd: (ctx: UnitContext, list: Assignment[]) => UnitResult<Assignment>) => UnitResult<Assignment>;
   lastSync: string;
   theme: 'light' | 'dark';
   setTheme: (t: 'light' | 'dark') => void;
@@ -304,6 +315,10 @@ export function AppProvider({ children, live, onReload, onSignOut, sites = DEMO_
   const setStandby = useCallback((next: StandbyFlag[]) => { standbyRef.current = next; setStandbyState(next); }, []);
   const [waits, setWaitsState] = useState<WaitTag[]>(() => live?.waits ?? demoWaits(ds));
   const waitsRef = useRef(waits);
+  const [notes, setNotes] = useState<UnitNote[]>(() => live?.notes ?? []);
+  const [assignments, setAssignmentsState] = useState<Assignment[]>(() => live?.assignments ?? []);
+  const assignmentsRef = useRef(assignments);
+  const setAssignments = useCallback((next: Assignment[]) => { assignmentsRef.current = next; setAssignmentsState(next); }, []);
   const setWaits = useCallback((next: WaitTag[]) => { waitsRef.current = next; setWaitsState(next); }, []);
   // The demo plant, made once: its structure, flags and shutdowns, and its route forms, rounds and stop inspections.
   const [demoPlant] = useState(() => (live ? null : generatePlant({ seed: 42, days: 120, end: Date.parse(ds.generatedAt), timeZone: ds.site.timeZone, tenantId: ds.tenantId, siteId: ds.site.id, people: { technician: 'demo-technician', supervisor: 'demo-supervisor' } })));
@@ -415,11 +430,19 @@ export function AppProvider({ children, live, onReload, onSignOut, sites = DEMO_
             setAudit((prev) => [...w.audit, ...prev]);
             if (saved) saved.then(() => saveWaits(siteId, changed, w.audit)).catch(failed);
           }
+          // Assigned technicians end or are voided the same way (docs/unit-screen.md).
+          const g = settleAssignments(assignmentsRef.current, unitFlags, { now: nowIso, actor });
+          if (g.audit.length) {
+            const changed = g.records.filter((x, i) => x !== assignmentsRef.current[i]);
+            setAssignments(g.records);
+            setAudit((prev) => [...g.audit, ...prev]);
+            if (saved) saved.then(() => saveAssignments(siteId, changed, g.audit)).catch(failed);
+          }
         }
       }
       return r;
     },
-    [flagCtx, keepFlags, live, failed, actor, setStandby, setWaits],
+    [flagCtx, keepFlags, live, failed, actor, setStandby, setWaits, setAssignments],
   );
 
   const runWaits = useCallback(
@@ -438,6 +461,39 @@ export function AppProvider({ children, live, onReload, onSignOut, sites = DEMO_
       return r;
     },
     [actor, live, failed, setWaits],
+  );
+
+  const unitCtx = useCallback((asset: Asset, nowIso: string): UnitContext => ({ now: nowIso, actor, asset, unitFlags: flagsRef.current.filter((f) => f.unitId === asset.id), newId }), [actor]);
+  const runNotes = useCallback(
+    (asset: Asset, cmd: (ctx: UnitContext, notes: UnitNote[]) => UnitResult<UnitNote>): UnitResult<UnitNote> => {
+      const nowIso = new Date().toISOString();
+      const r = cmd(unitCtx(asset, nowIso), notes);
+      if (r.ok) {
+        const changed = r.records.filter((x) => !notes.includes(x));
+        setNotes(r.records);
+        setAudit((prev) => [...r.audit, ...prev]);
+        setNow(nowIso);
+        if (live) saveNotes(siteId, changed, r.audit).catch(failed);
+      }
+      return r;
+    },
+    [unitCtx, notes, live, failed],
+  );
+  const runAssignments = useCallback(
+    (asset: Asset, cmd: (ctx: UnitContext, list: Assignment[]) => UnitResult<Assignment>): UnitResult<Assignment> => {
+      const nowIso = new Date().toISOString();
+      const all = assignmentsRef.current;
+      const r = cmd(unitCtx(asset, nowIso), all);
+      if (r.ok) {
+        const changed = r.records.filter((x) => !all.includes(x));
+        setAssignments(r.records);
+        setAudit((prev) => [...r.audit, ...prev]);
+        setNow(nowIso);
+        if (live) saveAssignments(siteId, changed, r.audit).catch(failed);
+      }
+      return r;
+    },
+    [unitCtx, live, failed, setAssignments],
   );
 
   const runStandby = useCallback(
@@ -1294,7 +1350,7 @@ export function AppProvider({ children, live, onReload, onSignOut, sites = DEMO_
     if (!live) { setRole(r); return null; }
     try { await setTestRoleRemote(siteId, r); onReload?.(); return null; } catch (e) { return e instanceof Error ? e.message : String(e); }
   }, [live, siteId, onReload]);
-  const value: AppState = { runLines, runClosures, ownRole, setTestRole: setTestRoleCmd, accessSettings, runAccessSettings, accessRequests, loadAccessRequests: loadAccessRequestsCmd, decideAccess: decideAccessCmd, apiKeys, loadApiKeys: loadApiKeysCmd, createApiKey: createApiKeyCmd, revokeApiKey: revokeApiKeyCmd, importSource, importMapping, runImportSource, sites, switchSite: (id: string) => onSwitchSite?.(id), snapshot, addSite: addSiteCmd, retireSite: retireSiteCmd, ds, forms, runForms, inspections, drafts, saveDraft, discardDraft, runInspection, outbox, sendOutbox: () => void sendOutbox(true), dropOutboxItem, photo, workSettings, runWorkSettings, alertSettings, runAlertSettings, alertAnswers, runAlertAnswer, analyses, runAnalysis, views, runView, components, componentEvents, lifeTargets, runComponents, oilSamples, cmResponses, conditionSettings, runSamples, runResponse, runConditionSettings, rcmModes, jobPlanVersions, rcmSettings, runRcm, runJobPlan, runRcmSettings, sparesSettings, runSparesSettings, assistSettings, runAssistSettings, suggester, plant, plantSettings, runPlantSettings, runDelay, runClassify, addSignals, runNode, runShutdown, runShutdownFlow, rounds, roundDrafts, beginRound, saveRoundDraft, discardRound, runRound, ruleAlerts: ruleAlertList, requests, runRequest, decide, actions: improve.actions, rcas: improve.rcas, projects: improve.projects, runImprove, people, userName, targets, targetOf, targetList, users, codes, runConsole, mode: live ? 'live' : 'demo', syncError, clearSyncError: () => setSyncError(null), signOut: onSignOut, importRuns, applyImport, newId, flags, standby, standbyReasons: DEFAULT_STANDBY_REASONS, runStandby, waits, waitKinds: DEFAULT_WAIT_KINDS, runWaits, audit, rules, now, actor, setRole, run, lastSync: ds.generatedAt, theme, setTheme };
+  const value: AppState = { runLines, runClosures, ownRole, setTestRole: setTestRoleCmd, accessSettings, runAccessSettings, accessRequests, loadAccessRequests: loadAccessRequestsCmd, decideAccess: decideAccessCmd, apiKeys, loadApiKeys: loadApiKeysCmd, createApiKey: createApiKeyCmd, revokeApiKey: revokeApiKeyCmd, importSource, importMapping, runImportSource, sites, switchSite: (id: string) => onSwitchSite?.(id), snapshot, addSite: addSiteCmd, retireSite: retireSiteCmd, ds, forms, runForms, inspections, drafts, saveDraft, discardDraft, runInspection, outbox, sendOutbox: () => void sendOutbox(true), dropOutboxItem, photo, workSettings, runWorkSettings, alertSettings, runAlertSettings, alertAnswers, runAlertAnswer, analyses, runAnalysis, views, runView, components, componentEvents, lifeTargets, runComponents, oilSamples, cmResponses, conditionSettings, runSamples, runResponse, runConditionSettings, rcmModes, jobPlanVersions, rcmSettings, runRcm, runJobPlan, runRcmSettings, sparesSettings, runSparesSettings, assistSettings, runAssistSettings, suggester, plant, plantSettings, runPlantSettings, runDelay, runClassify, addSignals, runNode, runShutdown, runShutdownFlow, rounds, roundDrafts, beginRound, saveRoundDraft, discardRound, runRound, ruleAlerts: ruleAlertList, requests, runRequest, decide, actions: improve.actions, rcas: improve.rcas, projects: improve.projects, runImprove, people, userName, targets, targetOf, targetList, users, codes, runConsole, mode: live ? 'live' : 'demo', syncError, clearSyncError: () => setSyncError(null), signOut: onSignOut, importRuns, applyImport, newId, flags, standby, standbyReasons: DEFAULT_STANDBY_REASONS, runStandby, waits, waitKinds: DEFAULT_WAIT_KINDS, runWaits, notes, assignments, runNotes, runAssignments, audit, rules, now, actor, setRole, run, lastSync: ds.generatedAt, theme, setTheme };
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
 

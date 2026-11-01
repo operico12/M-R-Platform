@@ -325,6 +325,8 @@ export interface FlagDownInput {
   plannedDurationHours?: number;
   workOrders?: string[];
   notes?: string;
+  /** docs/unit-screen.md: repair details known at the start (optional; the release checklist still needs them). */
+  details?: RepairDetails;
 }
 
 export function flagDown(ctx: FlagContext, input: FlagDownInput): CommandResult {
@@ -362,6 +364,8 @@ export function flagDown(ctx: FlagContext, input: FlagDownInput): CommandResult 
     enteredAt: ctx.now,
     notes: input.notes,
   };
+  const d = cleanDetails(input.details ?? {});
+  if (Object.keys(d).length) { flag.release = d; if (d.system) flag.system = d.system; }
   return { ok: true, flags: [flag], audit: [audit(ctx, 'flag_down', null, flag, undefined, input.start)], warnings: lc.warnings };
 }
 
@@ -531,7 +535,7 @@ export function release(ctx: FlagContext, flag: DownFlag, input: { at?: Iso; det
   if (ms(at) <= ms(flag.start)) errs.push('End must be after start (R3).');
   if (cur && ms(at) < ms(cur.start)) errs.push('End cannot be before the current stage started.');
   errs.push(...backdateErrors(ctx, at));
-  const missing = releaseChecklist(flag, input.details);
+  const missing = releaseChecklist(flag, { ...flag.release, ...input.details });
   if (missing.length) errs.push(`Release checklist incomplete: ${missing.join(', ')}.`);
   if (errs.length) return fail(...errs);
 
@@ -547,11 +551,61 @@ export function release(ctx: FlagContext, flag: DownFlag, input: { at?: Iso; det
     system: input.details.system ?? flag.system,
     stages,
     locations: closeLast(flag.locations, at),
-    release: input.details,
+    // Repair details entered while open carry over unless the release form changed them.
+    release: { ...flag.release, ...input.details },
     workOrders: wo && !flag.workOrders.includes(wo) ? [...flag.workOrders, wo] : flag.workOrders,
     releasedBy: ctx.actor.userId,
   };
   return { ok: true, flags: [after], audit: [audit(ctx, 'release', flag, after, input.reason, at)], warnings: [] };
+}
+
+// ---------- repair details and investigation (docs/unit-screen.md) ----------
+
+/** The release checklist fields that can be filled in while the stop is open. */
+export type RepairDetails = Pick<ReleaseDetails, 'system' | 'majorComponent' | 'component' | 'failureModes' | 'findings'>;
+export const REPAIR_TEXT_MAX = 200;
+
+function cleanDetails(d: RepairDetails): RepairDetails {
+  const t = (v?: string) => (v ?? '').trim().slice(0, REPAIR_TEXT_MAX);
+  const out: RepairDetails = {};
+  if (t(d.system)) out.system = t(d.system);
+  if (t(d.majorComponent)) out.majorComponent = t(d.majorComponent);
+  if (t(d.component)) out.component = t(d.component);
+  const modes = (d.failureModes ?? []).map((m) => t(m)).filter(Boolean);
+  if (modes.length) out.failureModes = modes;
+  if ((d.findings ?? '').trim()) out.findings = d.findings!.trim().slice(0, 2000);
+  return out;
+}
+
+/** Fill in or change the repair details on an open stop. Blank fields clear what was there. */
+export function setRepairDetails(ctx: FlagContext, flag: DownFlag, details: RepairDetails): CommandResult {
+  if (flag.state !== 'open') return fail('Repair details are set on an open stop. After release, use the release record.');
+  if (!can(ctx.actor, 'update_stage', areaOf(ctx))) return fail('Your role cannot change the repair details for this unit.');
+  const d = cleanDetails(details);
+  const rest = { ...flag.release };
+  for (const k of ['system', 'majorComponent', 'component', 'failureModes', 'findings'] as const) delete rest[k];
+  const release = { ...rest, ...d };
+  const after: DownFlag = { ...flag, system: d.system ?? flag.system, release: Object.keys(release).length ? release : undefined };
+  return { ok: true, flags: [after], audit: [audit(ctx, 'set_repair_details', flag, after)], warnings: [] };
+}
+
+/** Mark a stop (open or released) for investigation. */
+export function markInvestigation(ctx: FlagContext, flag: DownFlag, reason: string): CommandResult {
+  if (flag.state !== 'open' && flag.state !== 'released') return fail('Only an open or released stop can be marked.');
+  if (!can(ctx.actor, 'mark_investigation')) return fail('Your role cannot mark stops for investigation.');
+  if (flag.investigation && !flag.investigation.clearedAt) return fail('This stop is already marked for investigation.');
+  if (!reason.trim()) return fail('Say why it needs an investigation.');
+  const after: DownFlag = { ...flag, investigation: { at: ctx.now, by: ctx.actor.userId, reason: reason.trim().slice(0, 500) } };
+  return { ok: true, flags: [after], audit: [audit(ctx, 'mark_investigation', flag, after, reason.trim())], warnings: [] };
+}
+
+/** Clear the mark, with a reason. The mark stays in the audit log. */
+export function clearInvestigation(ctx: FlagContext, flag: DownFlag, reason: string): CommandResult {
+  if (!can(ctx.actor, 'mark_investigation')) return fail('Your role cannot clear investigation marks.');
+  if (!flag.investigation || flag.investigation.clearedAt) return fail('This stop is not marked for investigation.');
+  if (!reason.trim()) return fail('Say why the investigation is not needed.');
+  const after: DownFlag = { ...flag, investigation: { ...flag.investigation, clearedAt: ctx.now, clearedBy: ctx.actor.userId, clearReason: reason.trim().slice(0, 500) } };
+  return { ok: true, flags: [after], audit: [audit(ctx, 'clear_investigation', flag, after, reason.trim())], warnings: [] };
 }
 
 // ---------- T10 void ----------

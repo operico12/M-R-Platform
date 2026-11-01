@@ -9,7 +9,6 @@ import {
 } from '@mr/core';
 import { useMemo, useState } from 'react';
 import { FlagIcon } from '../components/FlagIcon';
-import { FlagSheet } from '../components/FlagSheet';
 import { fmtHours, hoursSince, locationLabel, siteTime, unitStatus } from '../format';
 import { useApp } from '../store';
 
@@ -34,7 +33,6 @@ interface Row {
 export function Board({ tv, query = '' }: { tv: boolean; query?: string }) {
   const app = useApp();
   const tz = app.ds.site.timeZone;
-  const [open, setOpen] = useState<Asset | null>(null);
   const [filter, setFilterState] = useState<BoardFilter>(() => boardFilterFromQuery(query));
   const setFilter = (f: BoardFilter) => {
     setFilterState(f);
@@ -111,7 +109,8 @@ export function Board({ tv, query = '' }: { tv: boolean; query?: string }) {
     .filter(([k]) => k.startsWith(`${g}:`))
     .map(([k, n]) => ({ key: k, sub: k.slice(g.length + 1) as BoardSub, n }))
     .sort((x, y) => y.n - x.n || BOARD_SUB_LABELS[x.sub].localeCompare(BOARD_SUB_LABELS[y.sub]));
-  const pick = (a: Asset) => { if (!tv) setOpen(a); };
+  // A click opens the unit's own screen (docs/unit-screen.md); flag down and updates are there.
+  const pick = (a: Asset) => { if (!tv) location.hash = `#/unit/${a.id}`; };
   const hrs = (iso?: string | null) => (iso ? fmtHours(hoursSince(iso, app.now)) : '');
   const pct = (n: number) => (total ? `${Math.round((n / total) * 100)}%` : '');
   const groups = GROUPS;
@@ -334,7 +333,6 @@ export function Board({ tv, query = '' }: { tv: boolean; query?: string }) {
         </p>
       )}
 
-      {open && <FlagSheet asset={open} onClose={() => setOpen(null)} />}
     </div>
   );
 }
