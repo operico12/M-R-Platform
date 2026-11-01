@@ -4,7 +4,7 @@
 
 import {
   ALERT_PLAIN, BOARD_SUB_LABELS, STAGE_LABELS, sortAlerts, activeAlerts, boardCounts, boardFilterFromQuery, boardFilterToQuery, boardPlace, currentStandby,
-  downSince, filterBoard, openWaits, stageSince, subKey, toggleIn, upSince,
+  downSince, filterBoard, openWaits, stageSince, subKey, toggleIn, upSince, waitBreakdown,
   type Alert, type Asset, type BoardFilter, type BoardGroup, type BoardSub, type DownFlag, type StandbyFlag,
 } from '@mr/core';
 import { useMemo, useState } from 'react';
@@ -125,47 +125,73 @@ export function Board({ tv, query = '' }: { tv: boolean; query?: string }) {
       { key: 'unsched', cls: 'fb-down', word: 'unscheduled down', n: counts.groups.unsched },
     ]);
 
-  // One table row per unit (Ope, 31 Oct 2026: a table instead of cards). Flags are chips with their times.
-  type Chip = { key: string; code: string; label: string; time?: string; cls: string };
-  const chips = (r: Row): Chip[] => {
-    const out: Chip[] = [];
+  // One table row per unit (Ope, 31 Oct 2026). The Flags column lists only what takes time from the unit,
+  // one sub-row each with its hours: wait tags of the stop for a down unit; standby, parked or a proposal when up.
+  type Item = { key: string; code: string; label: string; time: string; running: boolean; cls: string };
+  const items = (r: Row): Item[] => {
+    const out: Item[] = [];
     const f = r.flag;
-    if (r.parked) out.push({ key: 'pk', code: 'parked', label: 'Parked', time: hrs(r.parkedSince), cls: 'ch-parked' });
-    if (r.standby) out.push({ key: 'sb', code: r.standby.reasonCode, label: `Standby: ${sbLabel(r.standby.reasonCode)}`, time: hrs(r.standby.start), cls: 'ch-standby' });
-    if (r.proposal) out.push({ key: 'pr', code: 'proposed', label: `Down proposed: ${r.proposal.reasonCode}`, time: hrs(r.proposal.enteredAt), cls: 'ch-warn' });
     if (f) {
-      for (const w of openWaits(r.unitId, app.waits)) out.push({ key: w.id, code: w.kind, label: `Waiting: ${waitLabel(w.kind)}${w.note ? ` · ${w.note}` : ''}`, time: hrs(w.start), cls: 'ch-wait' });
-      const eta = f.etas.at(-1);
-      const late = eta && Date.parse(eta.eta) < Date.parse(app.now);
-      const noEta = !eta && hoursSince(f.start, app.now) >= app.rules.etaRequiredAfterHours;
-      if (eta) out.push({ key: 'eta', code: 'eta', label: `${late ? 'ETA passed' : 'ETA'} ${siteTime(eta.eta, tz, true)}`, time: late ? hrs(eta.eta) : undefined, cls: late ? 'ch-late' : 'ch-muted' });
-      else if (noEta) out.push({ key: 'eta', code: 'eta', label: 'No ETA', cls: 'ch-late' });
+      const from = Date.parse(r.since ?? f.start);
+      const stop = app.waits.filter((w) => w.unitId === r.unitId && w.state !== 'voided' && Date.parse(w.start) >= from)
+        .sort((x, y) => Number(!!x.end) - Number(!!y.end) || Date.parse(x.start) - Date.parse(y.start));
+      for (const w of stop) {
+        const h = ((w.end ? Date.parse(w.end) : Date.parse(app.now)) - Date.parse(w.start)) / 3_600_000;
+        out.push({ key: w.id, code: w.kind, label: `${waitLabel(w.kind)}${w.note ? ` · ${w.note}` : ''}`, time: fmtHours(h), running: !w.end, cls: 'fi-wait' });
+      }
+    } else {
+      if (r.standby) out.push({ key: 'sb', code: r.standby.reasonCode, label: `Standby: ${sbLabel(r.standby.reasonCode)}`, time: hrs(r.standby.start), running: true, cls: 'fi-standby' });
+      if (r.proposal) out.push({ key: 'pr', code: 'proposed', label: `Down proposed: ${r.proposal.reasonCode}`, time: hrs(r.proposal.enteredAt), running: true, cls: 'fi-warn' });
     }
-    if (r.noReadingSince !== undefined) out.push({ key: 'nr', code: 'no_reading', label: 'No hour meter reading', time: r.noReadingSince ? hrs(r.noReadingSince) : 'none yet', cls: 'ch-muted' });
-    for (const x of r.alerts) out.push({ key: x.kind, code: 'alert', label: ALERT_PLAIN[x.kind].title, time: x.kind === 'pm_overrun' ? undefined : hrs(x.since), cls: 'ch-warn' });
+    if (r.parked) out.push({ key: 'pk', code: 'parked', label: 'Parked', time: hrs(r.parkedSince), running: true, cls: 'fi-parked' });
     return out;
   };
-  const STATUS_WORD: Record<BoardGroup, string> = { operational: 'Operational', unsched: 'Unscheduled down', sched: 'Scheduled down' };
+  // Hours of the stop with at least one wait open (overlaps counted once, KPI-046).
+  const waitingOf = (r: Row) => {
+    if (!r.flag || !r.since) return 0;
+    const stop = app.waits.filter((w) => w.unitId === r.unitId && Date.parse(w.start) >= Date.parse(r.since!));
+    return waitBreakdown(stop, { from: r.since, to: app.now }, app.now).waiting;
+  };
+  const STATUS_WORD: Record<BoardGroup, string> = { operational: 'Operational', unsched: 'Unscheduled', sched: 'Scheduled' };
+  const etaCell = (f?: DownFlag) => {
+    if (!f) return <span className="muted">—</span>;
+    const eta = f.etas.at(-1);
+    if (eta) {
+      const late = Date.parse(eta.eta) < Date.parse(app.now);
+      return <span className={late ? 'eta-late' : ''}>{siteTime(eta.eta, tz, true)}{late && <span className="bt-sub">passed {hrs(eta.eta)} ago</span>}</span>;
+    }
+    if (hoursSince(f.start, app.now) >= app.rules.etaRequiredAfterHours) return <span className="eta-late">No ETA</span>;
+    return <span className="muted">—</span>;
+  };
   const row = (r: Row) => {
     const f = r.flag;
     const st = f?.stages.at(-1);
-    const list = chips(r);
-    const statusText = r.group === 'operational' && r.standby ? 'Standby' : STATUS_WORD[r.group];
+    const list = items(r);
+    const statusText = STATUS_WORD[r.group];
+    const waiting = list.length && f ? waitingOf(r) : 0;
     return (
-      <tr key={r.unitId} className={`brow br-${r.group}${r.standby ? ' br-standby' : ''}`} onClick={() => pick(r.a)} tabIndex={tv ? -1 : 0}
+      <tr key={r.unitId} className={`brow br-${r.group}`} onClick={() => pick(r.a)} tabIndex={tv ? -1 : 0}
         onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pick(r.a); } }}
         aria-label={`${r.unitNumber}, ${statusText}${r.since ? `, ${f ? 'down' : 'up'} ${hrs(r.since)}` : ''}`}>
         <td className="bt-unit"><strong>{r.unitNumber}</strong><span className="muted small">{r.model}</span></td>
-        <td className="bt-status"><span className={`spill sp-${r.group}${r.standby ? ' sp-standby' : ''}`}><span className="dot" />{statusText}</span></td>
+        <td className="bt-status"><span className={`spill sp-${r.group}`}><span className="dot" />{statusText}</span></td>
         <td className="bt-where" data-label="Where">{f ? locationLabel(f, app.ds) : <span className="muted">In the field</span>}</td>
         <td className="bt-problem" data-label="Problem">{f ? f.reasonCode : <span className="muted">—</span>}</td>
         <td className="bt-stage" data-label="Stage">{f ? <span className={r.stageLate ? 'ch-warn-text' : ''}><FlagIcon code={st?.stage ?? 'no_stage'} /> {st ? STAGE_LABELS[st.stage] : BOARD_SUB_LABELS.no_stage}<span className="bt-sub">{hrs(stageSince(f))}</span></span> : <span className="muted">—</span>}</td>
-        <td className="bt-time" data-label={f ? 'Down for' : 'Up for'}>{r.since ? <><span className="muted small">{f ? 'down ' : 'up '}</span>{hrs(r.since)}</> : <span className="muted small">no stops on record</span>}</td>
+        <td className="bt-time" data-label="Time">{r.since
+          ? <span className={f ? 'tm-down' : 'tm-up'}><span className="tm-arrow" aria-hidden="true">{f ? '↓' : '↑'}</span>{hrs(r.since)}</span>
+          : <span className="muted small">no stops on record</span>}</td>
+        <td className="bt-eta" data-label="ETA">{etaCell(f)}</td>
         <td className="bt-flags" data-label="Flags">
           {list.length === 0 ? <span className="muted">—</span> : (
-            <span className="chips">{list.map((c) => (
-              <span key={c.key} className={`fchip ${c.cls}`}><span className="fchip-l"><FlagIcon code={c.code} size={13} /> {c.label}</span>{c.time && <span className="fchip-t">{c.time}</span>}</span>
-            ))}</span>
+            <ul className="fitems">
+              {list.map((c) => (
+                <li key={c.key} className={`${c.cls}${c.running ? ' fi-run' : ''}`}>
+                  <span className="fi-l"><FlagIcon code={c.code} size={14} /> {c.label}</span><span className="fi-t">{c.time}</span>
+                </li>
+              ))}
+              {f && waiting > 0 && <li className="fi-total"><span className="fi-l">Waiting, of {hrs(r.since)} down</span><span className="fi-t">{fmtHours(waiting)}</span></li>}
+            </ul>
           )}
         </td>
       </tr>
@@ -268,7 +294,7 @@ export function Board({ tv, query = '' }: { tv: boolean; query?: string }) {
           <div className="btable-wrap">
             <table className="btable">
               <thead>
-                <tr><th>Unit</th><th>Status</th><th>Where</th><th>Problem</th><th>Stage</th><th>Time</th><th>Flags</th></tr>
+                <tr><th>Unit</th><th>Status</th><th>Where</th><th>Problem</th><th>Stage</th><th>Time</th><th>ETA</th><th>Flags</th></tr>
               </thead>
               <tbody>{tableRows.map(row)}</tbody>
             </table>

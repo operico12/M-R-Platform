@@ -25,6 +25,8 @@ const PATHS: Record<string, ReactNode> = {
   TOOLS: WRENCH,
   SPECIALIST: <><rect x="4" y="3" width="16" height="18" rx="2" /><circle cx="12" cy="10" r="3" /><path d="M8 17c1.2-2 6.8-2 8 0" /></>,
   ENGINEERING: <><path d="M6 3h9l4 4v14H6z" /><path d="M14 3v5h5M9 13h7M9 17h5" /></>,
+  OPERATOR: <><circle cx="12" cy="7" r="3.5" /><path d="M5 21c0-3.9 3.1-7 7-7s7 3.1 7 7" /><path d="M9 3.5h6" /></>,
+  DECISION: <><path d="M12 3v18M5 7h14M5 7l-2 6a3 3 0 0 0 4 0zM19 7l-2 6a3 3 0 0 0 4 0z" /></>,
   APPROVAL: <><rect x="5" y="4" width="14" height="17" rx="2" /><path d="M9 4V3h6v1M9 13l2 2 4-4" /></>,
   ACCESS: <><path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z" /><path d="M9 12l2 2 4-4" /></>,
   OTHER: DOTS,
