@@ -3,6 +3,7 @@
 // cores, target life, and a page per serial. Screens call core commands only.
 
 import {
+  hasRole,
   COMPONENT_KINDS, DEFAULT_LIFE_BANDS, EVENT_LABELS, KIND_LABELS, POSITIONS, REMOVAL_LABELS, STATUS_LABELS,
   allLives, burnRates, can, changeoutForecast, componentStates, coresOutstanding, costPerLifeHour, fitKind, forecastBuckets, lifeBoard, lifeRatio,
   lifeTargetFor, permission, positionById, proposeLifeTarget, recordEvent, registerComponent, riskBeforeTarget, smuIndex, vendorStats, voidEvent, warrantyClaims, withoutCosts,
@@ -339,7 +340,7 @@ function Targets({ d, today }: { d: Data; today: string }) {
   const models = [...new Set(app.ds.assets.map((a) => a.model))].sort();
   const [form, setForm] = useState({ model: models[0] ?? '', kind: 'engine' as ComponentKind, hours: '', from: today, reason: '' });
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
-  const p = permission(app.actor.role, 'edit_life_targets');
+  const p = permission(app.actor, 'edit_life_targets');
   const allowed = p === 'propose' || p === 'approve';
   const pending = app.requests.filter((r) => r.kind === 'life_target' && r.status === 'pending');
   const history = [...app.lifeTargets].filter((t) => t.requestId).sort((a, b) => Date.parse(b.setAt) - Date.parse(a.setAt)).slice(0, 10);
@@ -421,7 +422,7 @@ function Serial({ d, id }: { d: Data; id: string }) {
     const r = app.runComponents((ctx, data) => voidEvent(ctx, data, latest.id, reason));
     setVoidMsg(r.ok ? 'Voided.' : r.errors.join(' '));
   };
-  const canVoid = latest && (latest.enteredBy === app.actor.userId || app.actor.role === 'superintendent');
+  const canVoid = latest && (latest.enteredBy === app.actor.userId || hasRole(app.actor, 'superintendent'));
   return (
     <div className="stack">
       <div className="page-head">

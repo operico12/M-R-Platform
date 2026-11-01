@@ -13,7 +13,7 @@ const KIND_LABELS: Record<ApprovalRequest['kind'], string> = { target: 'Target',
 export function ApprovalsPage() {
   const app = useApp();
   const tz = app.ds.site.timeZone;
-  const mine = waitingOn(app.requests, app.actor.userId, app.actor.role);
+  const mine = waitingOn(app.requests, app.actor.userId, app.actor);
   const mineIds = new Set(mine.map((r) => r.id));
   const others = app.requests.filter((r) => r.status === 'pending' && !mineIds.has(r.id));
   const [flash, setFlash] = useState<string[]>([]);
@@ -58,7 +58,7 @@ function RequestCard({ r, onDone }: { r: ApprovalRequest; onDone: (messages: str
   const app = useApp();
   const tz = app.ds.site.timeZone;
   const me = app.actor.userId;
-  const approver = canDecide(app.actor.role, r.kind) && r.requestedBy !== me;
+  const approver = canDecide(app.actor, r.kind) && (r.requestedBy !== me || !!app.actor.fullAccess);
   const asker = r.requestedBy === me;
   const [mode, setMode] = useState<'approve' | 'reject' | 'note' | 'withdraw' | null>(null);
   const [text, setText] = useState('');
@@ -90,7 +90,7 @@ function RequestCard({ r, onDone }: { r: ApprovalRequest; onDone: (messages: str
         </div>
       )}
       {!approver && !asker && <p className="small muted" style={{ margin: 0 }}>Waiting for a superintendent who did not ask.</p>}
-      {asker && !approver && canDecide(app.actor.role, r.kind) && <p className="small muted" style={{ margin: 0 }}>You asked, so another superintendent decides.</p>}
+      {asker && !approver && canDecide(app.actor, r.kind) && <p className="small muted" style={{ margin: 0 }}>You asked, so another superintendent decides.</p>}
       {mode === null ? (
         <div className="row" style={{ flexWrap: 'wrap', gap: 8, marginTop: 8 }}>
           {approver && <button className="btn primary" onClick={() => setMode('approve')}>Approve</button>}

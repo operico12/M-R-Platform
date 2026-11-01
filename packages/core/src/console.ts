@@ -88,7 +88,7 @@ export interface TargetInput {
  * request uses it to make the target (docs/approvals.md).
  */
 export function setTarget(ctx: ConsoleContext, targets: Target[], input: TargetInput): ConsoleResult<Target> {
-  const p = permission(ctx.actor.role, 'change_targets');
+  const p = permission(ctx.actor, 'change_targets');
   if (p !== 'propose' && p !== 'approve') return refuse('Your role cannot change targets.');
   const errors: string[] = [];
   const def = TARGET_KPIS[input.kpi];
@@ -330,7 +330,7 @@ function checkCode(codes: ReasonCode[], input: CodeInput, selfId?: string): stri
 }
 
 export function addCode(ctx: ConsoleContext, codes: ReasonCode[], input: CodeInput): ConsoleResult<ReasonCode> {
-  if (!can(ctx.actor, 'edit_codes')) return refuse(permission(ctx.actor.role, 'edit_codes') === 'propose' ? 'Your role can propose code changes; the approval step arrives in phase 1b.' : 'Your role cannot edit codes.');
+  if (!can(ctx.actor, 'edit_codes')) return refuse(permission(ctx.actor, 'edit_codes') === 'propose' ? 'Your role can propose code changes; the approval step arrives in phase 1b.' : 'Your role cannot edit codes.');
   const errors = checkCode(codes, input);
   if (errors.length) return refuse(...errors);
   const c: ReasonCode = { id: ctx.newId(), code: input.code.trim().toUpperCase(), label: input.label.trim(), appliesTo: input.appliesTo, externalCode: input.externalCode?.trim() || undefined };

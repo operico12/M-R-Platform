@@ -38,6 +38,13 @@ begin
   where schemaname = 'public' and (coalesce(qual, '') like '%is_site_member(site_id)%' or coalesce(with_check, '') like '%is_site_member(site_id)%');
   if bad is not null then raise exception 'Policies that call is_site_member per row (use site_id in (select my_site_ids())): %', bad; end if;
 
+  -- Admin full control in test mode (docs/access.md section 4): every role test in a rule accepts admin_full.
+  select string_agg(tablename || '.' || policyname, ', ') into bad from pg_policies
+  where schemaname = 'public'
+    and (select count(*) from regexp_matches(coalesce(qual, '') || ' ' || coalesce(with_check, ''), 'site_role\(', 'g'))
+     <> (select count(*) from regexp_matches(coalesce(qual, '') || ' ' || coalesce(with_check, ''), 'admin_full\(', 'g'));
+  if bad is not null then raise exception 'Policies whose role tests leave out admin_full: %', bad; end if;
+
   -- Functions that run with the owner's rights fix their search path and check who is calling.
   select string_agg(p.proname, ', ') into bad from pg_proc p
   where p.pronamespace = 'public'::regnamespace and p.prosecdef

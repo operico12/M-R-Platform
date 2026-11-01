@@ -6,7 +6,7 @@
 // server and the tests.
 
 import type { FlagRulesConfig } from './config.js';
-import { can, canPropose } from './permissions.js';
+import { can, canPropose, hasRole } from './permissions.js';
 import { hoursBetween, ms, shiftAt, shiftsBetween, toIso, type ShiftCalendar } from './time.js';
 import type {
   Actor,
@@ -188,7 +188,7 @@ export function lineName(l: ShopLine): string {
 function backdateErrors(ctx: FlagContext, at: Iso): string[] {
   const errs: string[] = [];
   if (ms(at) > ms(ctx.now)) errs.push('Time cannot be in the future (R3).');
-  const allowed = ctx.rules.backdating[ctx.actor.role];
+  const allowed = ctx.actor.fullAccess ? 'any' : ctx.rules.backdating[ctx.actor.role];
   // Small grace so "now" from a slow device is not treated as back-dating.
   if (ms(ctx.now) - ms(at) <= 5 * 60_000) return errs;
   if (allowed === 'any') return errs;
@@ -586,7 +586,7 @@ export interface ReopenInput {
 
 export function reopen(ctx: FlagContext, flag: DownFlag, input: ReopenInput): CommandResult {
   if (flag.state !== 'released' || !flag.end) return fail('Only a released flag can be reopened.');
-  if (!can(ctx.actor, 'set_clear_flag', areaOf(ctx)) || !['supervisor', 'reliability_engineer'].includes(ctx.actor.role)) {
+  if (!can(ctx.actor, 'set_clear_flag', areaOf(ctx)) || !hasRole(ctx.actor, 'supervisor', 'reliability_engineer')) {
     return fail('Only a supervisor or reliability engineer can reopen a flag (T11).');
   }
   if (!input.reason) return fail('A reason is required to reopen.');

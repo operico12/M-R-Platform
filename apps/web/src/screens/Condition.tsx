@@ -4,6 +4,7 @@
 // Screens call core commands only.
 
 import {
+  hasRole,
   COMPARTMENT_LABELS, COMPARTMENT_POSITION, COMPARTMENT_SHORT, COMPARTMENTS, ELEMENTS, RESPONSE_LABELS, SEVERITIES, SEVERITY_LABELS,
   buildBaselines, can, compartmentLower, cmResponse, conditionActions, conditionAlerts, conditionBoard, elementById, fmtReading, histogram, historyKey, importLabFile,
   labSeverityOf, oilControlChart, parseCsv, recordSample, respondToSample, risingElements, sampleHistory, samplesDue, setConditionSettings, smuIndex, voidSample,
@@ -481,7 +482,7 @@ function SamplePage({ d, id }: { d: Data; id: string }) {
   const alert = d.alerts.find((a) => a.sample.id === x.id);
   const response = app.cmResponses.find((r) => r.sampleId === x.id);
   const canRespond = can(app.actor, 'record_condition') && alert && !response;
-  const canVoid = !x.voidedAt && ((x.enteredBy === app.actor.userId && can(app.actor, 'record_condition')) || app.actor.role === 'superintendent');
+  const canVoid = !x.voidedAt && ((x.enteredBy === app.actor.userId && can(app.actor, 'record_condition')) || hasRole(app.actor, 'superintendent'));
   const shown = ELEMENTS.filter((e) => hist.some((h) => h.readings[e.id] !== undefined));
   const trend = hist.slice(-12).map((h) => ({ label: new Date(h.takenAt).toLocaleDateString('en-CA', { timeZone: tz, month: 'short', day: 'numeric' }), v: h.readings[trendEl] }));
   const tb = d.baselines.get(`${unit?.model}|${x.compartment}|${trendEl}`);

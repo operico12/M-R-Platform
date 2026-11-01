@@ -8,7 +8,7 @@ import { useApp } from '../store';
 export function WorkSettingsPage() {
   const app = useApp();
   const s = app.workSettings;
-  const allowed = ['yes', 'propose', 'approve'].includes(permission(app.actor.role, 'change_targets'));
+  const allowed = ['yes', 'propose', 'approve'].includes(permission(app.actor, 'change_targets'));
   const [craft, setCraft] = useState(String(s.craftHoursPerWeek));
   const [tol, setTol] = useState(String(s.pmToleranceDays));
   const [types, setTypes] = useState(s.emergencyTypes.join(', '));

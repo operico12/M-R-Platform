@@ -9,7 +9,7 @@ import type { ConsoleContext, ConsoleResult, Target, TargetKpi } from './console
 import { TARGET_KPIS, rag, targetValue } from './console.js';
 import { EMPTY_FILTER, filterToQuery, flagSystem, type AnalyticsFilter } from './filters.js';
 import { buildEvents, computeKpis, type DowntimeEvent, type KpiInput, type KpiResult, type Period } from './kpis.js';
-import { can, permission } from './permissions.js';
+import { can, permission, type Who } from './permissions.js';
 import { HOUR_MS, ms } from './time.js';
 import type { Iso, Role, WorkOrder } from './types.js';
 import { DEFAULT_WORK_SETTINGS, pmCompliance, type WorkSettings } from './work.js';
@@ -403,4 +403,4 @@ export function openAlerts(alerts: RuleAlert[], answers: AlertAnswer[], now: Iso
 }
 
 /** Whether a role can change alert rules (for showing the console tab). */
-export const canEditAlertRules = (role: Role) => permission(role, 'edit_alert_rules') === 'yes';
+export const canEditAlertRules = (role: Who) => permission(role, 'edit_alert_rules') === 'yes';

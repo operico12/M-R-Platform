@@ -109,7 +109,7 @@ function Rules() {
       {adminMfa && !cur.adminMfa && !passed && <p className="small">First turn on two-step sign-in for yourself on the <a href="#/account">Account</a> page and pass the code check, so you are not locked out.</p>}
       <label className="row small" style={{ gap: 6 }}>
         <input type="checkbox" checked={testMode} onChange={(e) => setTestMode(e.target.checked)} />
-        Test mode (development only): Admins can act as any role from the menu, straight away.
+        Test mode (development only): Admins have full control of everything, and can act as any role from the menu.
       </label>
       {cur.testMode && <p className="small ui-warn" role="note">Test mode is on. Turn it off before real users join this site.</p>}
       <label className="field"><span>Reason for the change</span><input value={reason} onChange={(e) => setReason(e.target.value)} /></label>

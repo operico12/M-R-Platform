@@ -8,7 +8,7 @@ import {
   type ConsoleContext, type SiteUser, type Target, type TargetInput,
 } from './console.js';
 import { KIND_LABELS, lifeTargetFor, setLifeTarget, type LifeTarget, type LifeTargetInput } from './components.js';
-import { permission } from './permissions.js';
+import { permission, type Who } from './permissions.js';
 import { ms, shiftAt } from './time.js';
 import type { AuditEntry, Iso, Role } from './types.js';
 
@@ -62,7 +62,7 @@ const pendingFor = (requests: ApprovalRequest[], kind: RequestKind, userId: stri
 // ---------- asking ----------
 
 export function proposeTarget(ctx: ConsoleContext, targets: Target[], requests: ApprovalRequest[], input: TargetInput): Ok<ApprovalRequest> | No {
-  const p = permission(ctx.actor.role, 'change_targets');
+  const p = permission(ctx.actor, 'change_targets');
   if (p !== 'propose' && p !== 'approve') return no('Your role cannot ask for target changes.');
   // Check it the same way it will be applied.
   const check = setTarget(ctx, targets, input);
@@ -87,7 +87,7 @@ export function proposeTarget(ctx: ConsoleContext, targets: Target[], requests: 
 
 /** Target life for a model and component kind (docs/component-life.md): asked for by a reliability engineer, approved by a superintendent. */
 export function proposeLifeTarget(ctx: ConsoleContext, lifeTargets: LifeTarget[], requests: ApprovalRequest[], input: LifeTargetInput): Ok<ApprovalRequest> | No {
-  const p = permission(ctx.actor.role, 'edit_life_targets');
+  const p = permission(ctx.actor, 'edit_life_targets');
   if (p !== 'propose' && p !== 'approve') return no('Your role cannot ask for target life changes.');
   const check = setLifeTarget(ctx, lifeTargets, input);
   if (!check.ok) return check;
@@ -112,7 +112,7 @@ export function proposeLifeTarget(ctx: ConsoleContext, lifeTargets: LifeTarget[]
 }
 
 export function requestRole(ctx: ConsoleContext, users: SiteUser[], requests: ApprovalRequest[], userId: string, role: Role, reason: string): Ok<ApprovalRequest> | No {
-  if (permission(ctx.actor.role, 'manage_users') !== 'yes') return no('Only the Admin asks for role changes.');
+  if (permission(ctx.actor, 'manage_users') !== 'yes') return no('Only the Admin asks for role changes.');
   const u = users.find((x) => x.id === userId);
   if (!u || u.retiredAt) return no('That user is not active.');
   if (u.invited) return no('They have not signed in yet. Ask once they have.');
@@ -131,7 +131,7 @@ export function requestRole(ctx: ConsoleContext, users: SiteUser[], requests: Ap
 
 /** `until` is a site-local date; the acting role ends at 00:00 site time after it. */
 export function requestActingRole(ctx: ConsoleContext, users: SiteUser[], requests: ApprovalRequest[], userId: string, role: Role, until: string, reason: string): Ok<ApprovalRequest> | No {
-  if (permission(ctx.actor.role, 'manage_users') !== 'yes') return no('Only the Admin asks for acting roles.');
+  if (permission(ctx.actor, 'manage_users') !== 'yes') return no('Only the Admin asks for acting roles.');
   const u = users.find((x) => x.id === userId);
   if (!u || u.retiredAt) return no('That user is not active.');
   if (u.invited) return no('They have not signed in yet.');
@@ -158,8 +158,9 @@ export function requestActingRole(ctx: ConsoleContext, users: SiteUser[], reques
 // ---------- deciding ----------
 
 /** Who can decide this kind of request: a superintendent (or acting one) for all of them today. */
-export function canDecide(role: Role, kind: RequestKind): boolean {
-  return permission(role, kind === 'target' ? 'change_targets' : kind === 'life_target' ? 'edit_life_targets' : 'manage_users') === 'approve';
+export function canDecide(who: Who, kind: RequestKind): boolean {
+  if (typeof who === 'object' && who.fullAccess) return true;
+  return permission(who, kind === 'target' ? 'change_targets' : kind === 'life_target' ? 'edit_life_targets' : 'manage_users') === 'approve';
 }
 
 export function decideRequest(
@@ -172,8 +173,8 @@ export function decideRequest(
   const r = state.requests.find((x) => x.id === id);
   if (!r) return no('Request not found.');
   if (r.status !== 'pending') return no(`This request is already ${REQUEST_STATUS_LABELS[r.status].toLowerCase()}.`);
-  if (!canDecide(ctx.actor.role, r.kind)) return no('Only a superintendent can approve or reject this.');
-  if (r.requestedBy === ctx.actor.userId) return no('Nobody approves their own request. Another superintendent needs to decide.');
+  if (!canDecide(ctx.actor, r.kind)) return no('Only a superintendent can approve or reject this.');
+  if (r.requestedBy === ctx.actor.userId && !ctx.actor.fullAccess) return no('Nobody approves their own request. Another superintendent needs to decide.');
   if (decision === 'reject' && !note.trim()) return no('Say why it is rejected.');
 
   const done: ApprovalRequest = { ...r, status: decision === 'approve' ? 'approved' : 'rejected', decidedBy: ctx.actor.userId, decidedAt: ctx.now, decisionNote: note.trim() || undefined };
@@ -233,14 +234,14 @@ export function addRequestNote(ctx: ConsoleContext, requests: ApprovalRequest[],
   const r = requests.find((x) => x.id === id);
   if (!r) return no('Request not found.');
   if (r.status !== 'pending') return no('The request is closed.');
-  if (r.requestedBy !== ctx.actor.userId && !canDecide(ctx.actor.role, r.kind)) return no('Only the person who asked and the approvers can add notes.');
+  if (r.requestedBy !== ctx.actor.userId && !canDecide(ctx.actor, r.kind)) return no('Only the person who asked and the approvers can add notes.');
   if (!text.trim()) return no('Write the question or answer.');
   const next: ApprovalRequest = { ...r, notes: [...r.notes, { by: ctx.actor.userId, at: ctx.now, text: text.trim() }] };
   return { ok: true, records: requests.map((x) => (x.id === id ? next : x)), audit: [audit(ctx, 'note', id, r, next, text.trim())], warnings: [] };
 }
 
 /** Requests waiting for this person: to decide, or to answer a question on their own. */
-export function waitingOn(requests: ApprovalRequest[], userId: string, role: Role): ApprovalRequest[] {
+export function waitingOn(requests: ApprovalRequest[], userId: string, role: Who): ApprovalRequest[] {
   return requests.filter((r) => r.status === 'pending' && (
     (canDecide(role, r.kind) && r.requestedBy !== userId) ||
     (r.requestedBy === userId && r.notes.length > 0 && r.notes.at(-1)!.by !== userId)

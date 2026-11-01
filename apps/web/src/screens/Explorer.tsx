@@ -3,6 +3,7 @@
 // charts, suggested findings, saved views. Everything lives in the page link.
 
 import {
+  hasRole,
   DIMENSION_LABELS, DURATION_LABELS, MEASURE_LABELS, analyse, breakdown, can, compareSlices, controlChart, eventRows, filterFromQuery,
   filterToQuery, findings, heatMap, retireView, saveView, sliceOperatingHours, spread, toCsv, visibleViews, weeklyTrend,
   type AnalyticsFilter, type Dimension, type Duration, type EventRow, type FilteredAnalysis, type Measure,
@@ -430,7 +431,7 @@ function Views({ query }: { query: string }) {
               <li key={v.id}>
                 <a href={`#/explore${v.query ? `?${v.query}` : ''}`}>{v.name}</a>
                 <span className="small muted"> · {v.shared ? 'shared' : 'only me'} · {app.userName(v.createdBy)}</span>
-                {((v.createdBy === app.actor.userId && canSave) || (v.shared && app.actor.role === 'superintendent')) && <> <button className="linklike small" onClick={() => retire(v.id)}>Retire</button></>}
+                {((v.createdBy === app.actor.userId && canSave) || (v.shared && hasRole(app.actor, 'superintendent'))) && <> <button className="linklike small" onClick={() => retire(v.id)}>Retire</button></>}
               </li>
             ))}
           </ul>

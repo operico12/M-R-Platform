@@ -102,7 +102,7 @@ export function submitRound(ctx: ConsoleContext, form: InspectionForm, round: Ro
 
 export function voidRound(ctx: ConsoleContext, round: Round, inspections: Inspection[], reason: string): RoundResult | Fail {
   if (round.status !== 'submitted') return no('Only a submitted round can be voided.');
-  if (permission(ctx.actor.role, 'sign_off_inspections') !== 'yes') return no('A supervisor or superintendent voids a round.');
+  if (permission(ctx.actor, 'sign_off_inspections') !== 'yes') return no('A supervisor or superintendent voids a round.');
   if (!reason.trim()) return no('Give a reason.');
   const mine = inspections.filter((i) => i.roundId === round.id && i.status !== 'voided');
   const out: Inspection[] = [];

@@ -7,7 +7,7 @@ import { percentile } from './calculators.js';
 import type { ConsoleContext } from './console.js';
 import { flagSystem, flagWhere, type FilteredAnalysis } from './filters.js';
 import { computeKpis, timeToFirstWrench, stageHours, type KpiInput } from './kpis.js';
-import { can } from './permissions.js';
+import { can, hasRole } from './permissions.js';
 import { shiftAt, type ShiftCalendar } from './time.js';
 import type { Asset, AuditEntry, Iso, ShopLine, Stage } from './types.js';
 
@@ -334,7 +334,7 @@ export function retireView(ctx: ConsoleContext, list: SavedView[], id: string, r
   const v = list.find((x) => x.id === id);
   if (!v || v.retiredAt) return { ok: false, errors: ['Not found.'] };
   const mine = v.createdBy === ctx.actor.userId;
-  if (!(mine && can(ctx.actor, 'run_analyses')) && !(v.shared && ctx.actor.role === 'superintendent')) return { ok: false, errors: ['Only the author retires a view (or a superintendent, for a shared one).'] };
+  if (!(mine && can(ctx.actor, 'run_analyses')) && !(v.shared && hasRole(ctx.actor, 'superintendent'))) return { ok: false, errors: ['Only the author retires a view (or a superintendent, for a shared one).'] };
   if (!reason.trim()) return { ok: false, errors: ['Give a reason.'] };
   const after = { ...v, retiredBy: ctx.actor.userId, retiredAt: ctx.now, retiredReason: reason.trim() };
   return { ok: true, records: list.map((x) => (x.id === id ? after : x)), audit: [{ at: ctx.now, userId: ctx.actor.userId, action: 'retire_view', entity: 'view', entityId: id, before: v, after, reason: reason.trim() }], warnings: [] };

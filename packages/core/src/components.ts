@@ -5,7 +5,7 @@
 
 import { DateTime } from 'luxon';
 import type { ConsoleContext } from './console.js';
-import { can, permission } from './permissions.js';
+import { can, hasRole, permission } from './permissions.js';
 import { HOUR_MS, ms } from './time.js';
 import type { Asset, AssetLifecycleInterval, AuditEntry, Iso, SmuReading } from './types.js';
 import { weibull, type LifeTime, type WeibullFit } from './calculators.js';
@@ -326,7 +326,7 @@ export interface LifeTargetInput { model: string; kind: ComponentKind; hours: nu
 
 /** Checks and builds a target life. A reliability engineer asks for it and a superintendent approves it (proposeLifeTarget, decideRequest). */
 export function setLifeTarget(ctx: ConsoleContext, targets: LifeTarget[], input: LifeTargetInput): Ok<LifeTarget> | No {
-  const p = permission(ctx.actor.role, 'edit_life_targets');
+  const p = permission(ctx.actor, 'edit_life_targets');
   if (p !== 'propose' && p !== 'approve') return no('Your role cannot set target life.');
   const e: string[] = [];
   if (!input.model.trim()) e.push('Pick the model.');
@@ -391,7 +391,7 @@ const clean = (s?: string) => (s?.trim() ? s.trim() : undefined);
 
 function costCheck(ctx: ConsoleContext, cost: number | undefined, e: string[]) {
   if (cost === undefined) return;
-  if (permission(ctx.actor.role, 'view_cost') !== 'yes') e.push('Only cost roles enter costs.');
+  if (permission(ctx.actor, 'view_cost') !== 'yes') e.push('Only cost roles enter costs.');
   else if (!(Number.isFinite(cost) && cost >= 0)) e.push('Cost must be 0 or more.');
 }
 function warrantyCheck(i: { warrantyHours?: number; warrantyMonths?: number }, e: string[]) {
@@ -514,7 +514,7 @@ export function recordEvent(ctx: ConsoleContext, data: ComponentData, componentI
       if (input.claim && input.claim !== 'opened' && !st.claimDue) e.push('There is no warranty claim waiting on this component.');
       if (input.claim === 'opened' && !st.claimDue) w.push('This failure was not under warranty by the recorded limits.');
       if (input.claim === 'opened' && opened && st.claimDue) e.push('A claim is already open.');
-      if (input.claim === 'accepted' && input.cost === undefined && permission(ctx.actor.role, 'view_cost') === 'yes') w.push('Enter the amount recovered, so cost per hour is right.');
+      if (input.claim === 'accepted' && input.cost === undefined && permission(ctx.actor, 'view_cost') === 'yes') w.push('Enter the amount recovered, so cost per hour is right.');
       Object.assign(ev, { claim: input.claim, reference: clean(input.reference), cost: input.cost });
       break;
     }
@@ -535,7 +535,7 @@ export function recordEvent(ctx: ConsoleContext, data: ComponentData, componentI
 export function voidEvent(ctx: ConsoleContext, data: ComponentData, eventId: string, reason: string): RecordResult {
   const ev = data.events.find((x) => x.id === eventId);
   if (!ev || ev.voidedAt) return no('Event not found.');
-  if (!(ev.enteredBy === ctx.actor.userId && can(ctx.actor, 'record_components')) && ctx.actor.role !== 'superintendent') return no('Only the person who entered it, or a superintendent, voids an event.');
+  if (!(ev.enteredBy === ctx.actor.userId && can(ctx.actor, 'record_components')) && !hasRole(ctx.actor, 'superintendent')) return no('Only the person who entered it, or a superintendent, voids an event.');
   const latest = data.events.filter((x) => x.componentId === ev.componentId && active(x)).sort(byTime).at(-1);
   if (latest?.id !== ev.id) return no('Only the latest event of a component can be voided. Void the later ones first.');
   if (!reason.trim()) return no('Give a reason.');

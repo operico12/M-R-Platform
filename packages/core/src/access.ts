@@ -75,6 +75,14 @@ export function testedRole(ownRole: Role, testRole: Role | null | undefined, s: 
   return ownRole;
 }
 
+/**
+ * Admin full control (docs/access.md section 4). Mirrors admin_full(): own role Admin (after the
+ * two-step check), test mode on, and no other role picked. The app sets Actor.fullAccess from it.
+ */
+export function adminFull(ownRole: Role, testRole: Role | null | undefined, s: AccessSettings, mfaPassed: boolean): boolean {
+  return testedRole(ownRole, testRole, s, mfaPassed) === 'admin' && mayTestAs(ownRole, s);
+}
+
 // ---------- sessions ----------
 
 export type SessionCheck = 'ok' | 'too_old' | 'idle';

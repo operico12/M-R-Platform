@@ -170,23 +170,43 @@ export function permissionsFor(role: Role): Array<{ action: Action; label: strin
     .filter((x) => x.permission !== 'no');
 }
 
-export function permission(role: Role, action: Action): Permission {
-  return MATRIX[action][role] ?? 'no';
+/** A role, or a person (whose full control in test mode passes every check). */
+export type Who = Role | Actor;
+const isFull = (who: Who) => typeof who === 'object' && !!who.fullAccess;
+const roleOf = (who: Who): Role => (typeof who === 'object' ? who.role : who);
+
+const RANK: Permission[] = ['no', 'request', 'propose', 'approve', 'area', 'yes'];
+
+/**
+ * How a role or person may do an action. Admin full control gets the strongest permission any role
+ * has for it, so approval steps still work (a target is still asked for and approved, by the Admin).
+ */
+export function permission(who: Who, action: Action): Permission {
+  if (isFull(who)) {
+    const best = Object.values(MATRIX[action]).reduce<Permission>((m, p) => (RANK.indexOf(p!) > RANK.indexOf(m) ? p! : m), 'no');
+    return best === 'area' ? 'yes' : best;
+  }
+  return MATRIX[action][roleOf(who)] ?? 'no';
+}
+
+/** True if the person holds one of the roles, or has Admin full control in test mode. */
+export function hasRole(actor: Actor, ...roles: Role[]): boolean {
+  return !!actor.fullAccess || roles.includes(actor.role);
 }
 
 export function inScope(actor: Actor, area: string | undefined): boolean {
-  return actor.scope.includes('*') || (area !== undefined && actor.scope.includes(area));
+  return !!actor.fullAccess || actor.scope.includes('*') || (area !== undefined && actor.scope.includes(area));
 }
 
 /** True if the actor can perform the action directly (not just propose or request) on something in `area`. */
 export function can(actor: Actor, action: Action, area?: string): boolean {
-  const p = permission(actor.role, action);
+  const p = permission(actor, action);
   if (p === 'yes') return true;
   if (p === 'area') return inScope(actor, area);
   return false;
 }
 
 export function canPropose(actor: Actor, action: Action, area?: string): boolean {
-  const p = permission(actor.role, action);
+  const p = permission(actor, action);
   return (p === 'propose' && inScope(actor, area)) || can(actor, action, area);
 }

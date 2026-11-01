@@ -214,7 +214,7 @@ export function pmsDue(wos: WorkOrder[], now: Iso, tz: string, days = 7): Array<
 
 /** The reliability engineer or superintendent sets these, like targets (plan 11.2 "KPI targets and thresholds"). */
 export function setWorkSettings(ctx: ConsoleContext, current: WorkSettings, next: WorkSettings, reason: string): ConsoleResult<WorkSettings> {
-  if (!['yes', 'propose', 'approve'].includes(permission(ctx.actor.role, 'change_targets'))) return { ok: false, errors: ['Your role cannot change work settings.'] };
+  if (!['yes', 'propose', 'approve'].includes(permission(ctx.actor, 'change_targets'))) return { ok: false, errors: ['Your role cannot change work settings.'] };
   const e: string[] = [];
   if (!Number.isFinite(next.craftHoursPerWeek) || next.craftHoursPerWeek < 0) e.push('Craft hours per week cannot be negative.');
   if (!Number.isInteger(next.pmToleranceDays) || next.pmToleranceDays < 0 || next.pmToleranceDays > 60) e.push('PM tolerance is whole days, 0 to 60.');
