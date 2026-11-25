@@ -45,6 +45,7 @@ import { flagText, liveSuggestion, suggestCodes, workOrderIndex, type Ranked, PL
 import { useMemo, useState } from 'react';
 import { fmtHours, fromLocalInput, hoursSince, locationLabel, siteTime, stageLabel, toLocalInput } from '../format';
 import { useApp } from '../store';
+import { CommentThread } from './FlagComments';
 import { FlagIcon } from './FlagIcon';
 
 
@@ -483,6 +484,11 @@ function OpenFlagPanel({ asset, flag, onDone }: { asset: Asset; flag: DownFlag; 
       </div>
 
       {asset.assetClass !== 'fixed_plant' && <WaitPanel asset={asset} />}
+
+      <section className="fc-panel" aria-label="Flag comments">
+        <div className="wp-head"><strong>Comments</strong><span className="small muted">Stay with this flag and can be read later, after the unit is back up.</span></div>
+        <CommentThread asset={asset} flag={flag} />
+      </section>
 
       <Result r={r} />
 

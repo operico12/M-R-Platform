@@ -8,6 +8,9 @@ import {
   DEFAULT_STANDBY_REASONS,
   endStandbyForDown,
   settleWaits,
+  type CommentContext,
+  type CommentResult,
+  type FlagComment,
   DEFAULT_WAIT_KINDS,
   type WaitContext,
   type WaitResult,
@@ -69,7 +72,8 @@ import {
 import { demoImprovements } from './data/demo-improve';
 import { demoStandby } from './data/demo-standby';
 import { demoWaits } from './data/demo-waits';
-import { saveLines, saveClosures, addSiteRemote, loadAccessRequests, decideAccessRemote, setTestRoleRemote, loadApiKeys, createApiKeyRemote, revokeApiKeyRemote, loadSnapshot, retireSiteRemote, savePlantNodes, saveShutdown, sendRound, saveProcessDelays, saveRunSignals, type PlantData, saveRcmModes, saveJobPlanVersion, saveCmResponse, saveOilSamples, saveComponentRecord, saveViewRecord, saveAnalysisRecord, loadPhoto, saveForms, sendInspection, sendPhoto, SendError, saveAlertAnswer, saveDecision, saveRequests, saveFlags, saveStandby, saveWaits, saveRecords, saveSetting, saveTarget, saveTaskStatus, type Loaded } from './data/remote';
+import { demoComments } from './data/demo-comments';
+import { saveLines, saveClosures, addSiteRemote, loadAccessRequests, decideAccessRemote, setTestRoleRemote, loadApiKeys, createApiKeyRemote, revokeApiKeyRemote, loadSnapshot, retireSiteRemote, savePlantNodes, saveShutdown, sendRound, saveProcessDelays, saveRunSignals, type PlantData, saveRcmModes, saveJobPlanVersion, saveCmResponse, saveOilSamples, saveComponentRecord, saveViewRecord, saveAnalysisRecord, loadPhoto, saveForms, sendInspection, sendPhoto, SendError, saveAlertAnswer, saveDecision, saveRequests, saveFlags, saveStandby, saveWaits, saveComments, saveRecords, saveSetting, saveTarget, saveTaskStatus, type Loaded } from './data/remote';
 import { demoProjects } from './data/demo-projects';
 import { demoForms, demoInspections } from './data/demo-inspections';
 import { DEMO_SITES, demoFleet, type SiteChoice } from './data/sites';
@@ -228,6 +232,9 @@ export interface AppState {
   waits: WaitTag[];
   waitKinds: WaitKind[];
   runWaits: (asset: Asset, cmd: (ctx: WaitContext) => WaitResult) => WaitResult;
+  /** Comments on down flags and wait tags (docs/flag-comments.md). */
+  comments: FlagComment[];
+  runComments: (asset: Asset, cmd: (ctx: CommentContext) => CommentResult) => CommentResult;
   lastSync: string;
   theme: 'light' | 'dark';
   setTheme: (t: 'light' | 'dark') => void;
@@ -305,6 +312,9 @@ export function AppProvider({ children, live, onReload, onSignOut, sites = DEMO_
   const [waits, setWaitsState] = useState<WaitTag[]>(() => live?.waits ?? demoWaits(ds));
   const waitsRef = useRef(waits);
   const setWaits = useCallback((next: WaitTag[]) => { waitsRef.current = next; setWaitsState(next); }, []);
+  const [comments, setCommentsState] = useState<FlagComment[]>(() => live?.comments ?? demoComments(ds, waitsRef.current));
+  const commentsRef = useRef(comments);
+  const setComments = useCallback((next: FlagComment[]) => { commentsRef.current = next; setCommentsState(next); }, []);
   // The demo plant, made once: its structure, flags and shutdowns, and its route forms, rounds and stop inspections.
   const [demoPlant] = useState(() => (live ? null : generatePlant({ seed: 42, days: 120, end: Date.parse(ds.generatedAt), timeZone: ds.site.timeZone, tenantId: ds.tenantId, siteId: ds.site.id, people: { technician: 'demo-technician', supervisor: 'demo-supervisor' } })));
   const [plant, setPlant] = useState<PlantData>(() => live?.plant ?? demoPlant!);
@@ -438,6 +448,27 @@ export function AppProvider({ children, live, onReload, onSignOut, sites = DEMO_
       return r;
     },
     [actor, live, failed, setWaits],
+  );
+
+  const runComments = useCallback(
+    (asset: Asset, cmd: (ctx: CommentContext) => CommentResult): CommentResult => {
+      const nowIso = new Date().toISOString();
+      const all = commentsRef.current;
+      const mine = all.filter((x) => x.unitId === asset.id);
+      const r = cmd({
+        now: nowIso, actor, asset, unitComments: mine, newId,
+        unitFlags: flagsRef.current.filter((f) => f.unitId === asset.id), unitWaits: waitsRef.current.filter((w) => w.unitId === asset.id),
+      });
+      if (r.ok) {
+        const changed = r.comments.filter((x) => !mine.includes(x));
+        setComments([...all.filter((x) => x.unitId !== asset.id), ...r.comments]);
+        setAudit((prev) => [...r.audit, ...prev]);
+        setNow(nowIso);
+        if (live) saveComments(siteId, changed, r.audit).catch(failed);
+      }
+      return r;
+    },
+    [actor, live, failed, setComments],
   );
 
   const runStandby = useCallback(
@@ -1294,7 +1325,7 @@ export function AppProvider({ children, live, onReload, onSignOut, sites = DEMO_
     if (!live) { setRole(r); return null; }
     try { await setTestRoleRemote(siteId, r); onReload?.(); return null; } catch (e) { return e instanceof Error ? e.message : String(e); }
   }, [live, siteId, onReload]);
-  const value: AppState = { runLines, runClosures, ownRole, setTestRole: setTestRoleCmd, accessSettings, runAccessSettings, accessRequests, loadAccessRequests: loadAccessRequestsCmd, decideAccess: decideAccessCmd, apiKeys, loadApiKeys: loadApiKeysCmd, createApiKey: createApiKeyCmd, revokeApiKey: revokeApiKeyCmd, importSource, importMapping, runImportSource, sites, switchSite: (id: string) => onSwitchSite?.(id), snapshot, addSite: addSiteCmd, retireSite: retireSiteCmd, ds, forms, runForms, inspections, drafts, saveDraft, discardDraft, runInspection, outbox, sendOutbox: () => void sendOutbox(true), dropOutboxItem, photo, workSettings, runWorkSettings, alertSettings, runAlertSettings, alertAnswers, runAlertAnswer, analyses, runAnalysis, views, runView, components, componentEvents, lifeTargets, runComponents, oilSamples, cmResponses, conditionSettings, runSamples, runResponse, runConditionSettings, rcmModes, jobPlanVersions, rcmSettings, runRcm, runJobPlan, runRcmSettings, sparesSettings, runSparesSettings, assistSettings, runAssistSettings, suggester, plant, plantSettings, runPlantSettings, runDelay, runClassify, addSignals, runNode, runShutdown, runShutdownFlow, rounds, roundDrafts, beginRound, saveRoundDraft, discardRound, runRound, ruleAlerts: ruleAlertList, requests, runRequest, decide, actions: improve.actions, rcas: improve.rcas, projects: improve.projects, runImprove, people, userName, targets, targetOf, targetList, users, codes, runConsole, mode: live ? 'live' : 'demo', syncError, clearSyncError: () => setSyncError(null), signOut: onSignOut, importRuns, applyImport, newId, flags, standby, standbyReasons: DEFAULT_STANDBY_REASONS, runStandby, waits, waitKinds: DEFAULT_WAIT_KINDS, runWaits, audit, rules, now, actor, setRole, run, lastSync: ds.generatedAt, theme, setTheme };
+  const value: AppState = { runLines, runClosures, ownRole, setTestRole: setTestRoleCmd, accessSettings, runAccessSettings, accessRequests, loadAccessRequests: loadAccessRequestsCmd, decideAccess: decideAccessCmd, apiKeys, loadApiKeys: loadApiKeysCmd, createApiKey: createApiKeyCmd, revokeApiKey: revokeApiKeyCmd, importSource, importMapping, runImportSource, sites, switchSite: (id: string) => onSwitchSite?.(id), snapshot, addSite: addSiteCmd, retireSite: retireSiteCmd, ds, forms, runForms, inspections, drafts, saveDraft, discardDraft, runInspection, outbox, sendOutbox: () => void sendOutbox(true), dropOutboxItem, photo, workSettings, runWorkSettings, alertSettings, runAlertSettings, alertAnswers, runAlertAnswer, analyses, runAnalysis, views, runView, components, componentEvents, lifeTargets, runComponents, oilSamples, cmResponses, conditionSettings, runSamples, runResponse, runConditionSettings, rcmModes, jobPlanVersions, rcmSettings, runRcm, runJobPlan, runRcmSettings, sparesSettings, runSparesSettings, assistSettings, runAssistSettings, suggester, plant, plantSettings, runPlantSettings, runDelay, runClassify, addSignals, runNode, runShutdown, runShutdownFlow, rounds, roundDrafts, beginRound, saveRoundDraft, discardRound, runRound, ruleAlerts: ruleAlertList, requests, runRequest, decide, actions: improve.actions, rcas: improve.rcas, projects: improve.projects, runImprove, people, userName, targets, targetOf, targetList, users, codes, runConsole, mode: live ? 'live' : 'demo', syncError, clearSyncError: () => setSyncError(null), signOut: onSignOut, importRuns, applyImport, newId, flags, standby, standbyReasons: DEFAULT_STANDBY_REASONS, runStandby, waits, waitKinds: DEFAULT_WAIT_KINDS, runWaits, comments, runComments, audit, rules, now, actor, setRole, run, lastSync: ds.generatedAt, theme, setTheme };
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
 

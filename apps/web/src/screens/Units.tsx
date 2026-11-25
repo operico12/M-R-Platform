@@ -1,7 +1,8 @@
 // Unit list and unit page (plan 4.2, Figure 3).
 
-import { buildEvents, can, computeKpis, flagDownHours, openWorkOrders, stageHours, timeToFirstWrench, workOrdersForFlag, type Asset } from '@mr/core';
-import { useMemo, useState } from 'react';
+import { buildEvents, can, commentCounts, computeKpis, flagDownHours, openWorkOrders, stageHours, timeToFirstWrench, workOrdersForFlag, type Asset } from '@mr/core';
+import { Fragment, useMemo, useState } from 'react';
+import { CommentThread } from '../components/FlagComments';
 import { FlagSheet } from '../components/FlagSheet';
 import { STATUS_WORD, fmtHours, fmtNum, fmtPct, siteTime, unitStatus } from '../format';
 import { newHref } from '../improve/describe';
@@ -56,6 +57,8 @@ export function UnitPage({ id }: { id: string }) {
   const tz = app.ds.site.timeZone;
   const a = app.ds.assets.find((x) => x.id === id);
   const [sheet, setSheet] = useState<Asset | null>(null);
+  const [commentsFor, setCommentsFor] = useState<string | null>(null);
+  const commentCount = useMemo(() => commentCounts(app.comments), [app.comments]);
   if (!a) return <p>Unit not found.</p>;
   const p = { from: new Date(Date.parse(app.now) - 28 * DAY).toISOString(), to: app.now };
   const input = { flags: app.flags, smu: app.ds.smu, lifecycle: app.ds.lifecycle, rules: app.rules, now: app.now, standby: app.standby };
@@ -140,7 +143,7 @@ export function UnitPage({ id }: { id: string }) {
         <h3>Down flags</h3>
         <div className="table-wrap">
           <table>
-            <thead><tr><th>Type</th><th>Reason / system</th><th>Start</th><th>End</th><th className="num">Down</th><th className="num">In repair</th><th className="num">Waiting</th><th className="num">To 1st wrench</th><th>Work order</th><th>State</th></tr></thead>
+            <thead><tr><th>Type</th><th>Reason / system</th><th>Start</th><th>End</th><th className="num">Down</th><th className="num">In repair</th><th className="num">Waiting</th><th className="num">To 1st wrench</th><th>Work order</th><th>State</th><th className="num">Comments</th></tr></thead>
             <tbody>
               {flags.slice(0, 60).map((f) => {
                 const all = { from: f.start, to: f.end ?? app.now };
@@ -149,8 +152,11 @@ export function UnitPage({ id }: { id: string }) {
                 const tot = flagDownHours(f, all, app.now);
                 const ev = events.find((e) => e.flags[0]!.id === f.id);
                 const ttfw = ev ? timeToFirstWrench(ev) : null;
+                const waitsOn = app.waits.filter((w) => w.downFlagId === f.id && w.state !== 'voided');
+                const nComments = commentCount.get(f.id) ?? 0;
                 return (
-                  <tr key={f.id} style={f.state === 'voided' ? { opacity: 0.5, textDecoration: 'line-through' } : undefined}>
+                  <Fragment key={f.id}>
+                  <tr style={f.state === 'voided' ? { opacity: 0.5, textDecoration: 'line-through' } : undefined}>
                     <td><span className={`status ${f.type === 'scheduled' ? 'sched' : 'down'}`}>{f.type === 'scheduled' ? '▲' : '■'}</span> {f.linkKind === 'type_switch' ? '↳ ' : ''}{f.type}</td>
                     <td>{f.release?.system ?? f.reasonCode}{f.release?.component ? ` · ${f.release.component}` : ''}{f.release?.failureModes?.length ? ` · ${f.release.failureModes.join(', ')}` : ''}</td>
                     <td>{siteTime(f.start, tz, true)}</td>
@@ -161,7 +167,27 @@ export function UnitPage({ id }: { id: string }) {
                     <td className="num">{ttfw === null ? '—' : fmtHours(ttfw)}</td>
                     <td>{f.workOrders.map((n) => `${n}${woStatus(n) ? ` (${woStatus(n)})` : ''}`).join(', ')}</td>
                     <td>{f.state}{ev && !ev.isFailure && f.type === 'unscheduled' && !f.linkKind ? ' · minor stop' : ''}</td>
+                    <td className="num">
+                      {f.state === 'voided' ? '—' : (
+                        <button type="button" className="linkish" aria-expanded={commentsFor === f.id} onClick={() => setCommentsFor(commentsFor === f.id ? null : f.id)}>
+                          {nComments} {commentsFor === f.id ? '▴' : '▾'}
+                        </button>
+                      )}
+                    </td>
                   </tr>
+                  {commentsFor === f.id && (
+                    <tr className="fc-row">
+                      <td colSpan={11}>
+                        {waitsOn.length > 0 && (
+                          <p className="small muted" style={{ margin: '0 0 6px' }}>
+                            Waits during this flag: {waitsOn.map((w) => `${app.waitKinds.find((k) => k.code === w.kind)?.label ?? w.kind} ${siteTime(w.start, tz, true)} – ${w.end ? siteTime(w.end, tz, true) : 'now'} (${fmtHours(((w.end ? Date.parse(w.end) : Date.parse(app.now)) - Date.parse(w.start)) / 3_600_000)})`).join('; ')}
+                          </p>
+                        )}
+                        <CommentThread asset={a} flag={f} />
+                      </td>
+                    </tr>
+                  )}
+                  </Fragment>
                 );
               })}
             </tbody>
