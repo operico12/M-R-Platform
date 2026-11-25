@@ -40,3 +40,22 @@ Permission `edit_shop_structure` (Admin; a reliability engineer may propose). On
 - `app_save_closures(p_site, p_rows)`: a closure is inserted, then may only be ended once.
 - Unchanged: `site_role()` decides who may write (Admin for lines; supervisor, superintendent, Admin
   for closures), audit triggers record every change, and deletes are refused.
+
+## 4. Usage over time
+
+Ope, 8 Dec 2026: see overall line (bay) usage by month, by year and over any period, not only the last 7 days on the tile.
+Code: `packages/core/src/line-usage.ts` (tested in `test/line-usage.test.ts`), KPI-047.
+
+- **Period and grouping.** The page picks a period (this month, last month, year to date, last 12 months, or
+  two dates) and a grouping: day, week (Monday start), month or year. Every boundary is a midnight in the
+  site time zone (rule 7), never the viewer's. The first and last groups are cut to the period.
+- **Usage** is KPI-009 for each group: occupied line-hours ÷ (open line-hours × capacity), closed time excluded.
+  Occupied time is the time a unit's location is that line.
+- **Worked and idle.** Of the occupied hours, the part where the unit's stage was In repair is *worked*; the rest
+  is *idle in line* (waiting for parts, labour, release and so on). The split shows capacity that is occupied
+  but not being used. It follows the stage, never a typed number (rule 4).
+- **Visits** = separate stays on the line that overlap the period; **units** = distinct units that were on it.
+- **Fleet row.** Σ occupied ÷ Σ (open × capacity) over the lines shown, so a bigger line weighs more.
+- **Retired lines** are shown only for groups in which they were used; their history stays (rule 5).
+- **Export.** The table downloads as CSV, one row per line and group.
+

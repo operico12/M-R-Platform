@@ -10,6 +10,7 @@ import {
 import { useMemo, useState } from 'react';
 import { FlagIcon } from '../components/FlagIcon';
 import { FlagSheet } from '../components/FlagSheet';
+import { LineUsage } from '../components/LineUsage';
 import { fmtHours, fmtPct, hoursSince, locationLabel, siteTime } from '../format';
 import { useApp } from '../store';
 
@@ -130,6 +131,8 @@ export function ShopLines() {
           </div>
         )}
       </section>
+
+      <LineUsage />
 
       {open && <FlagSheet asset={open} onClose={() => setOpen(null)} />}
     </div>
