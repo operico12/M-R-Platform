@@ -2,7 +2,7 @@
 
 import { buildEvents, can, commentCounts, computeKpis, flagDownHours, openWorkOrders, stageHours, timeToFirstWrench, workOrdersForFlag, type Asset } from '@mr/core';
 import { Fragment, useMemo, useState } from 'react';
-import { CommentThread } from '../components/FlagComments';
+import { FlagDetail } from '../components/FlagHistoryPanel';
 import { FlagSheet } from '../components/FlagSheet';
 import { STATUS_WORD, fmtHours, fmtNum, fmtPct, siteTime, unitStatus } from '../format';
 import { newHref } from '../improve/describe';
@@ -143,7 +143,7 @@ export function UnitPage({ id }: { id: string }) {
         <h3>Down flags</h3>
         <div className="table-wrap">
           <table>
-            <thead><tr><th>Type</th><th>Reason / system</th><th>Start</th><th>End</th><th className="num">Down</th><th className="num">In repair</th><th className="num">Waiting</th><th className="num">To 1st wrench</th><th>Work order</th><th>State</th><th className="num">Comments</th></tr></thead>
+            <thead><tr><th>Type</th><th>Reason / system</th><th>Start</th><th>End</th><th className="num">Down</th><th className="num">In repair</th><th className="num">Waiting</th><th className="num">To 1st wrench</th><th>Work order</th><th>State</th><th className="num">Detail</th></tr></thead>
             <tbody>
               {flags.slice(0, 60).map((f) => {
                 const all = { from: f.start, to: f.end ?? app.now };
@@ -152,7 +152,6 @@ export function UnitPage({ id }: { id: string }) {
                 const tot = flagDownHours(f, all, app.now);
                 const ev = events.find((e) => e.flags[0]!.id === f.id);
                 const ttfw = ev ? timeToFirstWrench(ev) : null;
-                const waitsOn = app.waits.filter((w) => w.downFlagId === f.id && w.state !== 'voided');
                 const nComments = commentCount.get(f.id) ?? 0;
                 return (
                   <Fragment key={f.id}>
@@ -178,12 +177,7 @@ export function UnitPage({ id }: { id: string }) {
                   {commentsFor === f.id && (
                     <tr className="fc-row">
                       <td colSpan={11}>
-                        {waitsOn.length > 0 && (
-                          <p className="small muted" style={{ margin: '0 0 6px' }}>
-                            Waits during this flag: {waitsOn.map((w) => `${app.waitKinds.find((k) => k.code === w.kind)?.label ?? w.kind} ${siteTime(w.start, tz, true)} – ${w.end ? siteTime(w.end, tz, true) : 'now'} (${fmtHours(((w.end ? Date.parse(w.end) : Date.parse(app.now)) - Date.parse(w.start)) / 3_600_000)})`).join('; ')}
-                          </p>
-                        )}
-                        <CommentThread asset={a} flag={f} />
+                        <FlagDetail asset={a} flag={f} commentCount={nComments} />
                       </td>
                     </tr>
                   )}
