@@ -578,3 +578,24 @@ a.chip[aria-pressed='true'] { color: var(--brand-ink); }
 .wp-void { grid-column: 1 / -1; gap: 8px; }
 .wp-add summary { cursor: pointer; font-weight: 600; min-height: 32px; display: flex; align-items: center; }
 @media (max-width: 520px) { .wp-list li { grid-template-columns: minmax(0, 1fr) auto; } .wp-act { grid-column: 1 / -1; } }
+
+/* Analysis: system and component panel (docs/analysis-hierarchy.md) */
+.an-split { display: grid; grid-template-columns: 280px minmax(0, 1fr); gap: var(--s3); align-items: start; }
+@media (max-width: 900px) { .an-split { grid-template-columns: 1fr; } }
+.hp { border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); overflow: hidden; }
+.hp-min { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 10px; border-bottom: 1px solid var(--border); }
+.hp-min input { width: 72px; min-height: 36px; }
+.hp-hidden { padding: 8px 10px; border-bottom: 1px dashed var(--border); display: grid; gap: 4px; }
+.hp-head { display: flex; justify-content: space-between; padding: 6px 10px; background: var(--surface-2); text-transform: uppercase; letter-spacing: 0.06em; font-size: 11px; }
+.hp-list, .hp-sub { list-style: none; margin: 0; padding: 0; }
+.hp-list { max-height: 640px; overflow: auto; }
+.hp-sub { background: var(--bg); }
+.hp-row { display: flex; align-items: center; gap: 4px; width: 100%; padding: 6px 8px 6px 4px; border: 0; border-bottom: 1px solid var(--border); background: transparent; color: inherit; font: inherit; text-align: left; }
+.hp-row.on { background: color-mix(in srgb, var(--brand) 12%, transparent); font-weight: 600; }
+.hp-row:hover { background: color-mix(in srgb, var(--brand) 8%, transparent); }
+button.hp-row { justify-content: space-between; padding-left: 10px; cursor: pointer; }
+.hp-caret, .hp-x { border: 0; background: transparent; color: var(--text-2); cursor: pointer; padding: 2px 6px; min-height: 28px; }
+.hp-x { opacity: 0.5; }
+.hp-row:hover .hp-x, .hp-x:focus-visible { opacity: 1; }
+.hp-name { flex: 1; min-width: 0; border: 0; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; padding: 2px 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hp-sub .hp-name { padding-left: 24px; }

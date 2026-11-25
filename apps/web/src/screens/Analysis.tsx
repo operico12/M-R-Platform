@@ -1,10 +1,11 @@
 // Downtime analysis (MVP screen 3, plan 7.5 and 7.6): Pareto and trend for any
 // slice of the data, every number drilling down to the events behind it.
 
-import { EMPTY_FILTER, STAGE_LABELS, can, analyse, flagDownHours, filterFromQuery, filterToQuery, flagSystem, flagWhere, paretoOf, toCsv, weeklyTrend, type AnalyticsFilter, type ParetoKey, type Stage } from '@mr/core';
+import { EMPTY_FILTER, STAGE_LABELS, can, analyse, failureHierarchy, minHoursRows, withoutHidden, flagDownHours, filterFromQuery, filterToQuery, flagSystem, flagWhere, paretoOf, toCsv, weeklyTrend, type AnalyticsFilter, type ParetoKey, type Stage } from '@mr/core';
 import { useMemo, useState } from 'react';
 import { Bar, CartesianGrid, ComposedChart, Line, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { FilterBar } from '../components/FilterBar';
+import { HierarchyPanel } from '../components/HierarchyPanel';
 import { ReliabilityViews } from '../components/ReliabilityViews';
 import { fmtHours, fmtNum, fmtPct, siteTime } from '../format';
 import { newHref } from '../improve/describe';
@@ -28,7 +29,12 @@ export function Analysis({ query }: { query: string }) {
     () => analyse({ assets: app.ds.assets, flags: app.flags, smu: app.ds.smu, lifecycle: app.ds.lifecycle, rules: app.rules, now: app.now, calendar: app.ds.calendar, timeZone: tz }, filter),
     [app.ds, app.flags, app.rules, app.now, filter],
   );
-  const pareto = useMemo(() => paretoOf(a, by, unitName).slice(0, 15), [a, by]);
+  // View settings for the Pareto and jack-knife only (docs/analysis-hierarchy.md): not in the link, not saved.
+  const [hidden, setHidden] = useState<ReadonlySet<string>>(() => new Set());
+  const [minHours, setMinHours] = useState(0);
+  const av = useMemo(() => withoutHidden(a, hidden), [a, hidden]);
+  const hierarchy = useMemo(() => failureHierarchy(av, minHours), [av, minHours]);
+  const pareto = useMemo(() => minHoursRows(paretoOf(av, by, unitName), minHours).slice(0, 15), [av, by, minHours]);
   const trend = useMemo(() => weeklyTrend(a, tz), [a]);
   // Plan 7.7: actions raised on this same slice (any date range) are marked on the weekly chart
   // in the week they started and the week they were done.
@@ -97,7 +103,22 @@ export function Analysis({ query }: { query: string }) {
       </div>
       <p className="small muted">PA, utilisation and MTBF follow the unit and date filters. The other filters choose which downtime is analysed below.</p>
 
-      <div className="grid two">
+      <div className="an-split">
+        <HierarchyPanel
+          rows={hierarchy}
+          selectedSystem={filter.systems.length === 1 ? filter.systems[0] : undefined}
+          selectedComponent={filter.components.length === 1 ? filter.components[0] : undefined}
+          hidden={hidden}
+          minHours={minHours}
+          onMinHours={setMinHours}
+          onAll={() => setFilter({ ...filter, systems: [], systemsExclude: false, components: [] })}
+          onSystem={(sys) => setFilter({ ...filter, systems: [sys], systemsExclude: false, components: [] })}
+          onComponent={(sys, comp) => setFilter({ ...filter, systems: [sys], systemsExclude: false, components: [comp] })}
+          onHide={(k) => setHidden((h) => new Set(h).add(k))}
+          onRestore={(k) => setHidden((h) => { const n = new Set(h); n.delete(k); return n; })}
+          onClearHidden={() => setHidden(new Set())}
+        />
+        <div className="stack" style={{ minWidth: 0 }}>
         <section className="card">
           <div className="row" style={{ justifyContent: 'space-between' }}>
             <h3 style={{ margin: 0 }}>Pareto</h3>
@@ -120,7 +141,13 @@ export function Analysis({ query }: { query: string }) {
           </div>
           {(by === 'system' || by === 'unit' || by === 'component') && <p className="small muted">Click a bar to filter to it.</p>}
         </section>
+          {(hidden.size > 0 || minHours > 0) && <p className="small muted">Pareto and jack-knife leave out {hidden.size ? `${hidden.size} hidden item${hidden.size === 1 ? '' : 's'}` : ''}{hidden.size && minHours > 0 ? ' and ' : ''}{minHours > 0 ? `groups under ${minHours} h` : ''}. Shares and limits are over what is left. The events table and tiles still include them.</p>}
+        </div>
+      </div>
 
+      <ReliabilityViews a={av} minHours={minHours} onUnit={(id) => setFilter({ ...filter, units: [id] })} onSystem={(sys) => setFilter({ ...filter, systems: [sys], systemsExclude: false })} />
+
+      <div className="grid two">
         <section className="card">
           <h3>By week</h3>
           <div style={{ height: 280 }}>
@@ -160,7 +187,6 @@ export function Analysis({ query }: { query: string }) {
         </section>
       </div>
 
-      <ReliabilityViews a={a} onUnit={(id) => setFilter({ ...filter, units: [id] })} onSystem={(sys) => setFilter({ ...filter, systems: [sys], systemsExclude: false })} />
 
       <section>
         <div className="row" style={{ justifyContent: 'space-between' }}>

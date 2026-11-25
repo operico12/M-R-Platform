@@ -3,7 +3,7 @@
 // as the Pareto above them, so the numbers add up.
 
 import {
-  CODING_CHECK_LABELS, ZONE_LABELS, badActors, buildEvents, codingQuality, failuresOnly, flagSystem, jackKnife, paretoOf, repeatFailures,
+  CODING_CHECK_LABELS, ZONE_LABELS, badActors, buildEvents, codingQuality, failuresOnly, flagSystem, jackKnife, minHoursRows, paretoOf, repeatFailures,
   type CodingCheck, type FilteredAnalysis, type JackKnifeZone, type ParetoKey,
 } from '@mr/core';
 import { useMemo, useState } from 'react';
@@ -16,7 +16,7 @@ const VIEWS: Array<[View, string]> = [['jack', 'Jack-knife'], ['actors', 'Bad ac
 const ZONE_COLOR: Record<JackKnifeZone, string> = { acute_chronic: 'var(--down)', chronic: 'var(--sched)', acute: 'var(--brand)', within: 'var(--stale)' };
 const GROUPS: Array<[ParetoKey, string]> = [['system', 'System'], ['component', 'Component'], ['failure_mode', 'Failure mode'], ['unit', 'Unit']];
 
-export function ReliabilityViews({ a, onUnit, onSystem }: { a: FilteredAnalysis; onUnit: (id: string) => void; onSystem: (s: string) => void }) {
+export function ReliabilityViews({ a, onUnit, onSystem, minHours = 0 }: { a: FilteredAnalysis; onUnit: (id: string) => void; onSystem: (s: string) => void; minHours?: number }) {
   const [view, setView] = useState<View>('jack');
   return (
     <section className="card">
@@ -24,7 +24,7 @@ export function ReliabilityViews({ a, onUnit, onSystem }: { a: FilteredAnalysis;
         <h3 style={{ margin: 0 }}>Reliability</h3>
         <div className="chips">{VIEWS.map(([k, l]) => <button key={k} className="chip" aria-pressed={view === k} onClick={() => setView(k)} style={{ minHeight: 40 }}>{l}</button>)}</div>
       </div>
-      {view === 'jack' && <JackKnife a={a} onSystem={onSystem} />}
+      {view === 'jack' && <JackKnife a={a} onSystem={onSystem} minHours={minHours} />}
       {view === 'actors' && <Actors a={a} onUnit={onUnit} />}
       {view === 'repeats' && <Repeats a={a} />}
       {view === 'coding' && <Coding a={a} />}
@@ -38,11 +38,11 @@ function useRepeats(a: FilteredAnalysis, days: number) {
   return useMemo(() => repeatFailures(a, history, days), [a, history, days]);
 }
 
-function JackKnife({ a, onSystem }: { a: FilteredAnalysis; onSystem: (s: string) => void }) {
+function JackKnife({ a, onSystem, minHours }: { a: FilteredAnalysis; onSystem: (s: string) => void; minHours: number }) {
   const app = useApp();
   const [by, setBy] = useState<ParetoKey>('system');
   const unitName = (id: string) => app.ds.assets.find((x) => x.id === id)?.unitNumber ?? id;
-  const j = useMemo(() => jackKnife(paretoOf(failuresOnly(a), by, unitName)), [a, by]);
+  const j = useMemo(() => jackKnife(minHoursRows(paretoOf(failuresOnly(a), by, unitName), minHours)), [a, by, minHours]);
   const zones = (Object.keys(ZONE_LABELS) as JackKnifeZone[]).filter((z) => j.points.some((p) => p.zone === z));
   if (!j.points.length) return <p className="muted">No downtime in this slice.</p>;
   const maxE = Math.max(...j.points.map((p) => p.events));
