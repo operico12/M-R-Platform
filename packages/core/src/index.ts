@@ -42,3 +42,4 @@ export * from './shop-lines.js';
 export * from './comments.js';
 export * from './flag-history.js';
 export * from './down-list.js';
+export * from './event-history.js';

@@ -30,6 +30,7 @@ export const MENU_PAGES: MenuPage[] = [
   { href: '#/inspections', label: 'Inspections', group: 'assets', words: 'checklists forms rounds' },
   { href: '#/performance', label: 'Performance', group: 'analyse', words: 'kpi pa availability utilisation mtbf mttr' },
   { href: '#/analysis', label: 'Downtime analysis', group: 'analyse', words: 'pareto bad actors' },
+  { href: '#/history', label: 'History', group: 'analyse', words: 'past events downtime records asset historical search export' },
   { href: '#/explore', label: 'Explorer', group: 'analyse', words: 'charts query' },
   { href: '#/rcm', label: 'RCM', group: 'analyse', words: 'fmea failure modes strategy' },
   { href: '#/calc', label: 'Calculators', group: 'analyse', words: 'weibull reliability' },

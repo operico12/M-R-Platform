@@ -30,7 +30,7 @@ of design 3 (icon bar) and design 5 (pinned and search). Code: `packages/core/sr
 | --- | --- |
 | Today | Status board, Down list, Shop lines, Plant overview, Alerts, TV mode |
 | Assets | Units, Components, Condition, Spares, Inspections |
-| Analyse | Performance, Downtime analysis, Explorer, RCM, Calculators, Assist |
+| Analyse | Performance, Downtime analysis, History, Explorer, RCM, Calculators, Assist |
 | Improve | Actions, Root cause analysis, Projects, Work and PM, Weekly pack |
 | Data | Data import, Data quality |
 | Admin | Console, Sites, API access, Account |
