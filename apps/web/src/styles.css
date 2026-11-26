@@ -578,3 +578,20 @@ a.chip[aria-pressed='true'] { color: var(--brand-ink); }
 .wp-void { grid-column: 1 / -1; gap: 8px; }
 .wp-add summary { cursor: pointer; font-weight: 600; min-height: 32px; display: flex; align-items: center; }
 @media (max-width: 520px) { .wp-list li { grid-template-columns: minmax(0, 1fr) auto; } .wp-act { grid-column: 1 / -1; } }
+
+/* Shift grid (docs/shift-grid.md) */
+.sg { border-collapse: separate; border-spacing: 0; font-size: 13px; }
+.sg th, .sg td { padding: 3px 2px; }
+.sg-unit { position: sticky; left: 0; background: var(--surface); white-space: nowrap; padding-right: 10px; z-index: 1; }
+.sg-h { text-align: center; font-weight: 600; min-width: 26px; }
+.sg-td { text-align: center; }
+.sg-cell { display: inline-block; position: relative; width: 24px; height: 24px; border-radius: 4px; vertical-align: middle; background: var(--surface-2); }
+.sg-u-repair { background: var(--down); }
+.sg-u-waiting { background: color-mix(in srgb, var(--down) 38%, var(--surface)); }
+.sg-s-repair { background: var(--sched); }
+.sg-s-waiting { background: color-mix(in srgb, var(--sched) 38%, var(--surface)); }
+.sg-up { background: color-mix(in srgb, var(--run) 22%, var(--surface)); }
+.sg-future { background: transparent; border: 1px dashed var(--border); }
+.sg-mixed::after { content: ''; position: absolute; top: 3px; right: 3px; width: 6px; height: 6px; border-radius: 50%; background: var(--text); opacity: 0.75; }
+.sg-legend { display: flex; flex-wrap: wrap; gap: 14px; align-items: center; }
+.sg-legend .sg-cell { width: 16px; height: 16px; margin-right: 4px; }

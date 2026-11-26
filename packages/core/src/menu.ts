@@ -19,6 +19,7 @@ export const MENU_GROUPS: MenuGroup[] = [
 export const MENU_PAGES: MenuPage[] = [
   { href: '#/board', label: 'Status board', group: 'today', words: 'fleet down flags live' },
   { href: '#/lines', label: 'Shop lines', group: 'today', words: 'bays workshop' },
+  { href: '#/grid', label: 'Shift grid', group: 'today', words: 'hourly hour by hour shift summary states' },
   { href: '#/plant', label: 'Plant overview', group: 'today', words: 'fixed plant' },
   { href: '#/alerts', label: 'Alerts', group: 'today' },
   { href: '#/tv', label: 'TV mode', group: 'today', words: 'screen display' },
