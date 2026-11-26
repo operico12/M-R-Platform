@@ -18,6 +18,7 @@ export const MENU_GROUPS: MenuGroup[] = [
 /** Every page in the main menu. `words` are other names people search by. */
 export const MENU_PAGES: MenuPage[] = [
   { href: '#/board', label: 'Status board', group: 'today', words: 'fleet down flags live' },
+  { href: '#/down', label: 'Down list', group: 'today', words: 'asset view table comments eta export supervisor' },
   { href: '#/lines', label: 'Shop lines', group: 'today', words: 'bays workshop' },
   { href: '#/plant', label: 'Plant overview', group: 'today', words: 'fixed plant' },
   { href: '#/alerts', label: 'Alerts', group: 'today' },

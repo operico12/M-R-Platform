@@ -41,3 +41,4 @@ export * from './waits.js';
 export * from './shop-lines.js';
 export * from './comments.js';
 export * from './flag-history.js';
+export * from './down-list.js';

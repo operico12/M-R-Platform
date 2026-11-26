@@ -19,6 +19,7 @@ import { Pack } from './screens/Pack';
 import { Projects } from './screens/Projects';
 import { RcaScreen } from './screens/Rca';
 import { Performance } from './screens/Performance';
+import { DownList } from './screens/DownList';
 import { ShopLines } from './screens/ShopLines';
 import { UnitList, UnitPage } from './screens/Units';
 import { Work } from './screens/Work';
@@ -70,6 +71,7 @@ function Shell() {
     case 'tv':
     case 'board': page = <Board tv={tv} query={query} />; break;
     case 'lines': page = <ShopLines />; break;
+    case 'down': page = <DownList />; break;
     case 'plant': page = <Plant query={query} />; break;
     case 'units': page = <UnitList />; break;
     case 'unit': page = <UnitPage id={arg ?? ''} />; break;
